@@ -15,4 +15,10 @@ categories = ["cryptography::cryptocurrencies"]
 sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-xmbl-identity,xmbl-networking,xmbl-cubic-ledger,xmbl-state-machine,xmbl-consensus,xmbl-storage-compute,xmbl-zero-knowledge = { version = "0.1.0", path = "../xmbl-identity,xmbl-networking,xmbl-cubic-ledger,xmbl-state-machine,xmbl-consensus,xmbl-storage-compute,xmbl-zero-knowledge" }
+xmbl-identity = { version = "0.1.0", path = "../xmbl-identity" }
+xmbl-networking = { version = "0.1.0", path = "../xmbl-networking" }
+xmbl-cubic-ledger = { version = "0.1.0", path = "../xmbl-cubic-ledger" }
+xmbl-state-machine = { version = "0.1.0", path = "../xmbl-state-machine" }
+xmbl-consensus = { version = "0.1.0", path = "../xmbl-consensus" }
+xmbl-storage-compute = { version = "0.1.0", path = "../xmbl-storage-compute" }
+xmbl-zero-knowledge = { version = "0.1.0", path = "../xmbl-zero-knowledge" }

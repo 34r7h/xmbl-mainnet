@@ -15,4 +15,5 @@ categories = ["cryptography::cryptocurrencies"]
 sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-xmbl-cubic-ledger,xmbl-identity = { version = "0.1.0", path = "../xmbl-cubic-ledger,xmbl-identity" }
+xmbl-cubic-ledger = { version = "0.1.0", path = "../xmbl-cubic-ledger" }
+xmbl-identity = { version = "0.1.0", path = "../xmbl-identity" }
