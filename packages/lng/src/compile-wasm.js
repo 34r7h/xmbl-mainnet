@@ -12,7 +12,7 @@
  *     against BigInt in the compile-wasm test;
  *   - checked overflow / underflow / ÷0 → `unreachable` (a trap = the interpreter's revert);
  *   - state fields live at fixed 32-byte slots in memory (persist for the instance lifetime;
- *     Verkle-backed cross-call persistence is XCL's job via the host ABI — xcl/contract-host.js);
+ *     Verkle-backed cross-call persistence is XCL's job via the host ABI — @xmbl/contracts);
  *   - `~emit` bumps an exported event counter (coordinator host binding is future work).
  * Exports: entrypoints, `memory`, `__alloc()`, `__reset()`, `__field(i)`, `__events()`.
  *
@@ -20,7 +20,7 @@
  * interpreter and EVM backend support them; this backend is unsigned-only) — never silently
  * mis-computed.
  *
- * Usage:  node src/compile-wasm.js <file.lng> [out.wasm]
+ * API:    import { compile } from '@xmbl/lng';  // compile(src) -> Uint8Array (WASM)
  */
 import { lex, parse, INT_WIDTHS } from './lng.js';
 import { assertDeterministic } from './typecheck.js';

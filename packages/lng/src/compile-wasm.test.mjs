@@ -104,7 +104,7 @@ ok('~decimal rejected', (() => { try { compile("~contract `D { ~state { ~public 
 // The old fake WASMExecutor is gone; the deploy target is @xmbl/storage-compute's hardened
 // runtime, which REFUSES an unbounded-memory or import-carrying guest. So the compiler must
 // emit a module that clears those gates. Asserted here with only the WebAssembly API, so the
-// LNG subtree stays standalone (the full ContractHost path is in xcl/contract-host.test.mjs).
+// LNG stays standalone (the full ContractHost path is tested in @xmbl/contracts).
 (async () => {
   const bytes = compile(COUNTER);
   const u8 = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes);

@@ -13,8 +13,9 @@
  * docs/xmbl-port-requirements.md decision 2). Object iteration is insertion
  * order (decision 3).
  *
- * Usage:  node src/lng.js <file.lng>
- *         node src/lng.js -e '~p (2 + 3)'
+ * API (this is the ESM package build — no CLI):
+ *   import { run, lex, parse } from '@xmbl/lng';
+ *   run(src, { write: s => process.stdout.write(s) });
  */
 
 // ----------------------------------------------------------------------------

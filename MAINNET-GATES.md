@@ -56,27 +56,33 @@ continue-on-error, and in the release workflow before any publish).
 - [ ] ⛔ AUDIT — experimental, unaudited FRI. Must not gate consensus, ledger, or sealing until
       audited. The `core` wiring already enforces "additive only" — do not remove that.
 
-## `@xmbl/contracts` — smart-contract language (LNG) + contract layer (XCL)
+## `@xmbl/lng` — the smart-contract language (standalone)
 
-- [x] **LNG** ported to the monorepo as ESM with its full conformance suite: interpreter,
-      typechecker, determinism gate, EVM transpiler, WASM backend — 7 suites, 127 assertions.
-      — *packages/contracts/src/lng/\*.test.mjs*
+- [x] **Standalone**: a pure language toolchain with ZERO XMBL dependencies — importing
+      `@xmbl/lng` pulls in nothing else (not even `@xmbl/contracts`). — *packages/lng*
+- [x] Full conformance suite as ESM: interpreter, typechecker, determinism gate, EVM
+      transpiler, WASM backend — 7 suites, 127 assertions. — *packages/lng/src/\*.test.mjs*
 - [x] **Determinism gate enforced**: both backends refuse a contract that reads wall-clock,
       randomness, or otherwise diverges across nodes. — *determinism-gate.test.mjs*
 - [x] **WASM backend is mainnet-safe**: emits NO imports and a BOUNDED memory maximum, so a
       compiled contract clears storage-compute's hardened runtime instead of being refused.
       — *compile-wasm.js; compile-wasm.test.mjs*
-- [x] **XCL binds contracts to real state without feature creep**: deterministic cubic
-      placement, slot↔Verkle-key mapping, read-set-in/write-set-out staging; execution is
-      DELEGATED to @xmbl/storage-compute and state to @xmbl/state-machine (a real
-      VerkleStateTree is injectable). Two hosts fed the same calls converge to the same root.
-      — *xcl/contract-host.test.mjs*
-- [x] **Usable standalone**: LNG needs nothing; XCL falls back to an in-memory store when no
-      state tree is injected. — *contract-host.test.mjs*
+- [ ] EVM backend output is structurally asserted and solc-compiles, but is not deployed/audited.
+
+## `@xmbl/contracts` — the contract layer (XCL)
+
+- [x] **Depends on @xmbl/lng, does not embed it**: the language is a separate standalone
+      package; XCL is only the binding layer. The dependency runs one way (contracts → lng).
+- [x] **Binds contracts to real state without feature creep**: deterministic cubic placement,
+      slot↔Verkle-key mapping, read-set-in/write-set-out staging; execution is DELEGATED to
+      @xmbl/storage-compute and state to @xmbl/state-machine (a real VerkleStateTree is
+      injectable). Two hosts fed the same calls converge to the same root. — *xcl/contract-host.test.mjs*
+- [x] **A compute node composes it**: a `ComputeNode` injected with a `ContractHost` runs
+      contracts, while its raw market path still denies the host import. — *compute-node-integration.test.mjs*
+- [x] **Usable standalone**: falls back to an in-memory store when no state tree is injected. — *contract-host.test.mjs*
 - [ ] The XCL host ABI is the v0 **slot** form (i32 slots/values). Extend to the byte-pointer
       ABI in agentic-contracts-proto.md §3.1 (xmbl_verkle_get/set + cubic_sig/mayo/lwe verify),
       and have the LNG WASM backend emit those host calls, so a full LNG contract drives state.
-- [ ] EVM backend output is structurally asserted and solc-compiles, but is not deployed/audited.
 
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 

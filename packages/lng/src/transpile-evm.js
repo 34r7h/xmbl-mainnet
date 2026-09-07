@@ -7,7 +7,7 @@
  * and are NOT emitted here; the caller (the LNG `who`/caller parameter) maps to the
  * mod-grant model, which on a live deployment is keyed by msg.sender.
  *
- * Usage:  node src/transpile-evm.js <file.lng>
+ * API:    import { transpile } from '@xmbl/lng';  // transpile(src) -> Solidity string
  */
 import { lex, parse, INT_WIDTHS } from './lng.js';
 import { assertDeterministic } from './typecheck.js';

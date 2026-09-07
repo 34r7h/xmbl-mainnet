@@ -14,10 +14,11 @@ version line. Ships with a live blockchain visualizer and the XMBL app builder.
 - **State is a Verkle tree.** A moving state root is the chain applying transactions — health,
   not drift.
 - **Signatures are post-quantum** (MAYO), with an experimental cube-curve cryptography seam.
-- **Contracts are native.** Write in **LNG**, compile to WASM, and the **XCL** runtime places
-  the contract at a cubic-ledger coordinate and runs it in the hardened compute sandbox against
-  Verkle state — no module re-implements another's job: `contracts` owns the language + binding,
-  `storage-compute` owns the sandbox, `state-machine` owns the state.
+- **Contracts are native.** Write in **LNG** (`@xmbl/lng`, a standalone language), compile to
+  WASM, and the **XCL** layer (`@xmbl/contracts`) places the contract at a cubic-ledger
+  coordinate and runs it in the hardened compute sandbox against Verkle state — no module
+  re-implements another's job: `lng` owns the language, `contracts` the binding,
+  `storage-compute` the sandbox, `state-machine` the state.
 
 Open the **[Explorer](apps/visualizer)** to watch this happen in real time (`npm run visualizer`).
 
@@ -43,7 +44,8 @@ The cryptic testnet names are gone. Each protocol module is one npm package and 
 | `@xmbl/consensus` | `xmbl-consensus` | xpc | User-as-validator consensus; five-stage mempool; sealing. |
 | `@xmbl/storage-compute` | `xmbl-storage-compute` | xsc | P2P storage with availability proofs + the hardened WASM compute market. **Where contracts execute** (composes state-machine + contracts). |
 | `@xmbl/zero-knowledge` | `xmbl-zero-knowledge` | xzk | ZK cube-curve state-commitment (FRI). **Experimental, unaudited.** |
-| `@xmbl/contracts` | *(npm/WASM only)* | lng + XCL | The smart-contract module: the **LNG** language (→ Solidity/EVM and → WASM) and the **XCL** runtime that binds compiled contracts to cubic-ledger coordinates and Verkle state. |
+| `@xmbl/lng` | *(npm/WASM only)* | lng | The **LNG** smart-contract language — interpreter, type checker, determinism gate, and Solidity/EVM + WASM backends. **Zero dependencies; standalone.** |
+| `@xmbl/contracts` | *(npm/WASM only)* | XCL | The **XCL** contract layer: binds contracts compiled by `@xmbl/lng` to cubic-ledger coordinates and Verkle state, executing them in the storage-compute sandbox. |
 
 App / tooling modules (npm / web only):
 
@@ -63,8 +65,10 @@ App / tooling modules (npm / web only):
   (cubic cryptography, deterministic cube rebuild, NAT-crossing convergence).
 - `cli`, `simulator`, `browser-extension`, `desktop-app` came from the testnet source.
 - `app-builder` is the `../xmbl` builder with its `.xmbl` types.
-- `contracts` merges the `../lng` language (ported to ESM with its full conformance suite) with
-  the XCL architecture from `docs/agentic-contracts-proto.md`, wired to storage-compute + state-machine.
+- `lng` is the `../lng` language, ported to ESM with its full conformance suite — a standalone
+  package with no XMBL dependencies.
+- `contracts` (XCL) is the architecture from `docs/agentic-contracts-proto.md`: it depends on
+  `@xmbl/lng` to compile and wires storage-compute + state-machine to run the result.
 
 ## Develop
 

@@ -10,7 +10,7 @@ import assert from 'node:assert';
 import { ComputeRuntime } from '@xmbl/storage-compute';
 import { VerkleStateTree } from '@xmbl/state-machine';
 import { ContractHost, InMemoryState, contractCoordinates, contractId } from './index.js';
-import { compile } from '../lng/index.js';
+import { compile } from '@xmbl/lng';
 
 let pass = 0, fail = 0;
 const check = async (n, f) => {

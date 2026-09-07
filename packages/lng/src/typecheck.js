@@ -13,7 +13,7 @@
  * 'unknown' and left to the runtime's checked arithmetic. Returns a list of
  * { line, message } diagnostics.
  *
- * Usage:  node src/typecheck.js <file.lng>
+ * API:    import { check, checkDeterminism, assertDeterministic } from '@xmbl/lng';
  */
 import { lex, parse, INT_WIDTHS, isTypeName, intRange } from './lng.js';
 const isInt = (t) => typeof t === 'string' && (t in INT_WIDTHS);

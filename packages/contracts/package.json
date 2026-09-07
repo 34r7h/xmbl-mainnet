@@ -5,7 +5,6 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./lng": "./src/lng/index.js",
     "./xcl": "./src/xcl/index.js"
   },
   "license": "MIT",
@@ -17,13 +16,15 @@
     "url": "https://github.com/34r7h/xmbl-mainnet.git",
     "directory": "packages/contracts"
   },
-  "description": "XMBL smart-contract module: the LNG contract language (EVM + WASM backends) and the XCL runtime that binds compiled contracts to the cubic ledger.",
+  "description": "XCL — the XMBL Contract Layer. Binds contracts compiled by @xmbl/lng to cubic-ledger coordinates and Verkle state, executing them in the @xmbl/storage-compute sandbox.",
   "dependencies": {},
   "peerDependencies": {
+    "@xmbl/lng": "0.1.0",
     "@xmbl/storage-compute": "0.1.0",
     "@xmbl/state-machine": "0.1.0"
   },
   "peerDependenciesMeta": {
+    "@xmbl/lng": { "optional": true },
     "@xmbl/storage-compute": { "optional": true },
     "@xmbl/state-machine": { "optional": true }
   },
