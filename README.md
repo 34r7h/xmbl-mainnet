@@ -45,7 +45,8 @@ App / tooling modules (npm / web only):
 | package | was | what it is |
 |---|---|---|
 | `@xmbl/cli` | xcli | Command-line interface to every module. |
-| `@xmbl/explorer` (`apps/visualizer`) | xv | Live, educational 3D cube-curve visualizer. |
+| `@xmbl/visualizer` (`packages/visualizer`) | xv | Visualizer library: status server + Three.js scene helpers. |
+| `@xmbl/explorer` (`apps/visualizer`) | new | Live, educational 3D cube-curve **app** — connects to any node, demo fallback. |
 | `@xmbl/simulator` | xsim | Deterministic + chaotic network simulator for tests. |
 | `@xmbl/browser-extension` | xbe | Full-client wallet/node browser extension. |
 | `@xmbl/desktop-app` | xda | Electron full-client wallet/node. |
