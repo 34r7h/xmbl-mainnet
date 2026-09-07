@@ -94,6 +94,17 @@ await check('missing runtime is refused (XCL never sandboxes itself)', async () 
   assert.throws(() => new ContractHost({}), /requires a runtime/);
 });
 
+await check('a contract call does NOT widen a shared runtime’s allow surface', async () => {
+  const rt = runtime(); // empty allowedImports
+  const host = new ContractHost({ runtime: rt });
+  const { id } = host.deploy(COUNTER, [0]);
+  await host.call(id, 'increment');
+  // The per-call host binding must not have leaked into the runtime's standing allow-list...
+  assert.deepStrictEqual(rt.allowedImports, [], 'runtime allow-list must stay empty after a call');
+  // ...so a later RAW job (no host) that declares the same import is still denied.
+  await assert.rejects(() => rt.execute(COUNTER, 'increment', []), /denied import: env\.xmbl_verkle_get/);
+});
+
 await check('an LNG-compiled contract runs in the delegated sandbox, deterministically', async () => {
   const wasm = compile('~contract `Calc { ~on `add(`a ~u256, `b ~u256) { return `a + `b } }');
   const rt = runtime();

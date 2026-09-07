@@ -1,4 +1,4 @@
-import { HOST_ABI_SOURCE, HOST_IMPORT_KEYS, slotKey } from './abi.js';
+import { HOST_ABI_SOURCE, slotKey } from './abi.js';
 import { contractId, contractCoordinates } from './placement.js';
 import { InMemoryState } from './in-memory-state.js';
 
@@ -76,14 +76,10 @@ export class ContractHost {
       source: HOST_ABI_SOURCE,
       data: { slots, caller: (opts.caller | 0) },
     };
-    // The runtime denies any import the ABI does not provide; declare the ABI keys as the
-    // allow surface so a contract importing ONLY these succeeds and anything else is refused.
-    if (Array.isArray(this.runtime.allowedImports)) {
-      for (const k of HOST_IMPORT_KEYS) {
-        if (!this.runtime.allowedImports.includes(k)) this.runtime.allowedImports.push(k);
-      }
-    }
-
+    // The runtime satisfies an import from the host module if the ABI provides it, and denies
+    // anything else — so the ABI keys ARE the allow surface for this call, scoped to this call.
+    // We deliberately do NOT widen the runtime's persistent `allowedImports`: mutating a shared
+    // runtime would leak a standing allowance to later, unrelated jobs on the same instance.
     const { result, writes } = await this.runtime.execute(c.wasm, fnName, args, { host });
 
     // Apply the write-set atomically. Record touched slots so later calls stage them too.
