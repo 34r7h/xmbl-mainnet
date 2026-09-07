@@ -1,0 +1,33 @@
+{
+  "name": "@xmbl/contracts",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./lng": "./src/lng/index.js",
+    "./xcl": "./src/xcl/index.js"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/34r7h/xmbl-mainnet.git",
+    "directory": "packages/contracts"
+  },
+  "description": "XMBL smart-contract module: the LNG contract language (EVM + WASM backends) and the XCL runtime that binds compiled contracts to the cubic ledger.",
+  "dependencies": {},
+  "peerDependencies": {
+    "@xmbl/storage-compute": "0.1.0",
+    "@xmbl/state-machine": "0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@xmbl/storage-compute": { "optional": true },
+    "@xmbl/state-machine": { "optional": true }
+  },
+  "scripts": {
+    "test": "node ../../scripts/run-node-tests.mjs ."
+  }
+}

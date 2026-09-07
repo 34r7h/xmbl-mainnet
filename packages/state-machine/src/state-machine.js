@@ -1,6 +1,5 @@
 import { VerkleStateTree } from './verkle-tree.js';
 import { StateDiff } from './state-diff.js';
-import { WASMExecutor } from './wasm-execution.js';
 import { StateShard } from './sharding.js';
 import { StateAssembler } from './state-assembly.js';
 import { Level } from 'level';
@@ -18,7 +17,6 @@ export class StateMachine extends EventEmitter {
     this._dbOpen = false;
     
     this.stateTree = new VerkleStateTree({ db: this.db });
-    this.executor = new WASMExecutor();
     this.assembler = new StateAssembler();
     this.shards = [];
     this.totalShards = options.totalShards || 4;
@@ -289,64 +287,13 @@ export class StateMachine extends EventEmitter {
     return stateRoot;
   }
 
-  async executeTransaction(txId, wasmCode, input, shardKey = null) {
-    const startTime = Date.now();
-    
-    try {
-      // Determine shard if key provided
-      let shard = null;
-      if (shardKey) {
-        const shardIndex = StateShard.getShardForKey(shardKey, this.totalShards);
-        shard = this.shards[shardIndex];
-      }
-      
-      // Get current state for the key
-      const currentState = shard ? shard.get(shardKey) || {} : this.assembler.baseState;
-      
-      // Execute WASM state transition
-      const newState = await this.executor.executeStateTransition(wasmCode, currentState, input);
-      
-      // Create state diff
-      const changes = this._computeChanges(currentState, newState);
-      const diff = new StateDiff(txId, changes);
-      
-      // Store in shard if applicable
-      if (shard && shardKey) {
-        shard.set(shardKey, newState);
-      }
-      
-      // Store diff
-      this.diffs.push(diff);
-      await this._saveDiff(diff);
-      
-      // Update Verkle tree
-      for (const [key, value] of Object.entries(changes)) {
-        const fullKey = shardKey ? `${shardKey}:${key}` : key;
-        await this.stateTree.insert(fullKey, value);
-        console.log(`State updated: ${fullKey} = ${JSON.stringify(value)}`);
-      }
-      
-      // Log transaction
-      const duration = Date.now() - startTime;
-      this.transactionLog.push({
-        txId,
-        timestamp: diff.timestamp,
-        duration,
-        changes: Object.keys(changes).length
-      });
-      await this._saveTransactionLog();
-      
-      return {
-        txId,
-        diff,
-        newState,
-        stateRoot: this.stateTree.getRoot()
-      };
-    } catch (error) {
-      console.error(`Transaction ${txId} failed: ${error.message}`);
-      throw error;
-    }
-  }
+  // executeTransaction(...) was REMOVED. It ran contract WASM through the deleted
+  // WASMExecutor — whose only working path was a fake fallback that fabricated a state
+  // transition (counter += input.increment) when the "WASM" failed to compile, which on a
+  // chain is a silent correctness hole. Contract execution now lives where it belongs: the
+  // hardened sandbox in @xmbl/storage-compute, driven by @xmbl/contracts' ContractHost,
+  // which reads and writes THIS module's VerkleStateTree via the XCL host ABI. The state
+  // machine no longer executes WASM.
 
   getState(key, timestamp = null) {
     if (timestamp) {
@@ -385,11 +332,10 @@ export class StateMachine extends EventEmitter {
 
   getStatistics() {
     return {
-      // applied_tx_count. transactionLog only grows in executeTransaction (the WASM contract path), so this
-      // read 0 while 396 ledger blocks had been applied to the tree — the exact metric anyone checks first to
-      // ask "is the state machine working". Count applied state diffs too; keep the WASM count separate.
+      // applied_tx_count — count applied state diffs (the ledger-block application path).
+      // transactionLog holds only legacy persisted entries now that executeTransaction is
+      // gone; it no longer grows here.
       totalTransactions: this.transactionLog.length + this.diffs.length,
-      wasmExecutions: this.transactionLog.length,
       appliedDiffs: this.diffs.length,
       totalDiffs: this.diffs.length,
       stateRoot: this.stateTree.getRoot(),
@@ -398,26 +344,6 @@ export class StateMachine extends EventEmitter {
         keyCount: s.getAllKeys().length
       }))
     };
-  }
-
-  _computeChanges(oldState, newState) {
-    const changes = {};
-    
-    // Find new and modified keys
-    for (const [key, value] of Object.entries(newState)) {
-      if (oldState[key] !== value) {
-        changes[key] = value;
-      }
-    }
-    
-    // Find deleted keys
-    for (const key of Object.keys(oldState)) {
-      if (!(key in newState)) {
-        changes[key] = null; // Mark as deleted
-      }
-    }
-    
-    return changes;
   }
 }
 

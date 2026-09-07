@@ -63,7 +63,7 @@ function readMemoryLimits(bytes) {
 
 (async () => {
   try {
-    const { wasmCode, functionName, args, maxPages, allowed } = workerData;
+    const { wasmCode, functionName, args, maxPages, allowed, hostSource, hostData } = workerData;
     // wasmCode arrives as a Uint8Array (structured-cloned across threads) — no per-byte
     // re-materialisation. WebAssembly.compile accepts the typed array directly.
 
@@ -81,25 +81,48 @@ function readMemoryLimits(bytes) {
       if (own.min > maxPages) { parentPort.postMessage({ ok: false, error: 'module memory minimum exceeds limit' }); return; }
     }
 
-    // (3) Deny-by-default imports. Build the import object only from the allow-list.
+    // HOST HOOK (deny-by-default, still). When a caller supplies a host module, it runs
+    // HERE in the worker — never a cross-thread call — over a staged read-set (hostData)
+    // and collects a write-set (ctx.writes) posted back to the parent, which is what makes
+    // synchronous WASM host imports possible without giving the guest thread any live
+    // handle to parent state. The host module is the caller's own trusted code (e.g. the
+    // XCL contract ABI), NOT the untrusted guest. It can ONLY provide functions for imports
+    // the guest declares; anything it does not provide is still denied.
+    const ctx = { data: hostData || {}, writes: [], log: [], instance: null,
+                  mem: () => (ctx.instance && ctx.instance.exports.memory) || null };
+    let hostImports = {};
+    if (hostSource) {
+      // eslint-disable-next-line no-eval
+      const makeHost = (0, eval)('(' + hostSource + ')');
+      hostImports = makeHost(ctx) || {};
+    }
+
+    // (3) Deny-by-default imports. Each import is satisfied by the host module if it
+    // provides that exact "module.name" key, else by an allow-listed inert stub, else denied.
     const allowedSet = new Set(allowed || []);
     const importObject = {};
     for (const imp of WebAssembly.Module.imports(module)) {
       const key = imp.module + '.' + imp.name;
-      if (!allowedSet.has(key)) { parentPort.postMessage({ ok: false, error: 'denied import: ' + key }); return; }
+      const hostFn = hostImports[key];
       importObject[imp.module] = importObject[imp.module] || {};
+      if (typeof hostFn === 'function') {
+        importObject[imp.module][imp.name] = hostFn;   // real, in-worker host binding
+        continue;
+      }
+      if (!allowedSet.has(key)) { parentPort.postMessage({ ok: false, error: 'denied import: ' + key }); return; }
       if (imp.kind === 'memory') {
         importObject[imp.module][imp.name] = new WebAssembly.Memory({ initial: 1, maximum: maxPages });
       } else if (imp.kind === 'global') {
         importObject[imp.module][imp.name] = new WebAssembly.Global({ value: 'i32', mutable: false }, 0);
       } else {
-        // Allowed function import: a stub that traps if the guest actually calls it,
-        // so an allow-listed name still grants no real host behaviour by default.
+        // Allowed function import with no host binding: a stub that traps if the guest
+        // actually calls it, so an allow-listed name still grants no real host behaviour.
         importObject[imp.module][imp.name] = () => { throw new Error('host import ' + key + ' is not callable'); };
       }
     }
 
     const instance = await WebAssembly.instantiate(module, importObject);
+    ctx.instance = instance;   // host fns can now reach guest memory via ctx.mem()
 
     // (2) Cap a memory the guest exported itself (belt-and-braces with the section check).
     const mem = instance.exports.memory;
@@ -111,7 +134,7 @@ function readMemoryLimits(bytes) {
     if (typeof fn !== 'function') { parentPort.postMessage({ ok: false, error: 'Function ' + functionName + ' not found' }); return; }
 
     const result = fn(...(args || []));
-    parentPort.postMessage({ ok: true, result });
+    parentPort.postMessage({ ok: true, result, writes: ctx.writes, log: ctx.log });
   } catch (err) {
     parentPort.postMessage({ ok: false, error: String((err && err.message) || err) });
   }
@@ -134,12 +157,24 @@ export class ComputeRuntime {
   /**
    * Run an untrusted WASM export under isolation. Rejects on denied import, memory
    * violation, missing function, guest trap, or deadline.
+   *
+   * With no `host`, resolves to the guest's return value (the raw compute-market path).
+   * With a `host`, resolves to `{ result, writes, log }` — `writes` is the write-set the
+   * host module collected (e.g. staged verkle mutations), which the CALLER applies to real
+   * state after the sandboxed run. The host module is trusted caller code that runs inside
+   * the worker over the staged read-set; the guest stays untrusted.
+   *
    * @param {Uint8Array|ArrayBuffer|number[]} wasmCode
    * @param {string} functionName exported function to call
    * @param {Array<number|bigint>} [args]
-   * @returns {Promise<number|bigint>}
+   * @param {object} [opts]
+   * @param {{source:string, data?:object}} [opts.host] in-worker host module: `source` is a
+   *   stringified `(ctx) => ({ "env.name": fn, ... })` factory; `ctx.data` is the staged
+   *   read-set, `ctx.writes`/`ctx.log` are collectors posted back, `ctx.mem()` gives the
+   *   guest Memory after instantiation. Only imports it provides become callable.
+   * @returns {Promise<number|bigint|{result:any, writes:any[], log:any[]}>}
    */
-  async execute(wasmCode, functionName, args = []) {
+  async execute(wasmCode, functionName, args = [], opts = {}) {
     const maxPages = Math.max(1, Math.ceil(this.maxMemory / WASM_PAGE_BYTES));
     // Normalise to a Uint8Array once. structuredClone (how workerData crosses threads)
     // handles typed arrays directly, so a multi-MB guest is NOT re-materialised byte by
@@ -149,9 +184,14 @@ export class ComputeRuntime {
       wasmCode instanceof ArrayBuffer ? new Uint8Array(wasmCode) :
       Uint8Array.from(wasmCode);
 
+    const host = opts.host || null;
     const worker = new Worker(WORKER_SOURCE, {
       eval: true,
-      workerData: { wasmCode: wasmBytes, functionName, args, maxPages, allowed: this.allowedImports },
+      workerData: {
+        wasmCode: wasmBytes, functionName, args, maxPages, allowed: this.allowedImports,
+        hostSource: host ? host.source : null,
+        hostData: host ? (host.data || {}) : null,
+      },
       resourceLimits: {
         // Hard V8 heap cap so a JS-side allocation bomb dies with the thread. WASM
         // linear memory is bounded separately by the checks above.
@@ -176,7 +216,7 @@ export class ComputeRuntime {
         this.maxTime,
       );
       worker.once('message', (m) => {
-        if (m && m.ok) finish(resolve, m.result);
+        if (m && m.ok) finish(resolve, host ? { result: m.result, writes: m.writes || [], log: m.log || [] } : m.result);
         else finish(reject, new Error((m && m.error) || 'WASM execution failed'));
       });
       worker.once('error', (e) => finish(reject, new Error('WASM execution failed: ' + e.message)));

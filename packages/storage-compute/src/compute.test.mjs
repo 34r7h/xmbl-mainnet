@@ -88,5 +88,33 @@ await check('guest with shared memory is rejected', async () => {
   await assert.rejects(() => rt.execute(MEM_SHARED, 'x', []), /shared|execution failed|compile/i);
 });
 
+// import env.emit(i32)->() ; export run(i32)->() { local.get 0; call emit }
+// Proves the host hook end to end: staged read-set in (hostData.base), the guest calling a
+// REAL in-worker host binding, and the write-set posted back to the parent.
+const EMIT = B(
+  ...HDR,
+  0x01, 0x05, 0x01, 0x60, 0x01, 0x7f, 0x00,                         // type (i32)->()
+  0x02, 0x0c, 0x01, 0x03, 0x65, 0x6e, 0x76, 0x04, 0x65, 0x6d, 0x69, 0x74, 0x00, 0x00, // import env.emit func0
+  0x03, 0x02, 0x01, 0x00,                                           // func[1] : type 0 (run)
+  0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x01,             // export "run" func 1
+  0x0a, 0x08, 0x01, 0x06, 0x00, 0x20, 0x00, 0x10, 0x00, 0x0b,       // code: local.get 0; call 0; end
+);
+
+await check('host hook: staged read-set in, write-set out (base 100 + arg 42 = 142)', async () => {
+  const rt = new ComputeRuntime({ maxTime: 3000 });
+  const host = {
+    data: { base: 100 },
+    source: '(ctx) => ({ "env.emit": (v) => { ctx.writes.push(ctx.data.base + v); } })',
+  };
+  const out = await rt.execute(EMIT, 'run', [42], { host });
+  assert.deepStrictEqual(out.writes, [142]);
+});
+
+await check('host hook: a host that does NOT provide a declared import → denied', async () => {
+  const rt = new ComputeRuntime({ maxTime: 2000 }); // empty allow-list, empty host
+  const host = { source: '(ctx) => ({})' }; // provides nothing
+  await assert.rejects(() => rt.execute(EMIT, 'run', [1], { host }), /denied import: env\.emit/);
+});
+
 console.log(`\ncompute isolation: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

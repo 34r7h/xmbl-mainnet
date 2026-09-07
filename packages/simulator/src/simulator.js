@@ -610,35 +610,16 @@ export class SystemSimulator extends EventEmitter {
 
     this.emit('compute:operation', operation);
     
-    // Compute operations can trigger state changes via xvsm
+    // Compute operations can trigger state changes. This used to call a fake
+    // xvsm.executeTransaction with a comment string as "WASM"; that path is gone (real
+    // contract execution is @xmbl/contracts' ContractHost over @xmbl/storage-compute). The
+    // simulator's honest job here is just to drive a state change, so it uses the real
+    // state-diff path directly.
     if (this.modules.xvsm && chance.bool({ likelihood: 70 })) {
-      // 70% chance compute operation triggers state change
-      setTimeout(async () => {
-        try {
-          // Simulate WASM execution that modifies state
-          const txId = `compute_${operation.functionName}_${Date.now()}`;
-          const wasmCode = `// Simulated WASM for ${operation.functionName}`;
-          const shardKey = `compute_${operation.functionName}`;
-          const input = { operation: operation.functionName, duration: operation.duration, memory: operation.memory };
-          
-          // Execute transaction in state machine
-          const result = await this.modules.xvsm.executeTransaction(txId, wasmCode, input, shardKey);
-          
-          // Emit state diff event
-          if (result && result.diff && result.diff.changes) {
-            this.emit('state:diff:created', {
-              txId: result.txId,
-              changes: result.diff.changes,
-              triggeredBy: 'compute',
-              computeOp: operation.functionName
-            });
-          }
-        } catch (err) {
-          // If executeTransaction fails, create a simple state diff
-          this.createStateDiff().catch(e => {
-            this.logger.error('stateMachine', 'compute_triggered_state_error', e);
-          });
-        }
+      setTimeout(() => {
+        this.createStateDiff().catch(e => {
+          this.logger.error('stateMachine', 'compute_triggered_state_error', e);
+        });
       }, Math.max(50, operation.duration));
     }
     

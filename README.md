@@ -14,6 +14,10 @@ version line. Ships with a live blockchain visualizer and the XMBL app builder.
 - **State is a Verkle tree.** A moving state root is the chain applying transactions — health,
   not drift.
 - **Signatures are post-quantum** (MAYO), with an experimental cube-curve cryptography seam.
+- **Contracts are native.** Write in **LNG**, compile to WASM, and the **XCL** runtime places
+  the contract at a cubic-ledger coordinate and runs it in the hardened compute sandbox against
+  Verkle state — no module re-implements another's job: `contracts` owns the language + binding,
+  `storage-compute` owns the sandbox, `state-machine` owns the state.
 
 Open the **[Explorer](apps/visualizer)** to watch this happen in real time (`npm run visualizer`).
 
@@ -37,8 +41,9 @@ The cryptic testnet names are gone. Each protocol module is one npm package and 
 | `@xmbl/cubic-ledger` | `xmbl-cubic-ledger` | xclt | The cube-curve ledger: blocks → 9-block faces → 3-face cubes. |
 | `@xmbl/state-machine` | `xmbl-state-machine` | xvsm | Sparse Verkle-tree virtual state machine. |
 | `@xmbl/consensus` | `xmbl-consensus` | xpc | User-as-validator consensus; five-stage mempool; sealing. |
-| `@xmbl/storage-compute` | `xmbl-storage-compute` | xsc | P2P storage with availability proofs + WASM compute market. |
+| `@xmbl/storage-compute` | `xmbl-storage-compute` | xsc | P2P storage with availability proofs + the hardened WASM compute market. **Where contracts execute** (composes state-machine + contracts). |
 | `@xmbl/zero-knowledge` | `xmbl-zero-knowledge` | xzk | ZK cube-curve state-commitment (FRI). **Experimental, unaudited.** |
+| `@xmbl/contracts` | *(npm/WASM only)* | lng + XCL | The smart-contract module: the **LNG** language (→ Solidity/EVM and → WASM) and the **XCL** runtime that binds compiled contracts to cubic-ledger coordinates and Verkle state. |
 
 App / tooling modules (npm / web only):
 
@@ -58,6 +63,8 @@ App / tooling modules (npm / web only):
   (cubic cryptography, deterministic cube rebuild, NAT-crossing convergence).
 - `cli`, `simulator`, `browser-extension`, `desktop-app` came from the testnet source.
 - `app-builder` is the `../xmbl` builder with its `.xmbl` types.
+- `contracts` merges the `../lng` language (ported to ESM with its full conformance suite) with
+  the XCL architecture from `docs/agentic-contracts-proto.md`, wired to storage-compute + state-machine.
 
 ## Develop
 

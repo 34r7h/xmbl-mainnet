@@ -35,8 +35,13 @@ continue-on-error, and in the release workflow before any publish).
       timer could never fire). — *compute.js; compute.test.mjs*
 - [x] **Deny-by-default imports**: a guest importing anything not on an explicit allow-list is
       rejected before instantiation. — *compute.test.mjs*
-- [x] **Bounded memory**: a guest declaring unbounded or over-cap memory is rejected; imported
-      memory is created with a hard maximum; V8 heap capped via `resourceLimits`. — *compute.test.mjs*
+- [x] **Bounded memory**: a guest declaring unbounded, shared, multi-, or over-cap memory is
+      rejected; imported memory is created with a hard maximum; V8 heap capped via
+      `resourceLimits`. — *compute.test.mjs*
+- [x] **Host hook for contracts** (deny-by-default preserved): a trusted caller (XCL) can supply
+      in-worker host imports over a staged read-set and collect a write-set, so synchronous WASM
+      host calls work without giving the untrusted guest any handle to parent state. This is the
+      generic executor capability; the XMBL contract semantics live in @xmbl/contracts. — *compute.test.mjs*
 - [ ] Availability-proof soundness (`availability.js`) needs an adversarial test: a node that
       does **not** hold a shard must fail the probe. (Currently happy-path only.)
 - [ ] ⛔ AUDIT — the compute market is a paid execution surface; the isolation model needs a
@@ -51,6 +56,28 @@ continue-on-error, and in the release workflow before any publish).
 - [ ] ⛔ AUDIT — experimental, unaudited FRI. Must not gate consensus, ledger, or sealing until
       audited. The `core` wiring already enforces "additive only" — do not remove that.
 
+## `@xmbl/contracts` — smart-contract language (LNG) + contract layer (XCL)
+
+- [x] **LNG** ported to the monorepo as ESM with its full conformance suite: interpreter,
+      typechecker, determinism gate, EVM transpiler, WASM backend — 7 suites, 127 assertions.
+      — *packages/contracts/src/lng/\*.test.mjs*
+- [x] **Determinism gate enforced**: both backends refuse a contract that reads wall-clock,
+      randomness, or otherwise diverges across nodes. — *determinism-gate.test.mjs*
+- [x] **WASM backend is mainnet-safe**: emits NO imports and a BOUNDED memory maximum, so a
+      compiled contract clears storage-compute's hardened runtime instead of being refused.
+      — *compile-wasm.js; compile-wasm.test.mjs*
+- [x] **XCL binds contracts to real state without feature creep**: deterministic cubic
+      placement, slot↔Verkle-key mapping, read-set-in/write-set-out staging; execution is
+      DELEGATED to @xmbl/storage-compute and state to @xmbl/state-machine (a real
+      VerkleStateTree is injectable). Two hosts fed the same calls converge to the same root.
+      — *xcl/contract-host.test.mjs*
+- [x] **Usable standalone**: LNG needs nothing; XCL falls back to an in-memory store when no
+      state tree is injected. — *contract-host.test.mjs*
+- [ ] The XCL host ABI is the v0 **slot** form (i32 slots/values). Extend to the byte-pointer
+      ABI in agentic-contracts-proto.md §3.1 (xmbl_verkle_get/set + cubic_sig/mayo/lwe verify),
+      and have the LNG WASM backend emit those host calls, so a full LNG contract drives state.
+- [ ] EVM backend output is structurally asserted and solc-compiles, but is not deployed/audited.
+
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 
 - [x] Ingress guard + invalid-eviction covered by node tests. — *ingress-guard, invalid-eviction*
@@ -61,6 +88,9 @@ continue-on-error, and in the release workflow before any publish).
 
 - [x] Every tx type reaches the tree; root is a cross-node commitment; **survives restart via
       diff replay**; cube-complete writes the root. — *apply-path, verkle-integration*
+- [x] **Feature-creep removed**: the duplicate, insecure `WASMExecutor` (raw WebAssembly with a
+      fake fallback that fabricated state transitions) and `executeTransaction` were DELETED.
+      WASM execution is storage-compute's; this module owns state only. — *state-machine.js*
 - [ ] Verkle proof verification against an **independent** verifier (not the same code that
       produced the proof).
 
