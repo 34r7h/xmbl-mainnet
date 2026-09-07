@@ -20,12 +20,15 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # HARD GATE. The eight protocol packages carry the consensus/crypto/isolation
+      # invariants; their suites must pass or the build fails. No continue-on-error.
+      - run: npm run test:protocol
       # The 8 protocol packages are plain ESM (no build). Only the app packages build,
       # and their framework toolchains (electron-builder, webpack, vite) are exercised in
       # the packaging workflow, not gated here — advisory to keep the release path clear.
       - run: npm run build --workspaces --if-present
         continue-on-error: true
-      # Module test suites are ported into the monorepo runner incrementally; advisory
+      # App/tooling package suites (cli, desktop-app) are ported incrementally; advisory
       # until each package's runner config lands, so releases aren't blocked on setup.
       - run: npm run test --workspaces --if-present
         continue-on-error: true

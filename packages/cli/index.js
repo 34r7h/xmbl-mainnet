@@ -37,12 +37,12 @@ console.log = () => {}; // Suppress during module loading
 let xid, xclt, xpc, xn, xvsm, xsc;
 
 try {
-  xid = await import('../xid/index.js');
-  xclt = await import('../xclt/index.js');
-  xpc = await import('../xpc/index.js');
-  xn = await import('../xn/index.js');
-  xvsm = await import('../xvsm/index.js');
-  xsc = await import('../xsc/index.js');
+  xid = await import('../identity/index.js');
+  xclt = await import('../cubic-ledger/index.js');
+  xpc = await import('../consensus/index.js');
+  xn = await import('../networking/index.js');
+  xvsm = await import('../state-machine/index.js');
+  xsc = await import('../storage-compute/index.js');
   
   // Restore console.log after modules loaded
   console.log = originalLog;

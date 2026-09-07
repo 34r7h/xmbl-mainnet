@@ -80,7 +80,7 @@ export class SystemSimulator extends EventEmitter {
 
     // Try to import and initialize XID
     try {
-      const { Identity } = await import('../../xid/index.js');
+      const { Identity } = await import('../../identity/index.js');
       this.modules.xid = Identity;
       this.logger.system('module_connected', { module: '@xmbl/identity', status: 'connected' });
     } catch (error) {
@@ -89,7 +89,7 @@ export class SystemSimulator extends EventEmitter {
 
     // Try to import and initialize XN
     try {
-      const { XNNode, ConnectionManager } = await import('../../xn/index.js');
+      const { XNNode, ConnectionManager } = await import('../../networking/index.js');
       this.modules.xn = { XNNode, ConnectionManager };
       this.logger.system('module_connected', { module: '@xmbl/networking', status: 'connected' });
     } catch (error) {
@@ -98,7 +98,7 @@ export class SystemSimulator extends EventEmitter {
 
     // Try to import and initialize XCLT (Ledger)
     try {
-      const { Ledger } = await import('../../xclt/index.js');
+      const { Ledger } = await import('../../cubic-ledger/index.js');
       this.modules.xclt = new Ledger({
         dbPath: './data/xsim/ledger',
         xid: this.modules.xid,
@@ -162,7 +162,7 @@ export class SystemSimulator extends EventEmitter {
 
     // Try to import and initialize XVSM (State Machine)
     try {
-      const { StateMachine } = await import('../../xvsm/index.js');
+      const { StateMachine } = await import('../../state-machine/index.js');
       this.modules.xvsm = new StateMachine({
         dbPath: './data/xsim/xvsm',
         xclt: this.modules.xclt
@@ -194,7 +194,7 @@ export class SystemSimulator extends EventEmitter {
 
     // Try to import and initialize XPC (Consensus)
     try {
-      const { ConsensusWorkflow } = await import('../../xpc/index.js');
+      const { ConsensusWorkflow } = await import('../../consensus/index.js');
       this.modules.xpc = new ConsensusWorkflow({
         dbPath: './data/xsim/xpc',
         xid: this.modules.xid,
@@ -265,7 +265,7 @@ export class SystemSimulator extends EventEmitter {
                       // Create Identity instance if needed
                       let identity = validatorIdentity;
                       if (!validatorIdentity.signTransaction || typeof validatorIdentity.signTransaction !== 'function') {
-                        const { Identity } = await import('../../xid/index.js');
+                        const { Identity } = await import('../../identity/index.js');
                         identity = new Identity(validatorIdentity.publicKey, validatorIdentity.privateKey);
                       }
                       
@@ -323,7 +323,7 @@ export class SystemSimulator extends EventEmitter {
 
     // Try to import and initialize XSC (Storage and Compute)
     try {
-      const { StorageNode, ComputeRuntime } = await import('../../xsc/index.js');
+      const { StorageNode, ComputeRuntime } = await import('../../storage-compute/index.js');
       this.modules.xsc = {
         StorageNode: StorageNode,
         ComputeRuntime: ComputeRuntime
@@ -437,7 +437,7 @@ export class SystemSimulator extends EventEmitter {
         let identity = from;
         if (!from.signTransaction || typeof from.signTransaction !== 'function') {
           // Create Identity instance from privateKey/publicKey
-          const { Identity } = await import('../../xid/index.js');
+          const { Identity } = await import('../../identity/index.js');
           identity = new Identity(from.publicKey, from.privateKey);
         }
         
@@ -519,7 +519,7 @@ export class SystemSimulator extends EventEmitter {
         let identity = from;
         if (!from.signTransaction || typeof from.signTransaction !== 'function') {
           // Create Identity instance from privateKey/publicKey
-          const { Identity } = await import('../../xid/index.js');
+          const { Identity } = await import('../../identity/index.js');
           identity = new Identity(from.publicKey, from.privateKey);
         }
         

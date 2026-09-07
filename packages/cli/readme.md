@@ -626,12 +626,12 @@ xmbl identity show nonexistent
 
 - Node.js (ES modules support)
 - All XMBL modules available in parent directory:
-  - `../xid/` - Identity module
-  - `../xn/` - Networking module
-  - `../xclt/` - Ledger module
-  - `../xpc/` - Consensus module
-  - `../xvsm/` - State machine module
-  - `../xsc/` - Storage and compute module
+  - `../identity/` - Identity module
+  - `../networking/` - Networking module
+  - `../cubic-ledger/` - Ledger module
+  - `../consensus/` - Consensus module
+  - `../state-machine/` - State machine module
+  - `../storage-compute/` - Storage and compute module
 
 ## License
 

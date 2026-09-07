@@ -6,7 +6,6 @@
 import assert from 'node:assert';
 import {
   CubicCurveSource,
-  PlaceholderCurveSource,
   CURVE_PARAM_BLOCK_SIZE,
   SECP256K1_P,
 } from './curve-source.js';

@@ -24,5 +24,8 @@
     "@xmbl/storage-compute": "*",
     "@xmbl/zero-knowledge": "*",
     "pino": "^10.1.0"
+  },
+  "scripts": {
+    "test": "node ../../scripts/run-node-tests.mjs ."
   }
 }

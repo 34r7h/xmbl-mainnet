@@ -27,10 +27,6 @@ import { createHash } from 'crypto';
  */
 export const CURVE_PARAM_BLOCK_SIZE = 64;
 
-// Domain-separation tag for the placeholder mixer. Named to make its status
-// unmistakable in any hash preimage; it is not a security parameter.
-const PLACEHOLDER_DOMAIN = 'xmbl/xid/curve-source/placeholder-insecure/v0';
-
 /**
  * Encode a single scalar into a canonical, collision-resistant-by-tagging form.
  * BigInt is handled explicitly (cube addresses/timestamps in xclt are nanosecond
@@ -134,54 +130,12 @@ export class CurveSource {
   }
 }
 
-/**
- * Deterministic PLACEHOLDER CurveSource.
- *
- * Derives the parameter block from a hash of the canonicalized request, expanded
- * to CURVE_PARAM_BLOCK_SIZE via counter-mode digesting. The output is a pure,
- * order-sensitive function of the request, so it is identical across nodes for
- * identical ledger state — and NOTHING MORE. It has no security properties and
- * must be replaced by the specified construction before use. See file header.
- */
-export class PlaceholderCurveSource extends CurveSource {
-  /**
-   * @param {CurveRequest} request
-   * @returns {Uint8Array} deterministic, insecure, stand-in parameter block
-   */
-  getCurveParams(request) {
-    const canonical = canonicalizeRequest(request);
-    const out = Buffer.alloc(CURVE_PARAM_BLOCK_SIZE);
-    let offset = 0;
-    let counter = 0;
-    // Counter-mode expansion: each digest fills up to 32 bytes; a 4-byte BE
-    // counter separates blocks. Deterministic given `canonical`.
-    while (offset < CURVE_PARAM_BLOCK_SIZE) {
-      const ctr = Buffer.alloc(4);
-      ctr.writeUInt32BE(counter, 0);
-      const digest = createHash('sha256')
-        .update(PLACEHOLDER_DOMAIN)
-        .update(ctr)
-        .update(canonical)
-        .digest();
-      const take = Math.min(digest.length, CURVE_PARAM_BLOCK_SIZE - offset);
-      digest.copy(out, offset, 0, take);
-      offset += take;
-      counter += 1;
-    }
-    return new Uint8Array(out);
-  }
-
-  /** @returns {{name:string, blockSize:number, placeholder:boolean, secure:boolean, note:string}} */
-  describe() {
-    return {
-      name: 'PlaceholderCurveSource',
-      blockSize: CURVE_PARAM_BLOCK_SIZE,
-      placeholder: true,
-      secure: false,
-      note: 'insecure deterministic stand-in; specified construction TBD; do not rely on output',
-    };
-  }
-}
+// The insecure PlaceholderCurveSource (a deterministic hash stand-in with NO security
+// properties) was DELETED for the mainnet repo. Its only consumer was its own test, and
+// leaving a zero-security curve source in a package that ships to npm is exactly the
+// footgun this repo exists to remove. The seam (abstract CurveSource) and the specified
+// construction (CubicCurveSource, below) are what remain. If a deterministic stand-in is
+// ever needed for a local benchmark, write it in the test, not in the shipped module.
 
 // ────────────────────────────────────────────────────────────────────────────
 // FINITE FIELD ARITHMETIC — shared by CubicCurveSource and downstream modules
@@ -447,14 +401,19 @@ export class CubicCurveSource extends CurveSource {
     return { p: F.p, canonical, d12, d13, normal: { nx, ny, nz }, seed, a, b, delta, nonSingular: delta !== 0n, attempts, point, pointOnCurve };
   }
 
-  /** @returns {{name:string, blockSize:number, placeholder:boolean, secure:boolean, note:string}} */
+  /** @returns {{name:string, blockSize:number, placeholder:boolean, secure:boolean, audited:boolean, note:string}} */
   describe() {
     return {
       name: 'CubicCurveSource',
       blockSize: CURVE_PARAM_BLOCK_SIZE,
       placeholder: false,
-      secure: true,
-      note: '3-point planar section on cubic hypersurface; verifiable non-singular E: y²=x³+ax+b; see whitepaper §3.1',
+      // NOT a security assertion. This is a novel construction (curves derived from
+      // the cube-of-cubes ledger) with NO third-party cryptanalysis. `secure` stays
+      // false and `audited` stays false until an external audit closes MAINNET-GATES.md
+      // §"Cubic construction". A module must never claim its own security in metadata.
+      secure: false,
+      audited: false,
+      note: '3-point planar section on cubic hypersurface; construction is verifiable-nonsingular but UNAUDITED; do not rely on for value until MAINNET-GATES.md is closed; see whitepaper §3.1',
     };
   }
 }

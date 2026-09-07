@@ -19,5 +19,8 @@
     "@xmbl/cubic-ledger": "*",
     "@xmbl/identity": "*",
     "level": "^10.0.0"
+  },
+  "scripts": {
+    "test": "node ../../scripts/run-node-tests.mjs ."
   }
 }

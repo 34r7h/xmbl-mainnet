@@ -24,6 +24,8 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
       - run: npm ci
+      # HARD GATE before any publish: the protocol invariants must hold at the tag.
+      - run: npm run test:protocol
       # Published packages are plain ESM; app builds happen in packaging, not here.
       - run: npm run build --workspaces --if-present
         continue-on-error: true

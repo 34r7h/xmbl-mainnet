@@ -6,6 +6,13 @@ import { ConsensusWorkflow, ConsensusGossip, ValidationWorker, runValidationRetr
 import { StorageNode, MarketPricing, ComputeNode } from '@xmbl/storage-compute';
 import { LeadWorker } from './lead-worker.js';
 
+// SINGLE SOURCE OF TRUTH for mainnet-readiness. While true, an XMBL_PROFILE=mainnet boot
+// is refused (see start()'s safety gate) because the protocol's ⛔ AUDIT gates in
+// MAINNET-GATES.md are still open (unaudited MAYO fork + novel cubic-curve construction).
+// Flipping this to false is the reviewed code change that opens mainnet — make it ONLY when
+// every ⛔ AUDIT gate in MAINNET-GATES.md is genuinely closed.
+export const AUDIT_GATES_OPEN = true;
+
 // LIVE means live. Filters the presence registry to lead-role addresses that are BOTH permitted (allowlist)
 // and FRESH (seen within ttlMs). `self` is always eligible: a node never gossips presence to itself, so its
 // own lastSeen is stamped once at construction and never refreshed — ageing it out would be nonsense. Falls
@@ -107,6 +114,26 @@ export class XMBLCore {
   }
   
   async start() {
+    // MAINNET SAFETY GATE. On a mainnet profile (XMBL_PROFILE=mainnet), refuse to boot
+    // while the protocol's ⛔ AUDIT gates in MAINNET-GATES.md are open. This makes that
+    // file load-bearing instead of merely documented: the node cannot silently run as
+    // mainnet on unaudited crypto (the MAYO fork + the novel cubic-curve construction).
+    //
+    // There is deliberately NO environment override. An "I acknowledge it's unaudited"
+    // flag would just be a checkbox that lets someone run unaudited crypto against real
+    // value — the exact outcome this gate exists to prevent. The ONLY way to open mainnet
+    // is to flip AUDIT_GATES_OPEN to false in source, which is a reviewed code change made
+    // when the audits in MAINNET-GATES.md actually close. Non-mainnet profiles
+    // (dev/testnet, the default) are unaffected.
+    if (process.env.XMBL_PROFILE === 'mainnet' && AUDIT_GATES_OPEN) {
+      throw new Error(
+        'XMBL mainnet boot refused: the protocol\'s security audits are not complete.\n' +
+        'Load-bearing crypto (the MAYO fork and the novel cubic-curve construction) is\n' +
+        'UNAUDITED — see the ⛔ AUDIT gates in MAINNET-GATES.md. Run a non-mainnet profile,\n' +
+        'or close those gates and set AUDIT_GATES_OPEN=false in packages/core/index.js.',
+      );
+    }
+
     // Start network
     await this.xn.start();
 

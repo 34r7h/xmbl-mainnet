@@ -8,9 +8,9 @@
 // against the mechanism. A test that asserted "emit was called" would have passed on a build where the tree
 // still ended up empty.
 //
-//   node vendor/xmbl-node/xvsm/src/apply-path.test.mjs
+//   node vendor/xmbl-node/state-machine/src/apply-path.test.mjs
 import { StateMachine } from './state-machine.js';
-import { Ledger } from '../../xclt/src/ledger.js';
+import { Ledger } from '../../cubic-ledger/src/ledger.js';
 import { rm, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
