@@ -1,0 +1,1109 @@
+{
+  "style": "",
+  "display": {
+    "appstate": {
+      "style": "display: flex;",
+      "components": [
+        {
+          "type": "content",
+          "props": {
+            "xid": "logo",
+            "xvalue": "<b style=\"padding: 4px\">xmbl</b>",
+            "xtype": "html"
+          }
+        },
+        {
+          "type": "content",
+          "props": {
+            "xid": "nav_readme",
+            "xvalue": "<a href=\"/readme\" style=\"padding: 4px 10px; color: #8be9fd; text-decoration: none; font-weight: bold;\">README</a>",
+            "xtype": "html"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "button",
+            "xid": "savestatetodb",
+            "xlabel": "Save",
+            "xactions": [
+              {
+                "api": {
+                  "commands": "$api.set({uri: \"$state\", provider: \"db\", value: $state}); location.reload()"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "button",
+            "xid": "removestatetodb",
+            "xlabel": "Clear",
+            "xactions": [
+              {
+                "api": {
+                  "commands": "$api.remove({provider: \"db\", uri: \"$state\"}); location.reload()"
+                }
+              },
+              {
+                "init": {
+                  "options": {}
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "datum": {
+      "style": "background: black; color: white;",
+      "components": [
+        {
+          "type": "content",
+          "props": {
+            "xtype": "html",
+            "xvalue": "<b padding=\"4px\">Create Datum</b><hr>",
+            "xid": "datum"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "select",
+            "xid": "type",
+            "xlabel": "type",
+            "xoptions": [
+              {
+                "name": "datum",
+                "value": "0"
+              },
+              {
+                "name": "app",
+                "value": "1"
+              },
+              {
+                "name": "component",
+                "value": "2"
+              },
+              {
+                "name": "update",
+                "value": "3"
+              },
+              {
+                "name": "action",
+                "value": "4"
+              },
+              {
+                "name": "event",
+                "value": "5"
+              },
+              {
+                "name": "tx",
+                "value": "6"
+              },
+              {
+                "name": "pointer",
+                "value": "7"
+              },
+              {
+                "name": "trait",
+                "value": "8"
+              },
+              {
+                "name": "type",
+                "value": "9"
+              }
+            ]
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "array",
+            "xid": "hooks.before",
+            "xlabel": "Hooks (before)"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "array",
+            "xid": "hooks.after",
+            "xlabel": "Hooks (after)"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "array",
+            "xid": "hooks.watch",
+            "xlabel": "Hooks (watch)"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "model",
+            "xid": "data",
+            "xlabel": "Data",
+            "xmodel": "config.types",
+            "xmode": "m",
+            "xvalue": "type"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "button",
+            "xid": "createtype",
+            "xlabel": "Create",
+            "xactions": [
+              {
+                "api": {
+                  "commands": "$api.set({value: $value, type: $value.type}); $api.init({options:{}})"
+                },
+                "init": {
+                  "options": {}
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "todo": {
+      "style": {
+        "background": "rgba(0,0,0,.5)",
+        "overflow": "scroll",
+        "display": "flex",
+        "flexWrap": "wrap",
+        "position": "top",
+        "padding": "4px"
+      },
+      "display": "flex",
+      "components": [
+        {
+          "type": "content",
+          "props": {
+            "xtype": "html",
+            "xvalue": "<b>To Do</b><hr>",
+            "xid": "todolabel"
+          }
+        },
+        {
+          "type": "content",
+          "props": {
+            "xtype": "olist",
+            "xvalue": [
+              "type maker - <b>done</b>",
+              "fucking loops - maybe add a property object to $api that defines a loop -- limits, type (recursion, for, each, while, etc). similarly, add a prop to ui and content components somehow",
+              "functions - somethings kinda flakey",
+              "routes - finish and test all scenarios",
+              "pointers - expand the feature",
+              "components - deal with updating, rethink defs to not include ANY hydration",
+              "add general component (<b>Done</b> but not tested for system integration)",
+              "update and type types",
+              "persist! <ui xid=\"teste\" xtype=\"text\">wild</ui> <b>done</b>",
+              "inputs: full fkn featured",
+              "minimize functions before hashing",
+              "Add a compute layer to the system -- (webworker, wasm, shared array)"
+            ]
+          }
+        }
+      ]
+    },
+    "api": {
+      "components": [
+        {
+          "type": "content",
+          "props": {
+            "xid": "apitesting",
+            "xtype": "html",
+            "xstyle": "padding: 2em 0",
+            "xvalue": "<b>API</b><hr>"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "text",
+            "xid": "args",
+            "xlabel": "api(args)"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "text",
+            "xid": "inputs",
+            "xlabel": "api(inputs)"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "textarea",
+            "xid": "commands",
+            "xlabel": "api(commands)",
+            "xstruct": "true",
+            "xstyle": "display: flex; flex-direction:column;"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xstyle": "width: 160px",
+            "xactions": [
+              {
+                "api": {
+                  "commands": "",
+                  "inputs": "",
+                  "outputs": ""
+                }
+              }
+            ],
+            "xadmin": true,
+            "xtype": "button",
+            "xid": "runapi",
+            "xlabel": "run api"
+          }
+        }
+      ]
+    },
+    "experiments": {
+      "style": {
+        "position": "sticky",
+        "background": "rgba(255,0,255, .6)",
+        "overflow": "scroll",
+        "zIndex": 999999,
+        "padding": "4px"
+      },
+      "components": [
+        {
+          "type": "content",
+          "props": {
+            "xid": "00abc",
+            "xtype": "html",
+            "xstyle": "margin: 2em 0",
+            "xvalue": "<b>Experiments</b><hr>"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xdata": "abc",
+            "xid": "funcstring",
+            "xtype": "button",
+            "xlabel": "funchashstring",
+            "xactions": "04feaa39747e979e92747112bc8991ff24d18ae5a7a910600698ec56edb776e6_440"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "string",
+            "xid": "utype",
+            "xdata": "hash",
+            "xlabel": "Enter Util (hash)"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "string",
+            "xid": "udata.val",
+            "xdata": "route1111",
+            "xlabel": "Route"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "string",
+            "xid": "udata.type",
+            "xdata": "7",
+            "xlabel": "Enter Type (7)"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xstyle": {
+              "width": "fit-content",
+              "padding": "1em"
+            },
+            "xaction": "utils",
+            "xactions": [
+              {
+                "api": {
+                  "commands": "$api.utils({utype: $value.utype, udata:{content: $value.udata.val, type: `7`}}).then(x=>{$api.set({uri: `routehash`, value: {hashes: x}, type: `7`})});"
+                }
+              }
+            ],
+            "xtype": "button",
+            "xid": "hashbutton",
+            "xlabel": "hash"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xstruct": "true",
+            "xparent": "mystatetest",
+            "xaction": "acto",
+            "xid": "wellgetthere",
+            "xlabel": "xstruct test",
+            "xcount": 1
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "object",
+            "xparent": "mystatetest",
+            "xid": "objecttest",
+            "xlabel": "object test"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "array",
+            "xparent": "mystatetest",
+            "xid": "arraytest",
+            "xlabel": "array test"
+          }
+        },
+        {
+          "type": "content",
+          "props": {
+            "xid": "routetests",
+            "xtype": "html",
+            "xvalue": "<br>TEST ROUTES: <a href=\"hello\">hellooooooo</a> <a href=\"/goodbye\">goodbye</a> <a href=\"/what\">what</a> <a href=\"/whacha\">whacha</a> <br>"
+          }
+        },
+        {
+          "type": "content",
+          "props": {
+            "xid": "generaltestheading",
+            "xvalue": "<b>General Component Test</b><hr>",
+            "xtype": "html"
+          }
+        },
+        {
+          "type": "general",
+          "props": {
+            "xid": "geminiimplementation",
+            "xelements": [
+              {
+                "tag": "div",
+                "style": {
+                  "padding": "20px",
+                  "border": "1px solid #ccc"
+                },
+                "children": [
+                  {
+                    "tag": "p",
+                    "id": "demoText",
+                    "content": "Hover, click, or change the input below!"
+                  },
+                  {
+                    "tag": "button",
+                    "events": {
+                      "click": "handleClick",
+                      "mouseover": "handleMouseOver",
+                      "mouseout": "handleMouseOut"
+                    },
+                    "style": {
+                      "padding": "10px",
+                      "backgroundColor": "#2196F3",
+                      "color": "white",
+                      "cursor": "pointer"
+                    },
+                    "content": "Click/Hover Me"
+                  },
+                  {
+                    "tag": "input",
+                    "id": "myInput",
+                    "events": {
+                      "change": "handleInputChange"
+                    },
+                    "style": {
+                      "marginTop": "10px"
+                    },
+                    "attrs": {
+                      "type": "text",
+                      "placeholder": "Type here..."
+                    }
+                  },
+                  {
+                    "tag": "p",
+                    "id": "inputDisplay",
+                    "content": "Input: "
+                  },
+                  {
+                    "tag": "div",
+                    "events": {
+                      "click": "clickDiv"
+                    },
+                    "style": {
+                      "marginTop": "10px",
+                      "backgroundColor": "lightblue",
+                      "padding": "10px",
+                      "cursor": "pointer"
+                    },
+                    "content": "Click this div"
+                  }
+                ]
+              }
+            ],
+            "xmethods": {
+              "handleClick": "const target = elements[0].children.find(el => el.id === 'demoText');\nif (target) {\n  target.content = 'Button clicked!';\n}\nconsole.log('Button clicked!', event);",
+              "handleMouseOver": "const target = elements[0].children.find(el => el.id === 'demoText');\nif (target) {\n  target.content = 'Mouse over button!';\n}\nconsole.log('Mouse over!', event);",
+              "handleMouseOut": "const target = elements[0].children.find(el => el.id === 'demoText');\nif (target) {\n  target.content = 'Hover, click, or change the input below!';\n}\nconsole.log('Mouse out!', event);",
+              "handleInputChange": "const input = elements[0].children.find(el => el.id === 'myInput');\nconst display = elements[0].children.find(el => el.id === 'inputDisplay');\nif (input && display) {\n  display.content = 'Input: ' + event.target.value;\n}\nconsole.log('Input changed!', event.target.value);",
+              "clickDiv": "console.log('Div Clicked', event);\nalert('Div Clicked');"
+            }
+          }
+        },
+        {
+          "type": "general",
+          "props": {
+            "xid": "geminicomplexEventTest",
+            "xelements": [
+              {
+                "tag": "div",
+                "style": {
+                  "padding": "20px",
+                  "border": "2px solid black"
+                },
+                "children": [
+                  {
+                    "tag": "p",
+                    "id": "mainText",
+                    "content": "Interact with the elements below!"
+                  },
+                  {
+                    "tag": "button",
+                    "id": "outerButton",
+                    "events": {
+                      "click": "outerButtonClick"
+                    },
+                    "style": {
+                      "margin": "10px",
+                      "padding": "10px"
+                    },
+                    "content": "Outer Button"
+                  },
+                  {
+                    "tag": "div",
+                    "style": {
+                      "border": "1px solid gray",
+                      "padding": "10px",
+                      "margin": "10px"
+                    },
+                    "children": [
+                      {
+                        "tag": "p",
+                        "id": "innerParagraph",
+                        "content": "Inner paragraph"
+                      },
+                      {
+                        "tag": "button",
+                        "id": "innerButton",
+                        "events": {
+                          "click": "innerButtonClick",
+                          "dblclick": "innerButtonDoubleClick"
+                        },
+                        "style": {
+                          "margin": "5px",
+                          "padding": "8px"
+                        },
+                        "content": "Inner Button"
+                      },
+                      {
+                        "tag": "input",
+                        "id": "innerInput",
+                        "events": {
+                          "input": "innerInputChanged"
+                        },
+                        "style": {
+                          "margin": "5px"
+                        },
+                        "attrs": {
+                          "type": "text",
+                          "placeholder": "Type here"
+                        }
+                      },
+                      {
+                        "tag": "p",
+                        "id": "inputDisplayInner",
+                        "content": "Input: "
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "select",
+                    "id": "mySelect",
+                    "events": {
+                      "change": "selectChanged"
+                    },
+                    "style": {
+                      "margin": "10px"
+                    },
+                    "children": [
+                      {
+                        "tag": "option",
+                        "attrs": {
+                          "value": "option1"
+                        },
+                        "content": "Option 1"
+                      },
+                      {
+                        "tag": "option",
+                        "attrs": {
+                          "value": "option2"
+                        },
+                        "content": "Option 2"
+                      },
+                      {
+                        "tag": "option",
+                        "attrs": {
+                          "value": "option3"
+                        },
+                        "content": "Option 3"
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "p",
+                    "id": "selectDisplay",
+                    "content": "Selected: "
+                  },
+                  {
+                    "tag": "div",
+                    "id": "mouseArea",
+                    "events": {
+                      "mousemove": "mouseMoved",
+                      "mouseenter": "mouseEntered",
+                      "mouseleave": "mouseLeft"
+                    },
+                    "style": {
+                      "width": "200px",
+                      "height": "100px",
+                      "border": "1px solid red",
+                      "margin": "10px"
+                    },
+                    "content": "Mouse Area"
+                  },
+                  {
+                    "tag": "p",
+                    "id": "mouseDisplay",
+                    "content": "Mouse: "
+                  }
+                ]
+              }
+            ],
+            "xmethods": {
+              "outerButtonClick": "console.log('Outer button clicked!', event);\nelements[0].children.find(el => el.id === 'mainText').content = 'Outer button clicked!';\nevent.preventDefault();",
+              "innerButtonClick": "console.log('Inner button clicked!', event);\nelements[0].children[2].children.find(el => el.id === 'innerParagraph').content = 'Inner button clicked!';\nevent.preventDefault();",
+              "innerButtonDoubleClick": "console.log('Inner button double clicked!', event);\nelements[0].children[2].children.find(el => el.id === 'innerParagraph').content = 'Inner button double clicked!';\nevent.preventDefault();",
+              "innerInputChanged": "console.log('Inner input changed!', event.target.value);\nelements[0].children[2].children.find(el => el.id === 'inputDisplayInner').content = 'Input: ' + event.target.value;",
+              "selectChanged": "console.log('Select changed!', event.target.value);\nelements[0].children.find(el => el.id === 'selectDisplay').content = 'Selected: ' + event.target.value;",
+              "mouseMoved": "elements[0].children.find(el => el.id === 'mouseDisplay').content = 'Mouse: X=' + event.offsetX + ', Y=' + event.offsetY;",
+              "mouseEntered": "console.log('Mouse entered!', event);\nelements[0].children.find(el => el.id === 'mouseDisplay').content = 'Mouse: Entered';",
+              "mouseLeft": "console.log('Mouse left!', event);\nelements[0].children.find(el => el.id === 'mouseDisplay').content = 'Mouse: Left';"
+            }
+          }
+        },
+        {
+          "type": "general",
+          "props": {
+            "xid": "deepseekStressTest",
+            "xelements": [
+              {
+                "tag": "div",
+                "style": {
+                  "padding": "20px",
+                  "border": "3px solid #4CAF50"
+                },
+                "children": [
+                  {
+                    "tag": "h1",
+                    "style": {
+                      "color": "#333",
+                      "marginBottom": "20px"
+                    },
+                    "content": "Extensive Event Test"
+                  },
+                  {
+                    "tag": "div",
+                    "style": {
+                      "marginBottom": "30px"
+                    },
+                    "children": [
+                      {
+                        "tag": "button",
+                        "events": {
+                          "click": "basicClick",
+                          "contextmenu": "rightClick",
+                          "focus": "buttonFocus",
+                          "blur": "buttonBlur",
+                          "dblclick": "buttonDblClick",
+                          "mouseup": "buttonMouseUp",
+                          "mousedown": "buttonMouseDown"
+                        },
+                        "style": {},
+                        "content": "Basic Interactions"
+                      },
+                      {
+                        "tag": "p",
+                        "id": "basicStatus",
+                        "content": "Basic events: ",
+                        "style": {}
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "div",
+                    "style": {
+                      "marginBottom": "30px"
+                    },
+                    "children": [
+                      {
+                        "tag": "input",
+                        "attrs": {
+                          "type": "text",
+                          "placeholder": "Type here"
+                        },
+                        "events": {
+                          "input": "textInput",
+                          "blur": "textBlur",
+                          "keydown": "textKeyDown",
+                          "keyup": "textKeyUp",
+                          "change": "textChange"
+                        },
+                        "style": {}
+                      },
+                      {
+                        "tag": "select",
+                        "events": {
+                          "change": "selectChange"
+                        },
+                        "children": [
+                          {
+                            "tag": "option",
+                            "attrs": {
+                              "value": "opt1"
+                            },
+                            "content": "Option 1"
+                          },
+                          {
+                            "tag": "option",
+                            "attrs": {
+                              "value": "opt2"
+                            },
+                            "content": "Option 2"
+                          }
+                        ]
+                      },
+                      {
+                        "tag": "p",
+                        "id": "formStatus",
+                        "content": "Form status: ",
+                        "style": {}
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "div",
+                    "style": {
+                      "padding": "20px",
+                      "backgroundColor": "#f0f0f0",
+                      "marginBottom": "30px"
+                    },
+                    "events": {
+                      "mouseenter": "areaEnter",
+                      "mouseleave": "areaLeave",
+                      "wheel": "areaWheel",
+                      "dragover": "areaDragOver",
+                      "drop": "areaDrop"
+                    },
+                    "children": [
+                      {
+                        "tag": "p",
+                        "content": "Mouse Interaction Area",
+                        "style": {}
+                      },
+                      {
+                        "tag": "div",
+                        "id": "mouseTrack",
+                        "style": {
+                          "width": "100%",
+                          "height": "100px",
+                          "backgroundColor": "white",
+                          "border": "1px solid #ccc"
+                        },
+                        "events": {
+                          "mousemove": "mouseTrack"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "div",
+                    "children": [
+                      {
+                        "tag": "button",
+                        "events": {
+                          "click": "errorTest"
+                        },
+                        "style": {
+                          "backgroundColor": "#f44336"
+                        },
+                        "content": "Simulate Error"
+                      },
+                      {
+                        "tag": "button",
+                        "events": {
+                          "click": "showStateApi"
+                        },
+                        "style": {},
+                        "content": "Show $state & $api"
+                      },
+                      {
+                        "tag": "p",
+                        "id": "stateApiDisplay",
+                        "content": "",
+                        "style": {}
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "xmethods": {
+              "basicClick": "event.preventDefault();\nconst target = elements[0].children[1].children.find(el => el.id === 'basicStatus');\nif (target) {\n  target.content = 'Basic click at ' + new Date().toLocaleTimeString();\n}",
+              "rightClick": "event.preventDefault();\nconst target = elements[0].children[1].children.find(el => el.id === 'basicStatus');\nif (target) {\n  target.content = 'Right click at ' + new Date().toLocaleTimeString();\n}",
+              "buttonFocus": "const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');\nif (target) {\n  target.content = 'Button focused';\n}",
+              "buttonBlur": "const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');\nif (target) {\n  target.content = 'Button blurred';\n}",
+              "buttonDblClick": "const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');\nif (target) {\n  target.content = 'Button double clicked';\n}",
+              "buttonMouseUp": "const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');\nif (target) {\n  target.content = 'Button mouse up';\n}",
+              "buttonMouseDown": "const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');\nif (target) {\n  target.content = 'Button mouse down';\n}",
+              "textInput": "const target = elements[0].children[2].children.find(el => el.id === 'formStatus');\nif (target) {\n  target.content = 'Typing: ' + event.target.value;\n}",
+              "textBlur": "const target = elements[0].children[2].children.find(el => el.id === 'formStatus');\nif (target) {\n  target.content = 'Input blurred';\n}",
+              "textKeyDown": "const target = elements[0].children[2].children.find(el => el.id === 'formStatus');\nif (target) {\n  target.content = 'Key down: ' + event.key;\n}",
+              "textKeyUp": "const target = elements[0].children[2].children.find(el => el.id === 'formStatus');\nif (target) {\n  target.content = 'Key up: ' + event.key;\n}",
+              "textChange": "const target = elements[0].children[2].children.find(el => el.id === 'formStatus');\nif (target) {\n  target.content = 'Input changed: ' + event.target.value;\n}",
+              "selectChange": "const target = elements[0].children[2].children.find(el => el.id === 'formStatus');\nif (target) {\n  target.content = 'Selected: ' + event.target.value;\n}",
+              "areaEnter": "const target = elements[0].children[3].children[0];\nif (target) {\n  target.style.color = '#4CAF50';\n}",
+              "areaLeave": "const target = elements[0].children[3].children[0];\nif (target) {\n  target.style.color = '#333';\n}",
+              "mouseTrack": "const target = elements[0].children[3].children[1];\nif (target) {\n  target.style.backgroundColor = `hsl(${event.offsetX % 360}, 70%, 80%)`;\n}",
+              "areaWheel": "const target = elements[0].children[3].children[0];\nif (target) {\n    target.content = 'Wheel deltaY: ' + event.deltaY;\n}",
+              "areaDragOver": "event.preventDefault();\nconst target = elements[0].children[3].children[0];\nif (target) {\n  target.content = 'Drag Over';\n}",
+              "areaDrop": "event.preventDefault();\nconst target = elements[0].children[3].children[0];\nif (target) {\n    target.content = 'Dropped something!';\n}",
+              "errorTest": "event.preventDefault();\ntry {\n  undefinedElement.style.color = 'red';\n} catch(e) {\n  console.error('Caught error:', e);\n}\nthrow new Error('Simulated error');",
+              "showStateApi": "const target = elements[0].children[4].children.find(el => el.id === 'stateApiDisplay');\nif (target) {\n  target.content = '$state: ' + JSON.stringify(Object.keys($state)) + ', $api: ' + JSON.stringify(Object.keys($api));\n}"
+            }
+          }
+        },
+        {
+          "type": "content",
+          "props": {
+            "xid": "canvasexample",
+            "xtype": "html",
+            "xvalue": "<b>Canvas Experiment</b>"
+          }
+        },
+        {
+          "type": "general",
+          "props": {
+            "xid": "canvasDemo",
+            "xelements": [
+              {
+                "tag": "div",
+                "children": [
+                  {
+                    "tag": "canvas",
+                    "id": "myCanvas",
+                    "attrs": {
+                      "width": "300",
+                      "height": "150"
+                    },
+                    "style": {
+                      "border": "1px solid black"
+                    }
+                  },
+                  {
+                    "tag": "button",
+                    "events": {
+                      "click": "changeCircleColor"
+                    },
+                    "content": "Change Circle Color"
+                  },
+                  {
+                    "tag": "script",
+                    "content": "const canvas = document.getElementById('myCanvas');\nif (canvas && canvas.getContext) {\n  const ctx = canvas.getContext('2d');\n  ctx.fillStyle = 'rgb(200, 0, 0)';\n  ctx.fillRect(10, 10, 50, 50);\n  ctx.fillStyle = 'rgba(0, 0, 200, 0.5)';\n  ctx.beginPath();\n  ctx.arc(100, 50, 40, 0, Math.PI * 2, true);\n  ctx.fill();\n  ctx.fillStyle = 'black';\n  ctx.font = '20px Arial';\n  ctx.fillText('Hello Canvas', 150, 80);\n  const img = new Image();\n  img.onload = function() {\n    ctx.drawImage(img, 200, 20, 80, 80);\n  };\n}"
+                  }
+                ]
+              }
+            ],
+            "xmethods": {
+              "changeCircleColor": "const canvas = document.getElementById('myCanvas');\nif (canvas && canvas.getContext) {\n  const ctx = canvas.getContext('2d');\n  ctx.fillStyle = `rgba(${Math.floor(Math.random() * 256)}, ${Math.floor(Math.random() * 256)}, ${Math.floor(Math.random() * 256)}, 0.5)`;\n  ctx.beginPath();\n  ctx.arc(100, 50, 40, 0, Math.PI * 2, true);\n  ctx.fill();\n}"
+            }
+          }
+        },
+        {
+          "type": "layout",
+          "props": {
+            "xid": "scopes",
+            "xdisplay": {
+              "display": {
+                "side": {
+                  "style": {
+                    "background": "black",
+                    "color": "white"
+                  },
+                  "display": "flex",
+                  "components": [
+                    {
+                      "type": "ui",
+                      "props": {
+                        "xstyle": "color: pink",
+                        "xtype": "array",
+                        "xid": "newpointer.data.from",
+                        "xlabel": "layout imports track"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "layout",
+          "props": {
+            "xid": "scopes",
+            "xdisplay": {
+              "display": {
+                "side": {
+                  "style": {
+                    "background": "brown",
+                    "color": "gray"
+                  },
+                  "display": "flex",
+                  "components": [
+                    {
+                      "type": "ui",
+                      "props": {
+                        "xstyle": "color: pink",
+                        "xtype": "array",
+                        "xid": "newpointer.data.from",
+                        "xlabel": "layout imports track"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "array",
+            "xid": "newpointer.data.from",
+            "xlabel": "from"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "array",
+            "xid": "newpointer.data.to",
+            "xlabel": "to"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "text",
+            "xid": "newpointer.data.how",
+            "xlabel": "how"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "button",
+            "xid": "newpointer.button",
+            "xlabel": "new pointer",
+            "xactions": [
+              {
+                "set": {
+                  "type": "7",
+                  "value": "$value.newpointer"
+                }
+              },
+              {
+                "init": {
+                  "options": {}
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "content",
+          "props": {
+            "xtype": "html",
+            "xid": "createactions",
+            "xvalue": "<b>Create Actions</b>",
+            "xname": "Create Actions"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "select",
+            "xoptions": [
+              {
+                "name": "api",
+                "value": "api"
+              },
+              {
+                "name": "init",
+                "value": "init"
+              },
+              {
+                "name": "get",
+                "value": "get"
+              },
+              {
+                "name": "remove",
+                "value": "remove"
+              },
+              {
+                "name": "set",
+                "value": "set"
+              },
+              {
+                "name": "tx",
+                "value": "tx"
+              },
+              {
+                "name": "utils",
+                "value": "utils"
+              }
+            ],
+            "xid": "createactions.actiontype",
+            "xlabel": "Action Type"
+          }
+        },
+        {
+          "type": "content",
+          "props": {
+            "xtype": "text",
+            "xstate": [
+              "config",
+              "actions",
+              "$_actiontype",
+              "description"
+            ],
+            "xid": "createactions.description"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "array",
+            "xid": "createactions.actionstack",
+            "xlabel": "Action Stack",
+            "xdata": []
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xtype": "button",
+            "xid": "showmeta",
+            "xlabel": "META on/off",
+            "xactions": [
+              {
+                "api": {
+                  "commands": "$api.set({uri: `show.meta`, value: !$state.show.meta})"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "content",
+          "props": {
+            "xif": [
+              "$state.show",
+              "$state.show.meta"
+            ],
+            "xtype": "text",
+            "xid": "showstateselect",
+            "xstate": [
+              "routes"
+            ],
+            "xname": "tomtom"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xlabel": "stateselect",
+            "xid": "stateselect",
+            "xtype": "state"
+          }
+        },
+        {
+          "type": "content",
+          "props": {
+            "xid": "pointertest",
+            "xtype": "html",
+            "xname": "pointertest",
+            "xif": [],
+            "xpoint": "074c3b18bd6443865541cb76368621afa96b6ad62387fcb96971e88b6325eecc_839"
+          }
+        },
+        {
+          "type": "ui",
+          "props": {
+            "xstyle": {
+              "width": "fit-content",
+              "padding": "1em"
+            },
+            "xaction": "utils",
+            "xactions": [
+              {
+                "api": {
+                  "async": true,
+                  "commands": "return $api.set({value: {data: {from:[$value.stateselect],  how:`route`, to:[`tbd`]}} , type:`7`});"
+                }
+              },
+              {
+                "set": {
+                  "uri": "route2",
+                  "value": "wtf"
+                }
+              },
+              {
+                "api": {
+                  "commands": "console.log({$value, $state, $outputs: $value.$outputs[1]}); return 24342"
+                }
+              }
+            ],
+            "xid": "test_button"
+          }
+        }
+      ]
+    }
+  }
+}

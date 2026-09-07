@@ -1,0 +1,31 @@
+# deps
+node_modules/
+# js builds
+dist/
+dist-node/
+dist-miniapp/
+build/
+*.tsbuildinfo
+# rust builds
+target/
+Cargo.lock
+# runtime chain state (deployment, never source)
+data/
+*.leveldb/
+keys/
+*.pid
+*.sock
+# packaging output
+release-artifacts/
+*.dmg
+*.AppImage
+*.exe
+*.deb
+*.rpm
+# env / local
+.env
+.env.*
+!.env.example
+.DS_Store
+coverage/
+*.log

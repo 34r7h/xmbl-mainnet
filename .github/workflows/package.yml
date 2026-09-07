@@ -1,0 +1,88 @@
+name: Package
+
+# Builds distributable binaries for every target and uploads them to the GitHub Release
+# for the current tag. Called by release.yml; also runnable on demand.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    name: Desktop (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: mac
+          - os: ubuntu-latest
+            target: linux
+          - os: windows-latest
+            target: win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build desktop app (${{ matrix.target }})
+        working-directory: packages/desktop-app
+        run: npx --yes electron-builder --${{ matrix.target }} --publish never
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            packages/desktop-app/dist/*.dmg
+            packages/desktop-app/dist/*.AppImage
+            packages/desktop-app/dist/*.deb
+            packages/desktop-app/dist/*.exe
+
+  web:
+    name: Web bundle (explorer + app-builder)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w apps/app-builder --if-present
+      - name: Bundle explorer (static)
+        run: |
+          mkdir -p release-artifacts
+          tar -czf release-artifacts/xmbl-explorer-web.tgz -C apps/visualizer .
+          if [ -d apps/app-builder/dist ]; then
+            tar -czf release-artifacts/xmbl-app-builder-web.tgz -C apps/app-builder/dist .
+          fi
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: release-artifacts/*.tgz
+
+  extension:
+    name: Browser extension (zip)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w packages/browser-extension --if-present
+      - name: Zip extension
+        run: |
+          mkdir -p release-artifacts
+          SRC=packages/browser-extension/dist
+          [ -d "$SRC" ] || SRC=packages/browser-extension
+          (cd "$SRC" && zip -r - .) > release-artifacts/xmbl-browser-extension.zip
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: release-artifacts/xmbl-browser-extension.zip

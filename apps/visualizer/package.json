@@ -1,0 +1,12 @@
+{
+  "name": "@xmbl/explorer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "XMBL Explorer — a live, educational 3D visualizer of the cube-curve ledger. Connects to any XMBL node's status endpoint, with a deterministic demo fallback.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "npx --yes serve -l 5180 .",
+    "start": "npx --yes serve -l 5180 ."
+  }
+}

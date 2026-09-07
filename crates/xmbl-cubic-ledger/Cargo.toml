@@ -1,0 +1,18 @@
+[package]
+name = "xmbl-cubic-ledger"
+description = "XMBL Cubic Ledger Technology: hash-placed blocks into 9-block faces into 3-face cubes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["xmbl", "blockchain", "post-quantum"]
+categories = ["cryptography::cryptocurrencies"]
+
+[dependencies]
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+xmbl-identity = { version = "0.1.0", path = "../xmbl-identity" }

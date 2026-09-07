@@ -1,0 +1,199 @@
+{
+  "lexicon": [
+    "datum",
+    "app",
+    "component",
+    "update",
+    "action",
+    "event",
+    "tx",
+    "pointer",
+    "trait",
+    "type"
+  ],
+  "types": {
+    "0": {
+      "xid": "string",
+      "oid": "string",
+      "type": "number",
+      "nonce": "number",
+      "hooks": {
+        "before": "array",
+        "watch": "array",
+        "after": "array"
+      },
+      "time": "number",
+      "data": "object"
+    },
+    "1": {
+      "datums": "array",
+      "deploy": "array",
+      "index": "object",
+      "config": "object",
+      "scopes": "object",
+      "stack": "array",
+      "accounts": "object",
+      "token": "string"
+    },
+    "2": {
+      "type": "string",
+      "props": "object"
+    },
+    "3": {
+      "target": "string",
+      "diffops": "array",
+      "elements": "object"
+    },
+    "4": {
+      "name": "string",
+      "inputs": "object",
+      "commands": "array",
+      "tests": "array",
+      "outputs": "object"
+    },
+    "5": {
+      "schedule": "object",
+      "name": "string",
+      "actions": "array",
+      "data": "object"
+    },
+    "6": {
+      "chain": "string",
+      "from": "array",
+      "to": "array",
+      "asset": "string",
+      "amount": "string",
+      "seq": "number",
+      "prev": "string",
+      "unspent": "string"
+    },
+    "7": {
+      "from": "array",
+      "to": "array",
+      "how": "string"
+    },
+    "8": {
+      "type": "string",
+      "updates": "array"
+    },
+    "9": {
+      "name": "string",
+      "model": "object",
+      "prefix": "string"
+    }
+  },
+  "actions": {
+    "init": {
+      "description": "re-initializes application"
+    },
+    "api": {
+      "description": "runs code with provided args/inputs. injects $state and $api",
+      "args": {
+        "args": {
+          "types": [
+            "string",
+            "array"
+          ]
+        },
+        "commands": {
+          "types": [
+            "string"
+          ]
+        },
+        "inputs": {
+          "types": [
+            "string",
+            "array"
+          ]
+        }
+      }
+    },
+    "get": {
+      "description": "gets data from a specified uri location and provider",
+      "args": {
+        "uri": {
+          "types": [
+            "string",
+            "array"
+          ]
+        },
+        "provider": {
+          "types": [
+            "string"
+          ]
+        }
+      }
+    },
+    "remove": {
+      "description": "removes data from a specified location of provider",
+      "args": {
+        "uri": {
+          "types": [
+            "string",
+            "array"
+          ]
+        },
+        "provider": {
+          "types": [
+            "string"
+          ]
+        },
+        "type": {
+          "types": "string"
+        }
+      }
+    },
+    "set": {
+      "description": "sets data to a specified location",
+      "args": {
+        "uri": {
+          "types": [
+            "string",
+            "array"
+          ]
+        },
+        "provider": {
+          "types": [
+            "string"
+          ]
+        },
+        "type": {
+          "types": "string"
+        },
+        "value": {
+          "types": "Any"
+        }
+      }
+    }
+  },
+  "models": {},
+  "routes": [
+    {
+      "to": [
+        "022585b7bc971cb19b71bdde25c99b45d98a301fce860a3da69c7ca6242d3267_108"
+      ],
+      "how": "route",
+      "from": [
+        "hello"
+      ]
+    },
+    {
+      "to": [
+        "0299a605b4bef7ff202cdac0bfa18e2e845c338e25aef22ae53a203c2a772ec7_400"
+      ],
+      "how": "route",
+      "from": [
+        "goodbye"
+      ]
+    },
+    {
+      "to": [
+        "02246b8ad38ce5061be60c9f986b8b9b6a702571f5c4f27a5b166c3c3c92dae1_281"
+      ],
+      "how": "route",
+      "from": [
+        "readme"
+      ]
+    }
+  ]
+}

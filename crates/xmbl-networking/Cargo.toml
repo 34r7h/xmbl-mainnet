@@ -1,0 +1,17 @@
+[package]
+name = "xmbl-networking"
+description = "XMBL peer-to-peer networking layer: discovery, gossip, routing."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["xmbl", "blockchain", "post-quantum"]
+categories = ["cryptography::cryptocurrencies"]
+
+[dependencies]
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true

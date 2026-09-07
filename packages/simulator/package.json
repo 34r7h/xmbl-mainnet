@@ -1,0 +1,23 @@
+{
+  "name": "@xmbl/simulator",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "description": "XMBL Simulator",
+  "dependencies": {
+    "@faker-js/faker": "^8.4.1",
+    "chance": "^1.1.13"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/34r7h/xmbl-mainnet.git",
+    "directory": "packages/simulator"
+  },
+  "exports": {
+    ".": "./index.js"
+  }
+}

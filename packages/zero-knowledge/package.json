@@ -1,0 +1,24 @@
+{
+  "name": "@xmbl/zero-knowledge",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "description": "XZK — experimental, UNAUDITED ZK cube-curve state-commitment (post-quantum, hash-based; composes with MAYO, not CurveSource)",
+  "scripts": {
+    "test": "NODE_OPTIONS=--experimental-vm-modules npx jest --forceExit",
+    "selftest": "node src/xzk.js && node src/fri.js"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/34r7h/xmbl-mainnet.git",
+    "directory": "packages/zero-knowledge"
+  },
+  "dependencies": {}
+}

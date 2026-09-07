@@ -1,0 +1,60 @@
+name: Release
+
+# Tag-driven, dual-registry release. Push a semver tag to cut a release:
+#   git tag v0.2.0 && git push origin v0.2.0
+# Publishes every @xmbl/* package to npm and every xmbl-* crate to crates.io at the
+# tagged version, then attaches cross-platform build artifacts to a GitHub Release.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+  id-token: write   # npm provenance
+
+jobs:
+  npm:
+    name: Publish @xmbl/* to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+      - run: npm run build --workspaces --if-present
+      # Publish every public workspace at the tag version. --provenance signs the
+      # supply chain; workspaces marked "private" are skipped automatically.
+      - run: npm publish --workspaces --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  cargo:
+    name: Publish xmbl-* to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Publish in dependency order so path deps resolve to already-published versions.
+      - name: cargo publish (ordered)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          order=(xmbl-identity xmbl-networking xmbl-cubic-ledger xmbl-state-machine \
+                 xmbl-consensus xmbl-storage-compute xmbl-zero-knowledge xmbl-core)
+          for c in "${order[@]}"; do
+            echo "::group::publish $c"
+            cargo publish -p "$c" --allow-dirty
+            # let the index catch up before publishing a dependent crate
+            sleep 20
+            echo "::endgroup::"
+          done
+
+  artifacts:
+    name: Attach packaged builds
+    needs: [npm, cargo]
+    uses: ./.github/workflows/package.yml
+    secrets: inherit

@@ -1,0 +1,35 @@
+{
+  "name": "xmbl-mainnet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "XMBL mainnet monorepo — eXtensible Modular Blockchain Ledger. Decoupled modules published to npm (JS/WASM) and crates.io (Rust), plus the real-time blockchain visualizer and the XMBL app builder.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/34r7h/xmbl-mainnet.git"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "visualizer": "npm run dev -w apps/visualizer",
+    "app-builder": "npm run dev -w apps/app-builder",
+    "cargo:build": "cargo build --workspace",
+    "cargo:test": "cargo test --workspace",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release:npm": "changeset publish",
+    "release:cargo": "cargo publish --workspace"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.1"
+  }
+}

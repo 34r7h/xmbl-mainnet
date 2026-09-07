@@ -1,0 +1,18 @@
+[package]
+name = "xmbl-storage-compute"
+description = "XMBL storage and compute market: availability-proved P2P storage and sandboxed WASM compute."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["xmbl", "blockchain", "post-quantum"]
+categories = ["cryptography::cryptocurrencies"]
+
+[dependencies]
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+xmbl-cubic-ledger,xmbl-identity = { version = "0.1.0", path = "../xmbl-cubic-ledger,xmbl-identity" }

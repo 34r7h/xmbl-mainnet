@@ -1,0 +1,36 @@
+# XMBL mainnet — Rust workspace.
+#
+# The eight PROTOCOL modules are dual-published: the JS/WASM package lives in
+# packages/<name> and publishes to npm; the Rust crate lives in crates/xmbl-<name>
+# and publishes to crates.io. The app/UI modules (cli, visualizer, browser-extension,
+# desktop-app, app-builder) are JS/web only and have no crate here.
+#
+# The crates are currently API-surface stubs: each mirrors its JS counterpart's public
+# surface as Rust signatures + doc comments so the crate graph, versioning, and
+# crates.io publish pipeline are real and releasable now, with the implementations
+# ported module by module. See RELEASING.md and each crate's lib.rs header.
+[workspace]
+resolver = "2"
+members = [
+  "crates/xmbl-core",
+  "crates/xmbl-identity",
+  "crates/xmbl-networking",
+  "crates/xmbl-cubic-ledger",
+  "crates/xmbl-state-machine",
+  "crates/xmbl-consensus",
+  "crates/xmbl-storage-compute",
+  "crates/xmbl-zero-knowledge",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/34r7h/xmbl-mainnet"
+authors = ["XMBL"]
+rust-version = "1.75"
+
+[workspace.dependencies]
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

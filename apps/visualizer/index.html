@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>XMBL Explorer — live cube-curve visualizer</title>
+  <link rel="stylesheet" href="./src/styles.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <header id="topbar">
+    <div class="brand"><span class="cube">◨</span> XMBL Explorer</div>
+    <div class="conn">
+      <input id="endpoint" type="text" spellcheck="false"
+             placeholder="XMBL node URL, e.g. http://localhost:7000" />
+      <button id="connect">Connect</button>
+      <span id="status" class="pill idle">demo</span>
+    </div>
+    <button id="explainToggle" class="ghost">Explain ✦</button>
+  </header>
+
+  <aside id="stats">
+    <div class="stat"><b id="s-blocks">0</b><span>blocks</span></div>
+    <div class="stat"><b id="s-faces">0</b><span>faces (×9)</span></div>
+    <div class="stat"><b id="s-cubes">0</b><span>cubes (×3)</span></div>
+    <div class="stat"><b id="s-txs">0</b><span>tx / min</span></div>
+    <div class="stat"><b id="s-root">—</b><span>state root</span></div>
+  </aside>
+
+  <section id="explain" hidden>
+    <button id="explainClose" class="x">×</button>
+    <h1>How XMBL actually works</h1>
+    <ol id="lessons"></ol>
+    <p class="foot">Rotate: drag · Zoom: scroll · This panel narrates each layer as it fills.</p>
+  </section>
+
+  <footer id="legend">
+    <span><i class="dot raw"></i>raw tx</span>
+    <span><i class="dot block"></i>block</span>
+    <span><i class="dot face"></i>sealed face</span>
+    <span><i class="dot cube"></i>sealed cube</span>
+  </footer>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>

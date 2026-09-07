@@ -1,0 +1,3234 @@
+<div
+    style="
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    "
+    :style="`background: ${props.color}`"
+  >
+    <div
+      style="
+        background: rgba(0, 0, 0, 0.1);
+        width: 100%;
+        height: 10%;
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex-wrap: wrap;
+      "
+    >
+      1 Dynamic component test <component :is="ui" xtype="text" xid="componenting" />
+    </div>
+    <div
+      style="
+        background: rgba(0, 0, 0, 0.1);
+        width: 10%;
+        height: 100%;
+        position: absolute;
+        top: 50%;
+        right: 0;
+        transform: translateY(-50%);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      "
+    >
+      2 {{ $state }}
+    </div>
+    <div
+      style="
+        background: rgba(0, 0, 0, 0.1);
+        width: 100%;
+        height: 10%;
+        position: absolute;
+        bottom: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      "
+    >
+      3
+    </div>
+    <div
+      style="
+        background: rgba(0, 0, 0, 0.1);
+        width: 10%;
+        height: 100%;
+        position: absolute;
+        top: 50%;
+        left: 0;
+        transform: translateY(-50%);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      "
+    >
+      4
+      <!-- 4 the layout will take styles, data, hooks, and components / content. a layoutid will be the
+      layout's hash, hosted in db. -->
+    </div>
+    <div
+      style="
+        background: rgba(0, 0, 0, 0.1);
+        width: 80%;
+        height: 80%;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        display: flex;
+        overflow: scroll;
+      "
+    >
+      <!-- 5 -->
+      <layout
+        v-if="props.name != props.parent"
+        name="child"
+        :color="mycolor || `rgba(0, 0, 100, .5)`"
+        :parent="props.name"
+        layoutid="123abc"
+      />
+      <div v-else>
+        5 State of the Layout
+        <!-- <object
+          type="application/pdf"
+          data="https://pdfobject.com/pdf/sample.pdf"
+          style="height: 50%; width: 100%"
+        ></object> -->
+        <content
+          xid="abdec"
+          xtype="embed"
+          xvalue="http://research.nhm.org/pdfs/10840/10840-001.pdf"
+        />
+        <content xid="abc" xtype="olist" :xvalue="['hello', 'my', 'baby']" />
+        <content xid="abc" xtype="ulist" :xvalue="['goodbye', 'my', 'darling']" />
+
+        <!-- text, markdown, html, and iframe test -->
+
+        <!-- <content xtype="iframe" xid="content-iframe" xvalue="https://v2.xmbl.org" />
+        <content xtype="text" xid="content-text" :xvalue="$state.config.whatfuck" />
+
+        <content
+          xtype="markdown"
+          :xvalue="`
+# hello
+where are you from?
+1. ok  
+2. no 
+- ho 
+## no`"
+          xid="markdowntest"
+        />
+        <content
+          xtype="html"
+          xvalue="<div>i'm <b>breakfast</b> <a href>adn so can uyou</a></div><div>Sure but are you a new line?</div><br>and are you after a break?"
+          xid="htmltest"
+        /> -->
+
+        <!-- Table test -->
+        <!-- tabletest=arraywithorder [1,0,2]
+        <content
+          xtype="table"
+          xid="tabletest=arraywithorder"
+          :xorder="[1, 0, 2]"
+          :xvalue="[
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9]
+          ]"
+        />
+        tabletest=arraywithcolumns ['a', 'b', 'c']
+        <content
+          xtype="table"
+          xid="tabletest=arraywithcolumns"
+          :xcolumns="['a', 'b', 'c']"
+          :xvalue="[
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9]
+          ]"
+        />
+        orderless, columnless array
+        <content
+          xtype="table"
+          xid="tabletest=array"
+          :xvalue="[
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9]
+          ]"
+        />
+        tabletest=arraywithcolumns and order
+        <content
+          xtype="table"
+          xid="tabletest=arraywithcolumns and order"
+          :xcolumns="['a', 'b', 'c']"
+          :xorder="[1, 0, 2]"
+          :xvalue="[
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9]
+          ]"
+        />
+        tabletest2=objectwithorderedcolumns
+        <content
+          xtype="table"
+          xid="tabletest2=objectwithorderedcolumns"
+          :xcolumns="['sex', 'name']"
+          :xvalue="[
+            { name: 'me', sex: 'fuckyea' },
+            { name: 'you', sex: 'get it' },
+            { name: 'we', sex: 'inside' },
+            { name: 'they', sex: 'outside' }
+          ]"
+        />
+        tabletest2=plainobject
+        <content
+          xtype="table"
+          xid="tabletest2=plainobject"
+          :xvalue="[
+            { name: 'me', sex: 'fuckyea' },
+            { name: 'you', sex: 'get it' },
+            { name: 'we', sex: 'inside' },
+            { name: 'they', sex: 'outside' }
+          ]"
+        /> -->
+
+        <!-- media test -->
+        <!-- <content
+        xtype="image"
+        xid="content-image"
+        xvalue="https://nb.scene7.com/is/image/NB/m680vp8_nb_04_i?$pdpflexf22x$&qlt=80&fmt=webp&wid=880&hei=880"
+      /> -->
+        <!-- <content
+          xtype="audio"
+          xid="audio-test"
+          xvalue="https://download.samplelib.com/mp3/sample-3s.mp3"
+        /> -->
+        <!-- <content
+          xtype="video"
+          xid="content-test"
+          xvalue="http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4
+"
+        /> -->
+
+        <!-- input test -->
+        <!-- 
+        <ui xid="testtextarea" xname="test" xtype="textarea" xlabel="textarea" />
+
+        <ui
+          xtype="select"
+          xid="content-select"
+          xlabel="Crunchy"
+          :xoptions="[
+            { name: 'just me & the boy`s', value: 'me & the boy`s' },
+            { name: 'just you & the boy`s', value: 'you & the boy`s', selected: true }
+          ]"
+        />
+
+        <ui
+          v-for="input in [
+            'checkbox',
+            'color',
+            'date',
+            'datetime-local',
+            'email',
+            'file',
+            'month',
+            'number',
+            'password',
+            'radio',
+            'range',
+            'search',
+            'tel',
+            'text',
+            'time',
+            'url',
+            'week'
+          ]"
+          :key="input"
+          :xid="input"
+          :xname="`${input}_test`"
+          :xlabel="input"
+          :xtype="input"
+        />
+        <ui xid="test" xlabel="test" xtype="button" /> 
+        -->
+      </div>
+    </div>
+  </div>
+
+
+  <layout
+      :xdisplay="{
+        t: {
+          display: 'flex',
+          components: [
+            {
+              type: 'content',
+              props: {
+                xtype: 'text',
+                xid: 'identification_',
+                xvalue: 'hello baby',
+                xname: 'tomtom'
+              }
+            }
+          ]
+        },
+        r: {
+          style: { height: '100px', width: '100px' },
+          display: 'flex',
+          components: [
+            {
+              type: 'content',
+              props: {
+                xtype: 'text',
+                xid: 'identification_',
+                xvalue: 'hello baby',
+                xname: 'tomtom'
+              }
+            }
+          ]
+        },
+        b: {
+          style: { height: '100px', width: '100px' },
+          display: 'flex',
+          components: [
+            {
+              type: 'content',
+              props: {
+                xtype: 'text',
+                xid: 'identification_',
+                xvalue: 'hello baby',
+                xname: 'tomtom'
+              }
+            }
+          ]
+        },
+        l: {
+          style: { height: '100px', width: '100px' },
+          display: 'flex',
+          components: [
+            {
+              type: 'content',
+              props: {
+                xtype: 'text',
+                xid: 'identification_',
+                xvalue: 'hello baby',
+                xname: 'tomtom'
+              }
+            }
+          ]
+        },
+        c: {
+          style: { height: '100px', width: '100px' },
+          display: 'flex',
+          components: [
+            {
+              type: 'ui',
+              props: {
+                xtype: 'text',
+                xid: 'identification_',
+                xdata: 'hello baby',
+                xname: 'tomtom'
+              }
+            },
+            {
+              type: 'content',
+              props: {
+                xtype: 'text',
+                xid: 'morethanone',
+                xvalue: 'second component',
+                xname: 'tomtom'
+              }
+            }
+          ]
+        }
+      }"
+    />
+
+
+    stupid fast reactivity example with colors
+
+    setInterval(() => {
+  testlayout.value.t.style.background = `rgb(${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())})`
+  testlayout.value.t.style.color = `rgb(${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())})`
+}, 1)
+
+Works in app run fn.. ish. map() didn't work and interval count doesn't matter 
+
+setInterval(() => ['t', 'r', 'b', 'l'].map((area) => {
+
+$state.home.display[area].style.zIndex = Math.floor(Math.random()*10);
+
+$state.home.display[area].style.background = `rgba(${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())},${Math.floor(255 * Math.random())}, ${Math.random()})`; 
+
+$state.home.display[area].style.width = 300 + Math.floor(Math.random() * 100) + 'px'; 
+
+$state.home.display[area].style.height = 300 + Math.floor(Math.random() * 100) + 'px'; 
+
+$state.home.display[area].style.fontSize = 1 + Math.floor(Math.random() * 30) + 'px'; 
+
+$state.home.display[area].style.color = `rgb(${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())})`;
+
+}), 2000)
+
+
+
+
+setInterval(() => ['t', 'r', 'b', 'l'].map((area) => {
+
+$state.home[area].style.zIndex = Math.floor(Math.random()*10);
+
+$state.home[area].style.background = `rgba(${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())},${Math.floor(255 * Math.random())}, ${Math.random()})`; 
+
+$state.home[area].style.width = 300 + Math.floor(Math.random() * 2000) + 'px'; 
+
+$state.home[area].style.height = 300 + Math.floor(Math.random() * 2000) + 'px'; 
+
+$state.home[area].style.fontSize = 1 + Math.floor(Math.random() * 1000) + 'px'; 
+
+$state.home[area].style.color = `rgba(${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())}, ${Math.random()}`;
+
+}), 62)
+
+updated Working, above junk lol
+setInterval(() => ['t', 'r', 'b', 'l'].map((area) => {
+console.log($state.home)
+
+$state.home.display[area].style.zIndex = Math.floor(Math.random()*10);
+
+$state.home.display[area].style.background = `rgba(${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())},${Math.floor(255 * Math.random())}, ${Math.random()})`; 
+
+$state.home.display[area].style.width = 300 + Math.floor(Math.random() * 2000) + 'px'; 
+
+$state.home.display[area].style.height = 300 + Math.floor(Math.random() * 2000) + 'px'; 
+
+$state.home.display[area].style.fontSize = 1 + Math.floor(Math.random() * 1000) + 'px'; 
+
+$state.home.display[area].style.color = `rgba(${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())}, ${Math.random()}`;
+
+}), 62)
+
+setInterval(() => ['t', 'r', 'b', 'l', 'c'].map((area) => {
+console.log($state.home)
+
+$state.home.display[area].style.zIndex = Math.floor(Math.random()*10);
+
+$state.home.display[area].style.background = `rgba(${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())},${Math.floor(255 * Math.random())}, ${Math.random()})`; 
+
+$state.home.display[area].style.width = 300 + Math.floor(Math.random() * 1000) + 'px'; 
+
+$state.home.display[area].style.height = 300 + Math.floor(Math.random() * 1000) + 'px'; 
+
+$state.home.display[area].style.fontSize = 1 + Math.floor(Math.random() * 100) + 'px'; 
+
+$state.home.display[area].style.color = `rgba(${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())}, ${Math.floor(255 * Math.random())}, ${Math.random()}`;
+
+}), 62)
+
+
+
+DUMB SHIT
+
+34r7h@34r7hs-mbp fascia-ai % ollama run codegeex4
+>>> how to copy multi-line from clipboard to ollama in zsh shell
+To copy multi-line text from the clipboard to Ollama in a Zsh shell, you can follow these steps:
+
+1. Ensure your system has `xclip` installed for copying and pasting to/from the X11 clipboard.
+2. If `xclip` is not installed, you can install it using your package manager. For example, on Ubuntu or Debian:
+   ```
+   sudo apt-get install xclip
+   ```
+   On Fedora:
+   ```
+   sudo dnf install xclip
+   ```
+
+3. Open the Ollama session where you want to paste the copied text.
+
+4. To copy text from the clipboard into Ollama, use the following command in your Zsh shell:
+   ```sh
+   echo -n "Press Enter when ready to paste..." && read -s
+   xclip -selection clipboard -o | tr -d '\r' | while IFS= read -r line; do ollama -a "$line"; done
+   ```
+   Explanation of the command:
+   - `echo -n "Press Enter when ready to paste..." && read -s`: This prompts you to press Enter and waits for your input without echoing the 
+Enter key. It is a simple way to wait for user confirmation.
+   - `xclip -selection clipboard -o`: Retrieves the contents of the clipboard.
+   - `tr -d '\r'`: Removes any Windows-style carriage returns (`\r`) from the clipboard content.
+   - `while IFS= read -r line; do ollama -a "$line"; done`: Iterates over each line of the clipboard content and passes it to Oll^C
+
+>>> 
+34r7h@34r7hs-mbp fascia-ai % ollama run codegeex4
+>>> how to copy multi-line from clipboard to ollama in zsh shell on macos sonoma
+To copy text from the clipboard and paste it into a command line session like Ollama in a Zsh shell on macOS Sonoma, you can use the 
+`pbpaste` command. Here's how you can do it:
+
+1. Open your terminal or any command-line interface where you want to run the command.
+2. To copy text from the clipboard to your terminal, you can use the following command:
+   ```
+   pbcopy <(pbpaste)
+   ```
+   This command uses `pbpaste` to read text from the clipboard and pipes it into `pbcopy`, effectively copying the content of the clipboard 
+to itself.
+
+3. Now, you can type the Ollama command followed by the paste command to copy the contents:
+   ```
+   ollama <(pbpaste)
+   ```
+   This will send the copied clipboard contents as input to the Ollama program.
+
+If you want to use a specific text editor like Sublime Text or Atom, you can set up their respective commands to paste from the clipboard. 
+Here are examples for Sublime Text and Atom:
+
+For Sublime Text:
+```
+subl -n --new-window <(pbpaste)
+```
+
+For Atom:
+```
+atom -n <(pbpaste)
+```
+
+These commands open a new instance of the specified editor with the pasted text.
+
+Please note that these instructions are general and should work on macOS Sonoma. If you encounter any issues, make sure your terminal 
+emulator supports the `pbcopy` and `pbpaste` commands, which are part of the built-in pasteboard system on macOS.
+
+>>> no ollama is running in the terminal
+If Ollama is not running or if you want to run it directly from the command line to handle the pasted clipboard content, you would typically 
+need to have an Ollama executable installed and available in your system's PATH.
+
+The process of setting up Ollama to work with pasteboard operations might vary depending on how Ollama is packaged and intended to be used. 
+If Ollama provides a way to interact directly with the clipboard or if there's a specific command-line interface that you can use, you would 
+need to refer to Ollama's documentation for the correct usage.
+
+Here are some general steps that might help, assuming Ollama has a command-line interface:
+
+1. Open your terminal.
+2. Ensure that Ollama is installed and its executable is in your system's PATH. If it's not installed or if you're unsure, follow the 
+instructions provided by Ollama's documentation to install it.
+3. Check the Ollama documentation for any specific commands or flags that allow it to process text directly from the clipboard without 
+needing a file path.
+
+If Ollama is designed to work with^C
+
+>>> no! im in the ollama app terminal and everytime i cmd+v the instance freezes
+If Ollama's command-line interface (CLI) within its application terminal doesn't accept pasteboard input through `cmd+v` as expected, you 
+might need to use a different method to send text from your clipboard into Ollama. Here are some alternatives:
+
+### Using AppleScript
+
+You can create an AppleScript that pastes the content of the clipboard into Ollama's CLI:
+
+1. Open Script Editor on your Mac.
+2. Create a new script and paste the following code:
+   ```applescript
+   tell application "Terminal"
+       activate
+       do script "pbpaste | ollama" in window 1
+   end tell
+   ```
+3. Run the script to open Terminal, activate it if it's not already active, and run `ollama` with the pasted clipboard content.
+
+### Using Automator
+
+You can create an Automator workflow that sends the pasteboard content to Ollama:
+
+1. Open Automator from your Applications/Utilities folder.
+2. Create a new Document and select "Action," then choose "Run Shell Script" under "Utilities."
+3. In the Run Shell Script action, you can use the following script:
+   ```shell
+   ollama "$(pbpaste)"
+   ```
+4. Save the workflow as an application or run it directly from Automator.
+
+### Using Keyboard Maestro
+
+If you have Keyboard Maestro installed on your Mac, you can create a macro to paste the clipboard content into Ollama:
+
+1. Open Keyboard Maestro.
+2. Create a new macro and add an action to Run Shell Script.
+3. Use the following script in the Run Shell Script action:
+   ```shell
+   ollama "$(pbpaste)"
+   ```
+4. Assign a keyboard shortcut or trigger condition to the macro.
+
+### Using Terminal with Ollama's CLI
+
+If Ollama's CLI is not designed to interact directly with the pasteboard, you may need to use alternative input methods like command-line 
+tools:
+
+1. Open a new terminal window.
+2. Use `pbpaste` to output the clipboard content to stdout and then pipe it into Ollama:
+   ```shell
+   ollama <(pbpaste)
+   ```
+3. If Ollama supports reading from stdin, this approach may work.
+
+If none of these methods work as expected or if you're still experiencing issues with pasting in the Ollama application's terminal, please 
+refer to the official documentation for Ollama or contact their support for more specific guidance on using the app's CLI with clipboard 
+operations.
+
+>>> how to let ollama read a file on my filesystem?
+To have Ollama process a file from your filesystem, you can simply provide the path to the file as an argument to the `ollama` command in 
+your terminal. Here's how you can do it:
+
+1. Open your terminal.
+2. Navigate to the directory containing the file you want to process using the `cd` command:
+   ```shell
+   cd /path/to/your/directory
+   ```
+3. Run Ollama on the file by providing its path as an argument:
+   ```shell
+   ollama /path/to/your/file.txt
+   ```
+Replace `/path/to/your/file.txt` with the actual path to the file you want to process.
+
+If Ollama is a web-based application, you would typically use a web interface or API to upload or load files. You'll need to refer to the 
+Ollama documentation for instructions on how to do this, as it can vary depending on the specific implementation of the application.
+
+For more advanced file handling, such as processing multiple files or using glob patterns, you may need to explore the options available in 
+the terminal or the web interface provided by Ollama.
+
+>>> fucking u don't even know ollama is a local llm. wtf wrong w u?
+I apologize if I misunderstood your previous request or if there was any confusion. As an AI developed by OpenAI, I'm designed to be as 
+helpful and accurate as possible based on the information provided. If you have a specific question or need further assistance with using 
+Ollama's local language model capabilities, please provide more details, and I'll do my best to assist you!
+
+
+## Setting content instantly
+
+Object.entries($state.config.actions).map((x) => {
+  console.log({ x })
+  $api.set({
+    uri: 'home.display.t.components.' + $state.home.display.t.components.length,
+    value: {
+      type: 'content',
+      props: {
+        xif: [true],
+        xtype: 'text',
+        xid: 'api_' + x[0],
+        xvalue: x[0] + ': ' + JSON.stringify(x[1]),
+
+        xname: 'api reference'
+      }
+    }
+  })
+})
+
+
+### html variation with string interloption
+
+Object.entries($state.config.actions).map(x=>{
+ console.log({x})
+ $api.set({
+  uri: 'home.display.t.components.' + $state.home.display.t.components.length, value: {
+    type: 'content',
+    props: {
+      xif: [true],
+      xtype: 'html',
+      xid: 'api_'+x[0],
+      xvalue: `${x[0]} <br> ${x[1].description}`,
+      xname: 'api reference'
+    }
+  }})
+})
+
+NOT WORKING DB CALL FROM BOX 
+
+$api.utils({utype: 'db', udata: {type: 'indexed', action: 'set', id: 'id', loc: 'state', data: 'oyt'}})
+
+- Set -  
+
+Fails: 
+$api.set({uri: 'fonduuu', value: 34, type:'1'})
+
+Working:
+
+$api.set({uri: 'fonduuu', value: {data: {type: 'ui', props: {}}}, type:'2'})
+
+maps components to 
+JSON.parse(JSON.stringify($state.home.display.c.components)).map(x => { console.log({x}); $api.set({type: 2, value: {data:x}})});
+
+put home dir into component datum structure
+$api.set({uri: 'temp.changingprops.props', value: $state.home.display});
+$api.set({uri: 'temp.changingprops.type', value: $state.home.style});
+$api.set({type: 2, value: {data: $api.get({uri:'temp.changingprops'})}})
+
+alternative
+$state.temp = {changingprops:{}};
+$state.temp.changingprops.props = $state.home.display;
+$state.temp.changingprops.type = $state.home.style;
+$api.set({type: 2, value: {data: $state.temp.changingprops}});
+
+
+
+sets hardcoded layout component for tests
+$state.route1 = {
+    style: 'display: flex; flex-wrap: wrap; align-content: space-around',
+    display: {
+      t: {
+        style: {
+          background: 'rgba(0,0,0,.5)',
+          overflow: 'scroll',
+          position: 'top',
+          padding: '4px',
+          display: 'flex',
+        },
+        components: [
+          {
+            type: 'content',
+            props: {
+              xif: [true],
+              xtype: 'text',
+              xid: 'identification',
+              xvalue: 'love',
+              // xstate: ['config', 'actions'],
+              xname: 'tomtom'
+            }
+          }
+        ]
+      }
+    }
+  }
+
+
+  # Routing
+
+http://localhost:5173/thanksjay/yourock?love=ya&thank=you#forlettingmestay
+
+  path: { "url": "http://localhost:5173/thanksjay/yourock?love=ya&thank=you#forlettingmestay", "hash": "forlettingmestay", "scheme": "http", "params": [ "thanksjay", "yourock" ], "query": { "love": "ya", "thank": "you" } }
+
+
+
+  # layout config Experiments
+
+  // r: {
+      //   style: {
+      //     background: 'rgba(0,0,0,.5)',
+      //     overflow: 'scroll',
+      //     fontSize: '10px',
+      //     padding: '4px'
+      //   },
+      //   display: 'flex',
+      //   components: [
+      //     {
+      //       type: 'content',
+      //       props: {
+      //         xtype: 'text',
+      //         xid: 'identification',
+      //         xvalue: 'sex',
+      //         xname: 'tomtom',
+      //         xstate: ['scopes'],
+      //         xadmin: true
+      //       }
+      //     }
+      //   ]
+      // },
+      // b: {
+      //   style: {
+      //     fontSize: '8px',
+      //     overflow: 'scroll',
+      //     padding: '4px'
+      //   },
+      //   display: 'flex',
+      //   components: [
+      //     {
+      //       type: 'content',
+      //       props: {
+      //         xtype: 'html',
+      //         xid: 'identification_',
+      //         xvalue: `oh so it's pretty much g2g`,
+      //         xname: 'tomtom',
+      //         xadmin: true
+      //       }
+      //     }
+      //   ]
+      // },
+      // l: {
+      //   style: { fontSize: '12px', padding: '4px', background: '#555', color: '#eee' },
+      //   display: 'flex',
+      //   components: [
+      //     {
+      //       type: 'content',
+      //       props: {
+      //         xtype: 'html',
+      //         xid: 'identification',
+      //         xvalue:
+      //           '<h1>TODO:</h1> <ol><li>Think through init(). </li><li>create a type-creation process. </li><li>minify functions before hashing and saving. </li><li>move db stuff (except sync) out of utils. use providers with get/set/remove for indexed (local), cloud, and blockchains</li><li>updates reference previous update and original source, forming a determinnistic chain of discovery</li><li>inode == pointers</li><li>check time used for micromining to quantify compute metrics</li></ol>',
+      //         xname: 'tomtom'
+      //       }
+      //     }
+      //   ]
+      // },
+
+      /**
+ * 
+ Perfect centering style:
+ style: {
+          height: '100vh',
+          width: '50vw',
+          background: 'rgba(255,255,255, .6)',
+          'overflow-y': 'scroll',
+          top: '0',
+          left: '50%',
+          transform: 'translateX(-50%) translateY(0%)',
+          position: 'absolute',
+          display: 'flex',
+          'flex-direction': 'column',
+          // flexWrap: 'wrap',
+          margin: '1em',
+          'align-items': 'left'
+        },
+ * 
+ */
+
+
+          // {
+          //    // functions on load run(fn)
+          //   type: 'content',
+          //   props: {
+          //     xtype: 'text',
+          //     xvalue: '...',
+          //     xid: 'theend'
+          //   }
+          // },
+          // {
+          //   type: 'content',
+          //   props: {
+          //     xtype: 'html',
+          //     xstyle: 'padding: 2em 0 0 0',
+          //     xvalue:
+          //       '<b>Get</b><p>Gets value from state, http [GET], localhost/indexeddb, blockchains</p>'
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xstyle: 'display: flex; flex-direction:column; margin-bottom: 1em;',
+          //     xtype: 'text',
+          //     xid: 'provider',
+          //     xlabel: 'Provider '
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xtype: 'text',
+          //     xstyle: 'display: flex; flex-direction:column; margin-bottom: 1em;',
+          //     xid: 'uri',
+          //     xlabel: 'Uri ',
+          //     xif: ['true', 2 == 2] // testing conditional with 2 obvious cases
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xtype: 'text',
+          //     xstyle: 'display: flex; flex-direction:column; margin-bottom: 1em;',
+          //     xid: 'type',
+          //     xlabel: 'Type '
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xstyle: { width: 'fit-content', padding: '1em' },
+          //     xaction: 'get',
+          //     xtype: 'button',
+          //     xid: 'getbutton',
+          //     xlabel: 'get',
+          //     xadmin: true
+          //   }
+          // },
+          // {
+          //   type: 'content',
+          //   props: {
+          //     xtype: 'html',
+          //     xstyle: 'padding: 2em 0 0 0',
+          //     xvalue:
+          //       '<b>Set</b><p>Puts data into state, http [POST], localhost/indexeddb, blockchains</p>'
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xtype: 'text',
+          //     xid: 'provider',
+          //     xlabel: 'Provider '
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xtype: 'text',
+          //     xid: 'uri',
+          //     xlabel: 'Uri ',
+          //     xif: ['true', 2 == 2] // testing conditional with 2 obvious cases
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xtype: 'text',
+          //     xid: 'type',
+          //     xlabel: 'Type '
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xtype: 'text',
+          //     xid: 'value',
+          //     // xdata: 'hello baby',
+          //     xlabel: 'Value '
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xevents: {
+          //       // testing drag event
+          //       onclick: () => console.log('yo'),
+          //       ondblclick: () => console.log('yoyo'),
+          //       ondrag: () => console.log('such a drag man')
+          //     },
+          //     xstyle: { width: 'fit-content' },
+          //     xaction: 'set',
+          //     xtype: 'button',
+          //     xid: 'setbutton',
+          //     xlabel: 'set',
+          //     xadmin: true
+          //   }
+          // },
+
+          // {
+          //   type: 'content',
+          //   props: {
+          //     xtype: 'html',
+          //     xstyle: 'padding: 2em 0 0 0',
+          //     xvalue: '<b>Remove</b>'
+          //   }
+          // },
+          // {
+          //    // functions on load run(fn)
+          //   type: 'ui',
+          //   props: {
+          //     xtype: 'text',
+          //     xid: 'provider',
+          //     xlabel: 'Provider '
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xtype: 'text',
+          //     xid: 'uri',
+          //     xlabel: 'Uri ',
+          //     xif: ['true', 2 == 2] // testing conditional with 2 obvious cases
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xstyle: { width: 'fit-content' },
+          //     xaction: 'remove',
+          //     xtype: 'button',
+          //     xid: 'removebutton',
+          //     xlabel: 'remove',
+          //     xadmin: true
+          //   }
+          // },
+          // // {
+          // //   type: 'ui',
+          // //   props: {
+          // //     xstyle: { width: 'fit-content' },
+          // //     xaction: 'set',
+          // //     xtype: 'button',
+          // //     xid: 'createbutton',
+          // //     // xdata: 'test',
+          // //     xlabel: 'create',
+          // //     xadmin: true
+          // //   }
+          // // },
+          // // {
+          // //   type: 'ui',
+          // //   props: {
+          // //     xaction: 'set',
+          // //     xtype: 'button',
+          // //     xid: 'updatebutton',
+          // //     xlabel: 'update',
+          // //     xadmin: true
+          // //   }
+          // // },
+          // // {
+          // //   type: 'ui',
+          // //   props: {
+          // //     xaction: 'remove',
+          // //     xtype: 'button',
+          // //     xid: 'removebutton',
+          // //     xlabel: 'remove',
+          // //     xadmin: true
+          // //   }
+          // // },
+          // // {
+          // //   type: 'ui',
+          // //   props: {
+          // //     xaction: 'set',
+          // //     xtype: 'button',
+          // //     xid: 'setbutton',
+          // //     xlabel: 'set',
+          // //     xadmin: true
+          // //   }
+          // // },
+          // {
+          //   type: 'content',
+          //   props: {
+          //     xtype: 'html',
+          //     xstyle: 'padding: 2em 0 0 0',
+          //     xvalue: '<br><b>Utils</b>'
+          //   }
+          // },
+          // {
+          //   type: 'ui',
+          //   props: {
+          //     xtype: 'select',
+          //     xoptions: [
+          //       { name: 'db(dbdata)', value: 'db' },
+          //       { name: 'encode(tbd)', value: 'encode' },
+          //       { name: 'encrypt(tbd)', value: 'encrypt' },
+          //       { name: 'sync(db1, [...db2])', value: 'sync' },
+          //       { name: 'norm(string)', value: 'norm' },
+          //       { name: 'hash({ content, type, algo })', value: 'hash' },
+          //       { name: 'type({ val, coerce })', value: 'type' },
+          //       { name: 'validate({ val })', value: 'validate' }
+          //     ],
+          //     xid: 'utype',
+          //     xlabel: 'util(type)'
+          //   }
+          // },
+          // {
+
+          //   type: 'ui',
+          //   props: {
+          //     // xtype: 'text',
+          //     xid: 'udata',
+          //     xlabel: 'util(data)',
+          //     xstruct: true
+          //     // xif: [false]
+          //   }
+          // },
+          // {
+
+          //   type: 'ui',
+          //   props: {
+          //     xaction: 'utils',
+          //     xtype: 'button',
+          //     xid: 'utilsbutton',
+          //     xdata: 'scopes',
+          //     xlabel: 'utils',
+          //     xadmin: true
+          //   }
+          // },
+
+          state.value.home = {
+    style: 'display: flex; flex-wrap: wrap; align-content: space-between; height: 100%',
+    display: {
+      t: {
+        style: {
+          background: 'rgba(0,0,0,.5)',
+          overflow: 'scroll',
+          position: 'top',
+          padding: '4px'
+        },
+        display: 'flex',
+        components: [
+          {
+            type: 'ui',
+            props: {
+              xtype: 'button',
+              xid: 'show meta',
+              xlabel: 'META',
+              xactions: [{ set: { uri: 'show.meta', value: true } }]
+            }
+          },
+          {
+            type: 'content',
+            props: {
+              xif: ['$state.show', '$state.show.meta'],
+              xtype: 'text',
+              xid: 'showroute',
+              xstate: ['route'],
+              xname: 'tomtom'
+            }
+          },
+          {
+            type: 'ui',
+            props: {
+              xlabel: 'stateselect',
+              xid: 'stateselect',
+              xtype: 'state'
+            }
+          }
+        ]
+      },
+
+      c: {
+        style: {
+          position: 'sticky',
+          background: 'rgba(255,255,255, .6)',
+          overflow: 'scroll',
+          zIndex: 999999,
+          padding: '4px'
+        },
+        type: 'form',
+        components: [
+          // {
+          //   type: 'content',
+          //   props: {
+          //     xtype: 'html',
+          //     xstyle: 'padding: 2em 0 0 0',
+          //     xvalue:
+          //       '<h1>Creations via select menu of types. If object/array, then UI should have simple add/remove for this.</h1>'
+          //   }
+          // },
+          {
+            type: 'content',
+            props: {
+              xid: '00abc',
+              xtype: 'html',
+              xstyle: 'margin: 2em 0',
+              xvalue: '<b>Experiments</b>'
+            }
+          },
+          {
+            type: 'ui',
+            props: {
+              xtype: 'string',
+              xid: 'utype',
+              xlabel: 'Enter Util (hash)'
+            }
+          },
+          {
+            type: 'ui',
+            props: {
+              xtype: 'string',
+              xid: 'udata.content',
+              xlabel: 'Route'
+            }
+          },
+          {
+            type: 'ui',
+            props: {
+              xtype: 'string',
+              xid: 'udata.type',
+              xlabel: 'Enter Type (7)'
+            }
+          },
+          {
+            type: 'ui',
+            props: {
+              xstyle: { width: 'fit-content', padding: '1em' },
+              xaction: 'utils',
+              xactions: [{ act: { commands: '$api.set({uri: `routehash`, value: `hello`})' } }],
+              xtype: 'button',
+              xid: 'hashbutton',
+              xlabel: 'hash'
+            }
+          },
+          {
+            // functions on load run(fn)
+            type: 'ui',
+            props: {
+              // xtype: 'state',
+              xstruct: 'true',
+              xparent: 'mystatetest',
+              xaction: 'acto',
+              xid: 'wellgetthere',
+              // xmode: 's',
+              xlabel: 'xstruct test',
+              xcount: 1
+            }
+          },
+
+          {
+            // functions on load run(fn)
+            type: 'ui',
+            props: {
+              xtype: 'object',
+              // xstruct: 'true',
+              xparent: 'mystatetest',
+              xid: 'objecttest',
+              // xmode: 's',
+              xlabel: 'object test'
+            }
+          },
+
+          {
+            // functions on load run(fn)
+            type: 'ui',
+            props: {
+              xtype: 'array',
+              // xstruct: 'true',
+              xparent: 'mystatetest',
+              xid: 'arraytest',
+              // xmode: 's',
+              xlabel: 'array test'
+            }
+          }
+        ]
+      }
+    }
+  }
+
+
+
+  git setup
+  
+  $api.utils({
+utype: 'git',
+udata: {
+action: 'commit',
+  options: {
+    message: 'Your commit message',
+    author: { name: 'Your Name', email: 'you@example.com' }
+  }
+}
+})
+
+
+HANDWRITTEN DATA (imported now through json files)
+
+// state.value.db = {
+    //   data: {
+    //     '074c3b18bd6443865541cb76368621afa96b6ad62387fcb96971e88b6325eecc_839': {
+    //       oid: '16eebad2ba687114438acc6c7e2b97c5fedd73a6e66f22869e68246a9e2945e3',
+    //       nonce: 839,
+    //       data: {
+    //         from: ['$_show'],
+    //          how: 'route',
+    //         to: ['074c3b18bd6443865541cb76368621afa96b6ad62387fcb96971e88b6325eecc_832']
+    //       }
+    //     },
+    //     '074c3b18bd6443865541cb76368621afa96b6ad62387fcb96971e88b6325eecc_832': {
+    //       oid: '16eebad2ba687114438acc6c7e2b97c5fedd73a6e66f22869e68246a9e2945e3',
+    //       nonce: 832,
+    //       data: {
+    //         from: ['$_show'],
+    //          how: 'doubt',
+    //         to: ['064c3b18bd6443865541cb76368621afa96b6ad62387fcb96971e88b6325eecc_831']
+    //       }
+    //     },
+    //     '064c3b18bd6443865541cb76368621afa96b6ad62387fcb96971e88b6325eecc_831': {
+    //       oid: '16eebad2ba687114438acc6c7e2b97c5fedd73a6e66f22869e68246a9e2945e3',
+    //       nonce: 831,
+    //       data: '<h1>love, love, me do<h1/>'
+    //     },
+    //     '027d645578dd114c8361a31141bc293d1f91eae875656c00943937cef7ff4082_21': {
+    //       oid: '2c3bc5295cf6be4a12c554164fa8c9c0215f3c6b09e037f805775f226108ba1d',
+    //       nonce: 21,
+    //       data: {
+    //         type: 'content',
+    //         props: {
+    //           xif: ['$state.show', '$state.show.meta'],
+    //           xtype: 'text',
+    //           xid: 'showstateselect',
+    //           xstate: ['route'],
+    //           xname: 'tomtom'
+    //         }
+    //       }
+    //     },
+    //     '02cb06e45450fbba0bc59609a41385f27bd3e7529893a6f7646e6ae955eb1276_28': {
+    //       oid: 'c002156d0db0ceeac63e7745dbe58df5a55cc3be93751b67eb1b9a7bf98acbb5',
+    //       nonce: 28,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xstruct: 'true',
+    //           xparent: 'mystatetest',
+    //           xaction: 'acto',
+    //           xid: 'wellgetthere',
+    //           xlabel: 'xstruct test',
+    //           xcount: 1
+    //         }
+    //       }
+    //     },
+    //     '0290349c8c9d1c2774ade57bafd8dff37dfdae31ef60ad0948aa24114ea966ce_32': {
+    //       oid: '6692c0e3d868094dbb9fcd1d30487ef09b36087ca9f126dd816cb206f4e451d3',
+    //       nonce: 32,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'string',
+    //           xid: 'udata.type',
+    //           xdata: '7',
+    //           xlabel: 'Enter Type (7)'
+    //         }
+    //       }
+    //     },
+    //     '02e352dca796c25a308948cc042f358983d95b485bab28c44f79f9789c2548e6_43': {
+    //       oid: 'abbdc20f0ba5b04446c54f74e9edda6854d0ac23b5a4781d47478b169e018f83',
+    //       nonce: 43,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'textarea',
+    //           xid: 'commands',
+    //           xlabel: 'api(commands)',
+    //           xstruct: 'true',
+    //           xstyle: 'display: flex; flex-direction:column;'
+    //         }
+    //       }
+    //     },
+    //     '021d7536f879ff10e12ad8dc83842c4b3a0d5d0bf5e5ab37692b5b9e0e32fb76_52': {
+    //       oid: 'c4770ae3b09a6af7cd2c3954ccb7418196d5b359b66c0515b7f32ba628375340',
+    //       nonce: 52,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'select',
+    //           xoptions: [
+    //             {
+    //               name: 'api',
+    //               value: 'api'
+    //             },
+    //             {
+    //               name: 'init',
+    //               value: 'init'
+    //             },
+    //             {
+    //               name: 'get',
+    //               value: 'get'
+    //             },
+    //             {
+    //               name: 'remove',
+    //               value: 'remove'
+    //             },
+    //             {
+    //               name: 'set',
+    //               value: 'set'
+    //             },
+    //             {
+    //               name: 'tx',
+    //               value: 'tx'
+    //             },
+    //             {
+    //               name: 'utils',
+    //               value: 'utils'
+    //             }
+    //           ],
+    //           xid: 'createactions.actiontype',
+    //           xlabel: 'Action Type'
+    //         }
+    //       }
+    //     },
+    //     '0235c831fbeabb60bb0ac9a109cdfd464be7df46cf91a99862082383d6b9d8c2_60': {
+    //       oid: 'bae9946ebf094e682cb948b49a72b74f4a6b26343980dd4818e23616c54fe9be',
+    //       nonce: 60,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xstyle: {
+    //             width: 'fit-content',
+    //             padding: '1em'
+    //           },
+    //           xaction: 'utils',
+    //           xactions: [
+    //             {
+    //               api: {
+    //                 async: true,
+    //                 commands:
+    //                   'return $api.set({value: {data: {from:[$value.stateselect],  how:`route`, to:[`tbd`]}} , type:`7`});'
+    //               }
+    //             },
+    //             {
+    //               set: {
+    //                 uri: 'route2',
+    //                 value: 'wtf'
+    //               }
+    //             },
+    //             {
+    //               api: {
+    //                 commands:
+    //                   'console.log({$value, $state, $outputs: $value.$outputs[1]}); return 24342'
+    //               }
+    //             }
+    //           ],
+    //           xtype: 'button',
+    //           xid: 'hashbutton',
+    //           xlabel: 'hash'
+    //         }
+    //       }
+    //     },
+    //     '02dff7e67e367037fd3fbbaefdf580e8946271705095ac46cd71141f19ac19be_81': {
+    //       oid: 'b1debc2b7bd5c5fd3fe4a8bbab1a6f56185946913f3b53f8474be9af87478693',
+    //       nonce: 81,
+    //       data: {
+    //         type: 'content',
+    //         props: {
+    //           xid: '00abc',
+    //           xtype: 'html',
+    //           xstyle: 'margin: 2em 0',
+    //           xvalue: '<b>Experiments</b>'
+    //         }
+    //       }
+    //     },
+    //     '022585b7bc971cb19b71bdde25c99b45d98a301fce860a3da69c7ca6242d3267_108': {
+    //       oid: '9b844c68f478b12702915503fa0afcc24de334c3d7b573a7331236ed256f9d0d',
+    //       nonce: 108,
+    //       data: {
+    //         type: 'layout',
+    //         props: {
+    //           xid: 'scopes',
+    //           xdisplay: {
+    //             display: {
+    //               side: {
+    //                 style: {
+    //                   background: 'black',
+    //                   color: 'white'
+    //                 },
+    //                 display: 'flex',
+    //                 components: [
+    //                   {
+    //                     type: 'ui',
+    //                     props: {
+    //                       xstyle: 'color: pink',
+    //                       xtype: 'array',
+    //                       xid: 'newpointer.data.from',
+    //                       xlabel: 'layout imports track'
+    //                     }
+    //                   }
+    //                 ]
+    //               }
+    //             }
+    //           }
+    //         }
+    //       }
+    //     },
+    //     '023f7ce4ddf123ec2d2cb1ecf73594cf7568e4e730d75c66a0a90963aa0c1889_114': {
+    //       oid: 'cf1207c6e61648dfd76e699566eaaa9e2a01a77c688b9ca7c650c8e2c6b78d8d',
+    //       nonce: 114,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'array',
+    //           xid: 'newpointer.data.from',
+    //           xlabel: 'from'
+    //         }
+    //       }
+    //     },
+    //     '027a45d120d7edc3f37bd49ea92c4cfa76ea9e7be5a2ce45dd5db8a2921578b5_114': {
+    //       oid: 'fabc9fd882623d07c97e025cee28d111a2ca8d8f34cea0c255204876c05cd217',
+    //       nonce: 114,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xstyle: {
+    //             width: 'fit-content',
+    //             padding: '1em'
+    //           },
+    //           xaction: 'utils',
+    //           xactions: [
+    //             {
+    //               api: {
+    //                 commands:
+    //                   '$api.utils({utype: $value.utype, udata:{content: $value.udata.val, type: `7`}}).then(x=>{$api.set({uri: `routehash`, value: {hashes: x}, type: `7`})});'
+    //               }
+    //             }
+    //           ],
+    //           xtype: 'button',
+    //           xid: 'hashbutton',
+    //           xlabel: 'hash'
+    //         }
+    //       }
+    //     },
+    //     '02b4b59f90aa788aa5b39f4786ff4ba2cba56359850dd62790e17cfe08c1a8ac_124': {
+    //       oid: '628db8e37590a6a23fb75527c0ee40257e7074da9781a46714f82062686c8fa6',
+    //       nonce: 124,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'button',
+    //           xid: 'newpointer.button',
+    //           xlabel: 'new pointer',
+    //           xactions: [
+    //             {
+    //               set: {
+    //                 type: '7',
+    //                 value: '$value.newpointer'
+    //               }
+    //             },
+    //             {
+    //               init: {
+    //                 options: {}
+    //               }
+    //             }
+    //           ]
+    //         }
+    //       }
+    //     },
+    //     '02ab591308e79026119c9a76ca41d18a569c216ed25f3e416b81c080319ed4cf_148': {
+    //       oid: 'ff8ef811ff4b34fa05006a11b540449aa3db2f2cc6f02dabf5d98bf04f6c8251',
+    //       nonce: 148,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'text',
+    //           xid: 'args',
+    //           xlabel: 'api(args)'
+    //         }
+    //       }
+    //     },
+    //     '025bac8f3b73544d7698b19901a4d8fce0fe599e79e4d822f3722005c1d1f780_164': {
+    //       oid: '9282798a19b9bd13a89aa9770ed0bc143bfdb9b8fe7e254949f328d4e4189fe4',
+    //       nonce: 164,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'array',
+    //           xid: 'createactions.actionstack',
+    //           xlabel: 'Action Stack',
+    //           xdata: []
+    //         }
+    //       }
+    //     },
+    //     '02fb239e7e75f2a8a860d84c26311f189c95a98f2fecc555987c438b394dc761_194': {
+    //       oid: '0f98a94de348570a2767528dae813cfb482f0f763d4775d610b3df70d1729178',
+    //       nonce: 194,
+    //       data: {
+    //         type: 'content',
+    //         props: {
+    //           xid: 'pointertest',
+    //           xtype: 'html',
+    //           xname: 'pointertest',
+    //           xif: [],
+    //           xpoint: '074c3b18bd6443865541cb76368621afa96b6ad62387fcb96971e88b6325eecc_839'
+    //         }
+    //       }
+    //     },
+    //     '02ce6768ce653f4c52f427006b141ee336fb35ca70c87ba74f10efc6af15d295_200': {
+    //       oid: 'ac105c2a96ce917e6263f1f32e8fc62a38bd601b8cd5eb7f04bde9db1ceaba11',
+    //       nonce: 200,
+    //       data: {
+    //         type: 'content',
+    //         props: {
+    //           xtype: 'html',
+    //           xstyle: 'padding: 2em 0',
+    //           xvalue: '<b>API</b>'
+    //         }
+    //       }
+    //     },
+    //     '02163196ce9760e1dd9d37b19ccd63f2a973c00289c24656462fd86f41d9f07f_209': {
+    //       oid: 'cc29f102eaabb86b547e87689c47be748a330542d1317ea18464c123c3317131',
+    //       nonce: 209,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'string',
+    //           xid: 'utype',
+    //           xdata: 'hash',
+    //           xlabel: 'Enter Util (hash)'
+    //         }
+    //       }
+    //     },
+    //     '027365a5478fdd2a9c9a66ef32e75f76750625bed2012e4715d6495f41a84c2f_225': {
+    //       oid: 'cd2afd7a925b3d59809205dd49d282a044e05c26110ace4d9d7cad906a984fb5',
+    //       nonce: 225,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'string',
+    //           xid: 'udata.val',
+    //           xdata: 'route1111',
+    //           xlabel: 'Route'
+    //         }
+    //       }
+    //     },
+    //     '025ac9a0e3683695b3aec3d40f0ca8f783b4f2e708de9e1c8283e71b68734be0_239': {
+    //       oid: 'c6fe5dafd694451f40e579423ffe25952190570a5e1994fbdf1ce9617f973e08',
+    //       nonce: 239,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xstyle: 'width: 100px',
+    //           xaction: 'api',
+    //           xadmin: true,
+    //           xtype: 'button',
+    //           xid: 'morethanone',
+    //           xlabel: 'run api'
+    //         }
+    //       }
+    //     },
+    //     '02be005b31dd9bf3083a48dab456b33c52c50e47871be4594ed5ed03e31e6b8a_251': {
+    //       oid: '85c4aa1609eb8ff0943ec53161587a8332342f27e4479f1c383c8fb3b0f597fa',
+    //       nonce: 251,
+    //       data: {
+    //         type: 'content',
+    //         props: {
+    //           xtype: 'text',
+    //           xid: 'createactions',
+    //           xvalue: 'Create Actions',
+    //           xname: 'Create Actions'
+    //         }
+    //       }
+    //     },
+    //     '021ceb1adb60e07764b6b23d20d0ffeb1d9e2862435f4f7cb21ee927c9c74f2d_263': {
+    //       oid: '29c6721476bb7c74316eaea9b0e4edf00d373191e1d80e07712d97d1bea7ac3e',
+    //       nonce: 263,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'button',
+    //           xid: 'show meta',
+    //           xlabel: 'META on/off',
+    //           xactions: [
+    //             {
+    //               api: {
+    //                 commands: '$api.set({uri: `show.meta`, value: !$state.show.meta})'
+    //               }
+    //             }
+    //           ]
+    //         }
+    //       }
+    //     },
+    //     '022122f10c90aa33307400ce91e4f3eafc48323d272c6102c7cc8e2204c1c8f8_265': {
+    //       oid: '3c57c7eb57b188450666a2405ec29e8308ad2dfbf843540b669f3a2b86aa6584',
+    //       nonce: 265,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'text',
+    //           xid: 'inputs',
+    //           xlabel: 'api(inputs)'
+    //         }
+    //       }
+    //     },
+    //     '02ee663a80c95d809772bbcae0717730a3eaab4b365e4164b4b75ceedcadd6aa_286': {
+    //       oid: 'b003649f0dd221771935eae5be0a600d023545224e1e2b3ec7f66e4eddc6c159',
+    //       nonce: 286,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'array',
+    //           xparent: 'mystatetest',
+    //           xid: 'arraytest',
+    //           xlabel: 'array test'
+    //         }
+    //       }
+    //     },
+    //     '0745405cf23d7f3ff0469c4d31e6717cba0e0fb3b783e2205862e5ecd8bde068_354': {
+    //       oid: '7a66c557c38c7badd16758920dd2736ffbdeb6020cec7ab612157d4b3a153917',
+    //       nonce: 354,
+    //       data: {
+    //         to: ['0299a605b4bef7ff202cdac0bfa18e2e845c338e25aef22ae53a203c2a772ec7_400'],
+    //          how: 'route',
+    //         from: ['goodbye']
+    //       }
+    //     },
+    //     '0299a605b4bef7ff202cdac0bfa18e2e845c338e25aef22ae53a203c2a772ec7_400': {
+    //       oid: '5d0f513d639a595d23148d93416cdc08c9fcf74f91954c81103f5a508dc9b3c7',
+    //       nonce: 400,
+    //       data: {
+    //         type: 'layout',
+    //         props: {
+    //           xid: 'scopes',
+    //           xdisplay: {
+    //             display: {
+    //               side: {
+    //                 style: {
+    //                   background: 'brown',
+    //                   color: 'gray'
+    //                 },
+    //                 display: 'flex',
+    //                 components: [
+    //                   {
+    //                     type: 'ui',
+    //                     props: {
+    //                       xstyle: 'color: pink',
+    //                       xtype: 'array',
+    //                       xid: 'newpointer.data.from',
+    //                       xlabel: 'layout imports track'
+    //                     }
+    //                   }
+    //                 ]
+    //               }
+    //             }
+    //           }
+    //         }
+    //       }
+    //     },
+    //     '0295c8c7e9bbc9881a0b29ec34ad19376b48fd2b435b43c298a1cad53aab75ea_408': {
+    //       oid: 'b506db1537d5b539b55b7727d9bb94ebac33b935acc7e76e220c0adaf7e696d7',
+    //       nonce: 408,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'object',
+    //           xparent: 'mystatetest',
+    //           xid: 'objecttest',
+    //           xlabel: 'object test'
+    //         }
+    //       }
+    //     },
+    //     '02fa3159fa243a8631071e05a7363d536e6de5a8cd697283a6574261215ab9c3_412': {
+    //       oid: '4e578efd392c8bc3bc2d4ad4732dbbed10f6f681f226fc772c1d8ccc9cfcf3ec',
+    //       nonce: 412,
+    //       data: {
+    //         type: 'content',
+    //         props: {
+    //           xtype: 'text',
+    //           xstate: ['config', 'actions', '$_actiontype', 'description'],
+    //           xid: 'createactions.description'
+    //         }
+    //       }
+    //     },
+    //     '02eeb00b8a6cf595079be41bab5e1ba8e7c111f82c921d764ea12cdb262bab30_453': {
+    //       oid: '0d7b73600e0fcc7b36511e56d44b21cc470d70de438b5daea47d12089b28ed29',
+    //       nonce: 453,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'text',
+    //           xid: 'newpointer.data.how',
+    //           xlabel: 'how'
+    //         }
+    //       }
+    //     },
+    //     '022487cb1f3458340bad49c082de165b26e8371853a9acda3c5204c032ba0a3d_461': {
+    //       oid: '4cf0b39643ba082583e3f3dda1e023183c51e3ea2e34593fdedf452e32c747a0',
+    //       nonce: 461,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xlabel: 'stateselect',
+    //           xid: 'stateselect',
+    //           xtype: 'state'
+    //         }
+    //       }
+    //     },
+    //     '07ff18ca4ced716f1f7f869c2d9c4296f5426213ffe88760052f01d60b85b152_606': {
+    //       oid: 'b065d8ff7041f2a21433aec815409d6ff95ed4b34d14a89a9d040f25cb12aec1',
+    //       nonce: 606,
+    //       data: {
+    //         to: ['022585b7bc971cb19b71bdde25c99b45d98a301fce860a3da69c7ca6242d3267_108'],
+    //          how: 'route',
+    //         from: ['hello']
+    //       }
+    //     },
+    //     '021f98dfe8fb03a26bc2fc564c1c324c0ec36b44e9851c2bb94b5f8ef7b3f09e_613': {
+    //       oid: 'f17c2cae9422768e63dd675be3a7cdc668ced0fc9aeb45e0f42e343b9766f251',
+    //       nonce: 613,
+    //       data: {
+    //         type: 'ui',
+    //         props: {
+    //           xtype: 'array',
+    //           xid: 'newpointer.data.to',
+    //           xlabel: 'to'
+    //         }
+    //       }
+    //     }
+    //   }, // typed items i.e. 00xxx, 01xxx, etc
+    //   accounts: {}, // users and bots, set by token key
+    //   txs: [] // append-only list of txs
+    // } // fake until real
+    // state.value.config = {
+    //   components: {},
+    //   lexicon: [
+    //     'datum', // 0 - generic data type
+    //     'app', // 1 - specific data to create/update an app's config
+    //     'component', // 2 - layout, content, ui
+    //     'update', // 3 - modifying any created entry
+    //     'action', // 4 txs, functions,
+    //     'event', // 5 scheduling, subscriptions
+    //     'token', // 6 // we use tokens for accounts
+    //     'pointer', // 7
+    //     'trait', // 8
+    //     'type' // 9
+    //   ],
+    //   types: {
+    //     0: {
+    //       // datum
+    //       xid: `string`,
+    //       oid: `string`,
+    //       type: `number`, // 00 == datum blob, 01 == datum for app type, 02 == datum for component type, etc
+    //       nonce: `number`,
+    //       hooks: { before: `array`, watch: `array`, after: `array` }, // permissions here
+    //       time: `number`, // ommited from micromining, unless provenance specified
+    //       data: [`object`, `array`, `string`, `number`, `function`, `boolean`] // takes any of the below models
+    //       // traits: `array`, // traits id generated from datum entry id. fully mutable (the updates contain full record of adjustments).
+    //       // updates: `array` // update id generated from datum entry id. append only.
+    //     },
+    //     1: {
+    //       // app
+    //       datums: `array`, // list of required datum entries for the app
+    //       deploy: `array`, // domain, ip, app targets
+    //       index: `object`, // pointers and reverse-referencing
+    //       config: `object`, // {components, lexicon, types, actions, routes (including API) }
+    //       scopes: `object`,
+    //       stack: `array`, // apps may be simply functions with no ui required. generally this will be called from another app but may be consumed via for example a rest api
+    //       accounts: `object`,
+    //       token: `string` // xmbl token with original ownership
+    //     },
+    //     2: { type: `string`, props: `object` }, // component
+    //     3: { target: `string`, diffops: `array`, elements: `object` }, // update for target datum
+    //     4: {
+    //       // action
+    //       name: `string`,
+    //       inputs: `object`,
+    //       commands: `array`,
+    //       tests: `array`,
+    //       outputs: `object`
+    //     },
+    //     5: { schedule: `object`, name: `string`, actions: `array`, data: `object` }, // event {past:results, future: date-ops}
+    //     6: { token: `string`, tokens: `array`, assets: `object`, contracts: `object` }, // artifact
+    //     7: { from: `array`, to: `array`,  how: `string` }, // pointer: one <-> one, one <-> many, many <-> many -- maybe just {to,  how} since any number of things can use a single pointer. also no route-type necessary since a pointer can have it's 'how' set to route. we will simply require a pointer function that knows  how to get the fucking goods! beeashes.
+    //     8: { type: `string`, updates: `array` }, // trait - mutates the type
+    //     9: { name: `string`, model: `object`, prefix: `string` } // type - creates a type with required custom prefix that must start with [a-f] bc hex micromining, the first minimum available type addition will be '0a'. further characters have no restraints, i.e. '0a0, 0f9, 0ff' are valid. ( add postfix for extra safety? )
+    //   }, // 00x - 99x
+    //   actions: {
+    //     init: {
+    //       description: 're-initializes application'
+    //     },
+    //     api: {
+    //       description: 'runs code with provided args/inputs. injects $state and $api',
+    //       args: {
+    //         args: {
+    //           types: ['string', 'array']
+    //         },
+    //         commands: {
+    //           types: ['string']
+    //         },
+    //         inputs: {
+    //           types: ['string', 'array']
+    //         }
+    //       }
+    //     },
+    //     get: {
+    //       description: 'gets data from a specified uri location and provider',
+    //       args: {
+    //         uri: {
+    //           types: ['string', 'array']
+    //         },
+    //         provider: {
+    //           types: ['string']
+    //         }
+    //       }
+    //     },
+    //     remove: {
+    //       description: 'removes data from a specified location of provider',
+    //       args: {
+    //         uri: {
+    //           types: ['string', 'array']
+    //         },
+    //         provider: {
+    //           types: ['string']
+    //         },
+    //         type: {
+    //           types: 'string'
+    //         }
+    //       }
+    //     },
+    //     set: {
+    //       description: 'sets data to a specified location',
+    //       args: {
+    //         uri: {
+    //           types: ['string', 'array']
+    //         },
+    //         provider: {
+    //           types: ['string']
+    //         },
+    //         type: {
+    //           types: 'string'
+    //         },
+    //         value: {
+    //           types: 'Any'
+    //         }
+    //       }
+    //     }
+    //   },
+    //   models: {},
+    //   routes: [
+    //     {
+    //       to: ['022585b7bc971cb19b71bdde25c99b45d98a301fce860a3da69c7ca6242d3267_108'],
+    //        how: 'route',
+    //       from: ['hello']
+    //     },
+    //     {
+    //       to: ['0299a605b4bef7ff202cdac0bfa18e2e845c338e25aef22ae53a203c2a772ec7_400'],
+    //        how: 'route',
+    //       from: ['goodbye']
+    //     }
+    //     // {
+    //     //   // function on load run(fn)
+    //     //   path: '/admin',
+    //     //   name: 'admin',
+    //     //   component: {
+    //     //     name: 'content',
+    //     //     props: {
+    //     //       xid: `adminid`,
+    //     //       xvalue: 'admin says hi',
+    //     //       xtype: 'text'
+    //     //     }
+    //     //   }
+    //     // }
+    //   ]
+    // }
+
+
+    ORIGINAL RUN FUNCTION (deprecated)
+    // async run(fn) {
+  //   console.log('running', { fn }, methods.get({ uri: '$outputs.' + fn.$xid }))
+  //   let result = await Function(
+  //     ...[fn.args ? [...fn.args] : [], '$state', '$scope', '$value', '$xid', '$outputs'],
+  //     fn.commands.join('; ')
+  //   )(
+  //     ...fn.inputs,
+  //     fn.$state,
+  //     fn.$scope,
+  //     fn.$value,
+  //     fn.$xid,
+  //     methods.get({ uri: '$outputs.' + fn.$xid })
+  //   )
+  //   console.log({ result })
+  //   return result
+  // },
+  // compute(type, options) {
+
+  // return types[type][options.type](options.args);
+  // },
+
+  INITIAL API FOR ACTIONS (PLURAL)
+
+    // if (actions) {
+    //   const outputs = Promise.all(
+    //     actions.map(async (x, xi) => {
+    //       console.log('mapping xactions', { x }, scope, $value)
+    //       let output = await methods[Object.entries(x)[0][0]]({
+    //         ...Object.entries(x)[0][1],
+    //         scope: scope,
+    //         xid
+    //       })
+    //       methods.set({ uri: [...scope, '$outputs', xi], value: output })
+    //       console.log({ output })
+    //       return output
+    //     })
+    //   )
+
+    //   return outputs
+    //     .then((result) => {
+    //       console.log('Promise All Result', { result })
+    //     })
+    //     .catch((err) => {
+    //       console.error('Error in promise resolution:', err)
+    //     })
+    // }
+
+    GET example
+     // console.log(
+        //   'Provider: @',
+        //   uri,
+        //   methods.get({
+        //     uri: 'db.data.' + uri + '.data.to[0]',
+        //     provider: uri.slice(0, 2) == '07' ? '@' : null
+        //   })
+        // )
+
+        // return methods.get({
+        //   uri: 'db.data.' + uri + '.data.to[0]',
+        //   provider: uri.slice(0, 2) == '07' ? '@' : null
+        // })
+
+
+
+        <GENERAL> EVENTS
+<!-- <div>
+
+    path:
+    {{ path }}
+    {{ path.params.join('/') }}
+    {{ pathhash }}
+
+    {{ pathhash && $state.routes && $state.routes[pathhash] && $state.routes[pathhash].data.to[0] &&
+      $state.db.data[$state.routes[pathhash].data.to[0]].data.props }}
+
+  </div> -->
+  <!-- <general xid="eventDemo" :xelements="[
+    {
+      tag: 'div',
+      style: { padding: '20px', border: '1px solid #ccc' },
+      children: [
+        {
+          tag: 'p',
+          id: 'demoText',
+          content: 'Hover, click, or change the input below!'
+        },
+        {
+          tag: 'button',
+          events: {
+            click: 'handleClick',
+            mouseover: 'handleMouseOver',
+            mouseout: 'handleMouseOut'
+          },
+          style: {
+            padding: '10px',
+            backgroundColor: '#2196F3',
+            color: 'white',
+            cursor: 'pointer'
+          },
+          content: 'Click/Hover Me'
+        },
+        {
+          tag: 'input',
+          id: 'myInput',
+          events: {
+            change: 'handleInputChange'
+          },
+          style: {
+            marginTop: '10px'
+          },
+          attrs: {
+            type: 'text',
+            placeholder: 'Type here...'
+          }
+        },
+        {
+          tag: 'p',
+          id: 'inputDisplay',
+          content: 'Input: '
+        },
+        {
+          tag: 'div',
+          events: {
+            click: 'clickDiv'
+          },
+          style: {
+            marginTop: '10px',
+            backgroundColor: 'lightblue',
+            padding: '10px',
+            cursor: 'pointer'
+          },
+          content: 'Click this div'
+        },
+      ]
+    }
+  ]" :xmethods="{
+    handleClick: `
+        const target = elements[0].children.find(el => el.id === 'demoText');
+        if (target) {
+          target.content = 'Button clicked!';
+        }
+        console.log('Button clicked!', event);
+      `,
+    handleMouseOver: `
+        const target = elements[0].children.find(el => el.id === 'demoText');
+        if (target) {
+          target.content = 'Mouse over button!';
+        }
+        console.log('Mouse over!', event);
+      `,
+    handleMouseOut: `
+        const target = elements[0].children.find(el => el.id === 'demoText');
+        if (target) {
+          target.content = 'Hover, click, or change the input below!';
+        }
+        console.log('Mouse out!', event);
+      `,
+    handleInputChange: `
+        const input = elements[0].children.find(el => el.id === 'myInput');
+        const display = elements[0].children.find(el => el.id === 'inputDisplay');
+        if (input && display) {
+          display.content = 'Input: ' + event.target.value;
+        }
+        console.log('Input changed!', event.target.value);
+      `,
+    clickDiv: `
+        console.log('Div Clicked', event);
+        alert('Div Clicked');
+      `
+  }" /> -->
+
+  <UI> ERRRATA
+
+      <!-- State - {{ (props.xstate && $state[props.xstate]) || $state }} -->
+      <!-- <a v-for="(val, prop) in xdata || $state" :key="String(prop)">
+        <h4>{{ prop }}</h4>
+        <div v-if="['object', 'array'].includes($api.utils({ utype: 'type', udata: { val } }))">
+          <span href v-for="(subval, subprop) in val" :key="subprop">
+            <span
+              v-if="
+                ['object', 'array'].includes($api.utils({ utype: 'type', udata: { val: subval } }))
+              "
+            >
+              <i @click="$state.show[scope] = !$state.show[scope]" href>{{ subprop }}</i>
+              <ui
+                v-if="$state.show[scope]"
+                xtype="state"
+                :xdata="subval"
+                :xid="stateselect"
+                xlabel="selectnest"
+              />
+            </span>
+
+            <b v-else>{{ subprop }} </b>
+          </span>
+          {{ Object.keys(val) }} -->
+      <!-- <ui
+            xtype="select"
+            :xoptions="Object.keys(val).map((v) => ({ name: v, value: xparent + v }))"
+            :xdata="val"
+            :xid="'state.' + prop + '.propkeys'"
+            :xlabel="String(prop)"
+          />
+        </div>
+      </a> -->
+
+
+      HOME COMPONENT (RAW)
+
+      // let x = {
+//       style: '',
+//       display: {
+//         appstate: {
+//           style: 'display: flex;',
+//           components: [
+//             {
+//               type: 'content',
+//               props: {
+//                 xid: 'logo',
+//                 xvalue: '<b style="padding: 4px">xmbl</b>',
+//                 xtype: 'html'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'button',
+//                 xid: 'savestatetodb',
+//                 xlabel: 'Save',
+//                 xactions: [
+//                   {
+//                     api: {
+//                       commands:
+//                         '$api.set({uri: "$state", provider: "db", value: $state}); location.reload()'
+//                     }
+//                   }
+//                 ]
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'button',
+//                 xid: 'removestatetodb',
+//                 xlabel: 'Clear',
+//                 xactions: [
+//                   {
+//                     api: {
+//                       commands: '$api.remove({provider: "db", uri: "$state"}); location.reload()'
+//                     }
+//                   },
+//                   {
+//                     init: {
+//                       options: {}
+//                     }
+//                   }
+//                 ]
+//               }
+//             }
+//           ]
+//         },
+//         datum: {
+//           style: 'background: black; color: white;',
+//           components: [
+//             {
+//               type: 'content',
+//               props: {
+//                 xtype: 'html',
+//                 xvalue: '<b padding="4px">Create Datum</b><hr>',
+//                 xid: 'datum'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'select',
+//                 xid: 'type',
+//                 xlabel: 'type',
+//                 xoptions: [
+//                   { name: 'datum', value: '0' },
+//                   { name: 'app', value: '1' },
+//                   { name: 'component', value: '2' },
+//                   { name: 'update', value: '3' },
+//                   { name: 'action', value: '4' },
+//                   { name: 'event', value: '5' },
+//                   { name: 'token', value: '6' },
+//                   { name: 'pointer', value: '7' },
+//                   { name: 'trait', value: '8' },
+//                   { name: 'type', value: '9' }
+//                 ]
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'array',
+//                 xid: 'hooks.before',
+//                 xlabel: 'Hooks (before)'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'array',
+//                 xid: 'hooks.after',
+//                 xlabel: 'Hooks (after)'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'array',
+//                 xid: 'hooks.watch',
+//                 xlabel: 'Hooks (watch)'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'model',
+//                 xid: 'data',
+//                 xlabel: 'Data',
+//                 xmodel: 'config.types',
+//                 xmode: 'm',
+//                 xvalue: 'type'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'button',
+//                 xid: 'createtype',
+//                 xlabel: 'Create',
+//                 xactions: [
+//                   {
+//                     api: {
+//                       commands:
+//                         '$api.set({value: $value, type: $value.type}); $api.init({options:{}})'
+//                     },
+//                     init: { options: {} }
+//                   }
+//                 ]
+//               }
+//             }
+//           ]
+//         },
+//         todo: {
+//           style: {
+//             background: 'rgba(0,0,0,.5)',
+//             overflow: 'scroll',
+//             display: 'flex',
+//             flexWrap: 'wrap',
+//             position: 'top',
+//             padding: '4px'
+//           },
+//           display: 'flex',
+//           components: [
+//             {
+//               type: 'content',
+//               props: { xtype: 'html', xvalue: '<b>To Do</b><hr>', xid: 'todolabel' }
+//             },
+//             {
+//               type: 'content',
+//               props: {
+//                 xtype: 'olist',
+//                 xvalue: [
+//                   'type maker - <b>done</b>',
+//                   'fucking loops - maybe add a property object to $api that defines a loop -- limits, type (recursion, for, each, while, etc). similarly, add a prop to ui and content components somehow',
+//                   'functions - somethings kinda flakey',
+//                   'routes - finish and test all scenarios',
+//                   'pointers - expand the feature',
+//                   'components - deal with updating, rethink defs to not include ANY hydration',
+//                   'add general component (<b>Done</b> but not tested for system integration)',
+//                   'update and type types',
+//                   'persist! <ui xid="teste" xtype="text">wild</ui> <b>done</b>',
+//                   'inputs: full fkn featured',
+//                   'minimize functions before hashing',
+//                   'Add a compute layer to the system -- (webworker, wasm, shared array)'
+//                 ]
+//               }
+//             }
+//           ]
+//         },
+//         api: {
+//           components: [
+//             {
+//               type: 'content',
+//               props: {
+//                 xid: 'apitesting',
+//                 xtype: 'html',
+//                 xstyle: 'padding: 2em 0',
+//                 xvalue: '<b>API</b><hr>'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'text',
+//                 xid: 'args',
+//                 xlabel: 'api(args)'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'text',
+//                 xid: 'inputs',
+//                 xlabel: 'api(inputs)'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'textarea',
+//                 xid: 'commands',
+//                 xlabel: 'api(commands)',
+//                 xstruct: 'true',
+//                 xstyle: 'display: flex; flex-direction:column;'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xstyle: 'width: 160px',
+//                 xactions: [
+//                   {
+//                     api: {
+//                       commands: '',
+//                       inputs: '',
+//                       outputs: ''
+//                     }
+//                   }
+//                 ],
+//                 xadmin: true,
+//                 xtype: 'button',
+//                 xid: 'runapi',
+//                 xlabel: 'run api'
+//               }
+//             }
+//           ]
+//         },
+//         experiments: {
+//           style: {
+//             position: 'sticky',
+//             background: 'rgba(255,0,255, .6)',
+//             overflow: 'scroll',
+//             zIndex: 999999,
+//             padding: '4px'
+//           },
+//           components: [
+//             {
+//               type: 'content',
+//               props: {
+//                 xid: '00abc',
+//                 xtype: 'html',
+//                 xstyle: 'margin: 2em 0',
+//                 xvalue: '<b>Experiments</b><hr>'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xdata: 'abc',
+//                 xid: 'funcstring',
+//                 xtype: 'button',
+//                 xlabel: 'funchashstring',
+//                 xactions: '04feaa39747e979e92747112bc8991ff24d18ae5a7a910600698ec56edb776e6_440'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'string',
+//                 xid: 'utype',
+//                 xdata: 'hash',
+//                 xlabel: 'Enter Util (hash)'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'string',
+//                 xid: 'udata.val',
+//                 xdata: 'route1111',
+//                 xlabel: 'Route'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'string',
+//                 xid: 'udata.type',
+//                 xdata: '7',
+//                 xlabel: 'Enter Type (7)'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xstyle: { width: 'fit-content', padding: '1em' },
+//                 xaction: 'utils',
+//                 xactions: [
+//                   {
+//                     api: {
+//                       commands:
+//                         '$api.utils({utype: $value.utype, udata:{content: $value.udata.val, type: `7`}}).then(x=>{$api.set({uri: `routehash`, value: {hashes: x}, type: `7`})});'
+//                     }
+//                   }
+//                 ],
+//                 xtype: 'button',
+//                 xid: 'hashbutton',
+//                 xlabel: 'hash'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xstruct: 'true',
+//                 xparent: 'mystatetest',
+//                 xaction: 'acto',
+//                 xid: 'wellgetthere',
+//                 xlabel: 'xstruct test',
+//                 xcount: 1
+//               }
+//             },
+
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'object',
+//                 xparent: 'mystatetest',
+//                 xid: 'objecttest',
+//                 xlabel: 'object test'
+//               }
+//             },
+
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'array',
+//                 xparent: 'mystatetest',
+//                 xid: 'arraytest',
+//                 xlabel: 'array test'
+//               }
+//             },
+//             {
+//               type: 'content',
+//               props: {
+//                 xid: 'routetests',
+//                 xtype: 'html',
+//                 xvalue:
+//                   '<br>TEST ROUTES: <a href="hello">hellooooooo</a> <a href="/goodbye">goodbye</a> <a href="/what">what</a> <a href="/whacha">whacha</a> <br>'
+//               }
+//             },
+//             {
+//               type: 'content',
+//               props: {
+//                 xid: 'generaltestheading',
+//                 xvalue: '<b>General Component Test</b><hr>',
+//                 xtype: 'html'
+//               }
+//             },
+//             {
+//               type: 'general',
+//               props: {
+//                 xid: 'geminiimplementation',
+//                 xelements: [
+//                   {
+//                     tag: 'div',
+//                     style: { padding: '20px', border: '1px solid #ccc' },
+//                     children: [
+//                       {
+//                         tag: 'p',
+//                         id: 'demoText',
+//                         content: 'Hover, click, or change the input below!'
+//                       },
+//                       {
+//                         tag: 'button',
+//                         events: {
+//                           click: 'handleClick',
+//                           mouseover: 'handleMouseOver',
+//                           mouseout: 'handleMouseOut'
+//                         },
+//                         style: {
+//                           padding: '10px',
+//                           backgroundColor: '#2196F3',
+//                           color: 'white',
+//                           cursor: 'pointer'
+//                         },
+//                         content: 'Click/Hover Me'
+//                       },
+//                       {
+//                         tag: 'input',
+//                         id: 'myInput',
+//                         events: {
+//                           change: 'handleInputChange'
+//                         },
+//                         style: {
+//                           marginTop: '10px'
+//                         },
+//                         attrs: {
+//                           type: 'text',
+//                           placeholder: 'Type here...'
+//                         }
+//                       },
+//                       {
+//                         tag: 'p',
+//                         id: 'inputDisplay',
+//                         content: 'Input: '
+//                       },
+//                       {
+//                         tag: 'div',
+//                         events: {
+//                           click: 'clickDiv'
+//                         },
+//                         style: {
+//                           marginTop: '10px',
+//                           backgroundColor: 'lightblue',
+//                           padding: '10px',
+//                           cursor: 'pointer'
+//                         },
+//                         content: 'Click this div'
+//                       }
+//                     ]
+//                   }
+//                 ],
+//                 xmethods: {
+//                   handleClick: `
+//                     const target = elements[0].children.find(el => el.id === 'demoText');
+//                     if (target) {
+//                       target.content = 'Button clicked!';
+//                     }
+//                     console.log('Button clicked!', event);
+//                   `,
+//                   handleMouseOver: `
+//                     const target = elements[0].children.find(el => el.id === 'demoText');
+//                     if (target) {
+//                       target.content = 'Mouse over button!';
+//                     }
+//                     console.log('Mouse over!', event);
+//                   `,
+//                   handleMouseOut: `
+//                     const target = elements[0].children.find(el => el.id === 'demoText');
+//                     if (target) {
+//                       target.content = 'Hover, click, or change the input below!';
+//                     }
+//                     console.log('Mouse out!', event);
+//                   `,
+//                   handleInputChange: `
+//                     const input = elements[0].children.find(el => el.id === 'myInput');
+//                     const display = elements[0].children.find(el => el.id === 'inputDisplay');
+//                     if (input && display) {
+//                       display.content = 'Input: ' + event.target.value;
+//                     }
+//                     console.log('Input changed!', event.target.value);
+//                   `,
+//                   clickDiv: `
+//                     console.log('Div Clicked', event);
+//                     alert('Div Clicked');
+//                   `
+//                 }
+//               }
+//             },
+//             {
+//               type: 'general',
+//               props: {
+//                 xid: 'geminicomplexEventTest',
+//                 xelements: [
+//                   {
+//                     tag: 'div',
+//                     style: { padding: '20px', border: '2px solid black' },
+//                     children: [
+//                       {
+//                         tag: 'p',
+//                         id: 'mainText',
+//                         content: 'Interact with the elements below!'
+//                       },
+//                       {
+//                         tag: 'button',
+//                         id: 'outerButton',
+//                         events: {
+//                           click: 'outerButtonClick'
+//                         },
+//                         style: { margin: '10px', padding: '10px' },
+//                         content: 'Outer Button'
+//                       },
+//                       {
+//                         tag: 'div',
+//                         style: { border: '1px solid gray', padding: '10px', margin: '10px' },
+//                         children: [
+//                           {
+//                             tag: 'p',
+//                             id: 'innerParagraph',
+//                             content: 'Inner paragraph'
+//                           },
+//                           {
+//                             tag: 'button',
+//                             id: 'innerButton',
+//                             events: {
+//                               click: 'innerButtonClick',
+//                               dblclick: 'innerButtonDoubleClick'
+//                             },
+//                             style: { margin: '5px', padding: '8px' },
+//                             content: 'Inner Button'
+//                           },
+//                           {
+//                             tag: 'input',
+//                             id: 'innerInput',
+//                             events: {
+//                               input: 'innerInputChanged'
+//                             },
+//                             style: { margin: '5px' },
+//                             attrs: { type: 'text', placeholder: 'Type here' }
+//                           },
+//                           {
+//                             tag: 'p',
+//                             id: 'inputDisplayInner',
+//                             content: 'Input: '
+//                           }
+//                         ]
+//                       },
+//                       {
+//                         tag: 'select',
+//                         id: 'mySelect',
+//                         events: {
+//                           change: 'selectChanged'
+//                         },
+//                         style: { margin: '10px' },
+//                         children: [
+//                           { tag: 'option', attrs: { value: 'option1' }, content: 'Option 1' },
+//                           { tag: 'option', attrs: { value: 'option2' }, content: 'Option 2' },
+//                           { tag: 'option', attrs: { value: 'option3' }, content: 'Option 3' }
+//                         ]
+//                       },
+//                       {
+//                         tag: 'p',
+//                         id: 'selectDisplay',
+//                         content: 'Selected: '
+//                       },
+//                       {
+//                         tag: 'div',
+//                         id: 'mouseArea',
+//                         events: {
+//                           mousemove: 'mouseMoved',
+//                           mouseenter: 'mouseEntered',
+//                           mouseleave: 'mouseLeft'
+//                         },
+//                         style: {
+//                           width: '200px',
+//                           height: '100px',
+//                           border: '1px solid red',
+//                           margin: '10px'
+//                         },
+//                         content: 'Mouse Area'
+//                       },
+//                       {
+//                         tag: 'p',
+//                         id: 'mouseDisplay',
+//                         content: 'Mouse: '
+//                       }
+//                     ]
+//                   }
+//                 ],
+//                 xmethods: {
+//                   outerButtonClick: `
+//                     console.log('Outer button clicked!', event);
+//                     elements[0].children.find(el => el.id === 'mainText').content = 'Outer button clicked!';
+//                     event.preventDefault(); // Prevents page reload
+//                   `,
+//                   innerButtonClick: `
+//                     console.log('Inner button clicked!', event);
+//                     elements[0].children[2].children.find(el => el.id === 'innerParagraph').content = 'Inner button clicked!';
+//                     event.preventDefault(); // Prevents page reload
+//                   `,
+//                   innerButtonDoubleClick: `
+//                     console.log('Inner button double clicked!', event);
+//                     elements[0].children[2].children.find(el => el.id === 'innerParagraph').content = 'Inner button double clicked!';
+//                     event.preventDefault(); // Prevents page reload
+//                   `,
+//                   innerInputChanged: `
+//                     console.log('Inner input changed!', event.target.value);
+//                     elements[0].children[2].children.find(el => el.id === 'inputDisplayInner').content = 'Input: ' + event.target.value;
+//                   `,
+//                   selectChanged: `
+//                     console.log('Select changed!', event.target.value);
+//                     elements[0].children.find(el => el.id === 'selectDisplay').content = 'Selected: ' + event.target.value;
+//                   `,
+//                   mouseMoved: `
+//                     elements[0].children.find(el => el.id === 'mouseDisplay').content = 'Mouse: X=' + event.offsetX + ', Y=' + event.offsetY;
+//                   `,
+//                   mouseEntered: `
+//                     console.log('Mouse entered!', event);
+//                     elements[0].children.find(el => el.id === 'mouseDisplay').content = 'Mouse: Entered';
+//                   `,
+//                   mouseLeft: `
+//                     console.log('Mouse left!', event);
+//                     elements[0].children.find(el => el.id === 'mouseDisplay').content = 'Mouse: Left';
+//                   `
+//                 }
+//               }
+//             },
+
+//             {
+//               type: 'general',
+//               props: {
+//                 xid: 'deepseekStressTest',
+//                 xelements: [
+//                   {
+//                     tag: 'div',
+//                     style: { padding: '20px', border: '3px solid #4CAF50' },
+//                     children: [
+//                       {
+//                         tag: 'h1',
+//                         style: { color: '#333', marginBottom: '20px' },
+//                         content: 'Extensive Event Test'
+//                       },
+//                       {
+//                         tag: 'div',
+//                         style: { marginBottom: '30px' },
+//                         children: [
+//                           {
+//                             tag: 'button',
+//                             events: {
+//                               click: 'basicClick',
+//                               contextmenu: 'rightClick',
+//                               focus: 'buttonFocus',
+//                               blur: 'buttonBlur',
+//                               dblclick: 'buttonDblClick',
+//                               mouseup: 'buttonMouseUp',
+//                               mousedown: 'buttonMouseDown'
+//                             },
+//                             style: {},
+//                             content: 'Basic Interactions'
+//                           },
+//                           {
+//                             tag: 'p',
+//                             id: 'basicStatus',
+//                             content: 'Basic events: ',
+//                             style: {}
+//                           }
+//                         ]
+//                       },
+//                       {
+//                         tag: 'div',
+//                         style: { marginBottom: '30px' },
+//                         children: [
+//                           {
+//                             tag: 'input',
+//                             attrs: { type: 'text', placeholder: 'Type here' },
+//                             events: {
+//                               input: 'textInput',
+//                               blur: 'textBlur',
+//                               keydown: 'textKeyDown',
+//                               keyup: 'textKeyUp',
+//                               change: 'textChange'
+//                             },
+//                             style: {}
+//                           },
+//                           {
+//                             tag: 'select',
+//                             events: { change: 'selectChange' },
+//                             children: [
+//                               { tag: 'option', attrs: { value: 'opt1' }, content: 'Option 1' },
+//                               { tag: 'option', attrs: { value: 'opt2' }, content: 'Option 2' }
+//                             ]
+//                           },
+//                           {
+//                             tag: 'p',
+//                             id: 'formStatus',
+//                             content: 'Form status: ',
+//                             style: {}
+//                           }
+//                         ]
+//                       },
+//                       {
+//                         tag: 'div',
+//                         style: {
+//                           padding: '20px',
+//                           backgroundColor: '#f0f0f0',
+//                           marginBottom: '30px'
+//                         },
+//                         events: {
+//                           mouseenter: 'areaEnter',
+//                           mouseleave: 'areaLeave',
+//                           wheel: 'areaWheel',
+//                           dragover: 'areaDragOver',
+//                           drop: 'areaDrop'
+//                         },
+//                         children: [
+//                           {
+//                             tag: 'p',
+//                             content: 'Mouse Interaction Area',
+//                             style: {}
+//                           },
+//                           {
+//                             tag: 'div',
+//                             id: 'mouseTrack',
+//                             style: {
+//                               width: '100%',
+//                               height: '100px',
+//                               backgroundColor: 'white',
+//                               border: '1px solid #ccc'
+//                             },
+//                             events: {
+//                               mousemove: 'mouseTrack'
+//                             }
+//                           }
+//                         ]
+//                       },
+//                       {
+//                         tag: 'div',
+//                         children: [
+//                           {
+//                             tag: 'button',
+//                             events: { click: 'errorTest' },
+//                             style: { backgroundColor: '#f44336' },
+//                             content: 'Simulate Error'
+//                           },
+//                           {
+//                             tag: 'button',
+//                             events: { click: 'showStateApi' },
+//                             style: {},
+//                             content: 'Show $state & $api'
+//                           },
+//                           {
+//                             tag: 'p',
+//                             id: 'stateApiDisplay',
+//                             content: '',
+//                             style: {}
+//                           }
+//                         ]
+//                       }
+//                     ]
+//                   }
+//                 ],
+//                 xmethods: {
+//                   // Basic Interactions
+//                   basicClick: `
+//                     event.preventDefault();
+//                     const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');
+//                     if (target) {
+//                       target.content = 'Basic click at ' + new Date().toLocaleTimeString();
+//                     }
+//                   `,
+//                   rightClick: `
+//                     event.preventDefault();
+//                     const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');
+//                     if (target) {
+//                       target.content = 'Right click at ' + new Date().toLocaleTimeString();
+//                     }
+//                   `,
+//                   buttonFocus: `
+//                     const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');
+//                     if (target) {
+//                       target.content = 'Button focused';
+//                     }
+//                   `,
+//                   buttonBlur: `
+//                     const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');
+//                     if (target) {
+//                       target.content = 'Button blurred';
+//                     }
+//                   `,
+//                   buttonDblClick: `
+//                     const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');
+//                     if (target) {
+//                       target.content = 'Button double clicked';
+//                     }
+//                   `,
+//                   buttonMouseUp: `
+//                     const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');
+//                     if (target) {
+//                       target.content = 'Button mouse up';
+//                     }
+//                   `,
+//                   buttonMouseDown: `
+//                     const target = elements[0].children[1].children.find(el => el.id === 'basicStatus');
+//                     if (target) {
+//                       target.content = 'Button mouse down';
+//                     }
+//                   `,
+//                   // Form Handling
+//                   textInput: `
+//                     const target = elements[0].children[2].children.find(el => el.id === 'formStatus');
+//                     if (target) {
+//                       target.content = 'Typing: ' + event.target.value;
+//                     }
+//                   `,
+//                   textBlur: `
+//                     const target = elements[0].children[2].children.find(el => el.id === 'formStatus');
+//                     if (target) {
+//                       target.content = 'Input blurred';
+//                     }
+//                   `,
+//                   textKeyDown: `
+//                     const target = elements[0].children[2].children.find(el => el.id === 'formStatus');
+//                     if (target) {
+//                       target.content = 'Key down: ' + event.key;
+//                     }
+//                   `,
+//                   textKeyUp: `
+//                     const target = elements[0].children[2].children.find(el => el.id === 'formStatus');
+//                     if (target) {
+//                       target.content = 'Key up: ' + event.key;
+//                     }
+//                   `,
+//                   textChange: `
+//                     const target = elements[0].children[2].children.find(el => el.id === 'formStatus');
+//                     if (target) {
+//                       target.content = 'Input changed: ' + event.target.value;
+//                     }
+//                   `,
+//                   selectChange: `
+//                     const target = elements[0].children[2].children.find(el => el.id === 'formStatus');
+//                     if (target) {
+//                       target.content = 'Selected: ' + event.target.value;
+//                     }
+//                   `,
+//                   // Mouse Tracking
+//                   areaEnter: `
+//                     const target = elements[0].children[3].children[0];
+//                     if (target) {
+//                       target.style.color = '#4CAF50';
+//                     }
+//                   `,
+//                   areaLeave: `
+//                     const target = elements[0].children[3].children[0];
+//                     if (target) {
+//                       target.style.color = '#333';
+//                     }
+//                   `,
+//                   mouseTrack: `
+//                     const target = elements[0].children[3].children[1];
+//                     if (target) {
+//                       target.style.backgroundColor = \`hsl(\${event.offsetX % 360}, 70%, 80%)\`;
+//                     }
+//                   `,
+//                   areaWheel: `
+//                     const target = elements[0].children[3].children[0];
+//                     if (target) {
+//                         target.content = 'Wheel deltaY: ' + event.deltaY;
+//                     }
+//                   `,
+//                   areaDragOver: `
+//                     event.preventDefault();
+//                     const target = elements[0].children[3].children[0];
+//                     if (target) {
+//                       target.content = 'Drag Over';
+//                     }
+//                   `,
+//                   areaDrop: `
+//                     event.preventDefault();
+//                     const target = elements[0].children[3].children[0];
+//                     if (target) {
+//                         target.content = 'Dropped something!';
+//                     }
+//                   `,
+//                   // Error Handling
+//                   errorTest: `
+//                     event.preventDefault();
+//                     // Simulate undefined element access
+//                     try {
+//                       undefinedElement.style.color = 'red';
+//                     } catch(e) {
+//                       console.error('Caught error:', e);
+//                     }
+//                     // Force error in method
+//                     throw new Error('Simulated error');
+//                   `,
+//                   showStateApi: `
+//                     const target = elements[0].children[4].children.find(el => el.id === 'stateApiDisplay');
+//                     if (target) {
+//                       target.content = '$state: ' + JSON.stringify(Object.keys($state)) + ', $api: ' + JSON.stringify(Object.keys($api));
+//                     }
+//                   `
+//                 }
+//               }
+//             },
+
+//             {
+//               type: 'content',
+//               props: { xid: 'canvasexample', xtype: 'html', xvalue: '<b>Canvas Experiment</b>' }
+//             },
+
+//             {
+//               type: 'general',
+//               props: {
+//                 xid: 'canvasDemo',
+//                 xelements: [
+//                   {
+//                     tag: 'div',
+//                     children: [
+//                       {
+//                         tag: 'canvas',
+//                         id: 'myCanvas',
+//                         attrs: { width: '300', height: '150' },
+//                         style: { border: '1px solid black' }
+//                       },
+//                       {
+//                         tag: 'button',
+//                         events: { click: 'changeCircleColor' },
+//                         content: 'Change Circle Color'
+//                       },
+//                       {
+//                         tag: 'script',
+//                         content: `
+//               const canvas = document.getElementById('myCanvas');
+//               if (canvas && canvas.getContext) {
+//                 const ctx = canvas.getContext('2d');
+
+//                 // Draw a rectangle
+//                 ctx.fillStyle = 'rgb(200, 0, 0)';
+//                 ctx.fillRect(10, 10, 50, 50);
+
+//                 // Draw initial circle
+//                 ctx.fillStyle = 'rgba(0, 0, 200, 0.5)';
+//                 ctx.beginPath();
+//                 ctx.arc(100, 50, 40, 0, Math.PI * 2, true);
+//                 ctx.fill();
+
+//                 // Draw text
+//                 ctx.fillStyle = 'black';
+//                 ctx.font = '20px Arial';
+//                 ctx.fillText('Hello Canvas', 150, 80);
+
+//                 // Draw an image (placeholder)
+//                 const img = new Image();
+//                 img.onload = function() {
+//                   ctx.drawImage(img, 200, 20, 80, 80);
+//                 };
+
+//               }
+//             `
+//                       }
+//                     ]
+//                   }
+//                 ],
+//                 xmethods: {
+//                   changeCircleColor: `
+//         const canvas = document.getElementById('myCanvas');
+//         if (canvas && canvas.getContext) {
+//           const ctx = canvas.getContext('2d');
+
+//           // Change circle color
+//           ctx.fillStyle = \`rgba(\${Math.floor(Math.random() * 256)}, \${Math.floor(Math.random() * 256)}, \${Math.floor(Math.random() * 256)}, 0.5)\`;
+//           ctx.beginPath();
+//           ctx.arc(100, 50, 40, 0, Math.PI * 2, true);
+//           ctx.fill();
+//         }
+//       `
+//                 }
+//               }
+//             },
+
+//             {
+//               type: 'layout',
+//               props: {
+//                 xid: 'scopes',
+//                 xdisplay: {
+//                   display: {
+//                     side: {
+//                       style: { background: 'black', color: 'white' },
+//                       display: 'flex',
+//                       components: [
+//                         {
+//                           type: 'ui',
+//                           props: {
+//                             xstyle: 'color: pink',
+//                             xtype: 'array',
+//                             xid: 'newpointer.data.from',
+//                             xlabel: 'layout imports track'
+//                           }
+//                         }
+//                       ]
+//                     }
+//                   }
+//                 }
+//               }
+//             },
+//             {
+//               type: 'layout',
+//               props: {
+//                 xid: 'scopes',
+//                 xdisplay: {
+//                   display: {
+//                     side: {
+//                       style: { background: 'brown', color: 'gray' },
+//                       display: 'flex',
+//                       components: [
+//                         {
+//                           type: 'ui',
+//                           props: {
+//                             xstyle: 'color: pink',
+//                             xtype: 'array',
+//                             xid: 'newpointer.data.from',
+//                             xlabel: 'layout imports track'
+//                           }
+//                         }
+//                       ]
+//                     }
+//                   }
+//                 }
+//               }
+//             },
+//             { type: 'ui', props: { xtype: 'array', xid: 'newpointer.data.from', xlabel: 'from' } },
+//             { type: 'ui', props: { xtype: 'array', xid: 'newpointer.data.to', xlabel: 'to' } },
+//             { type: 'ui', props: { xtype: 'text', xid: 'newpointer.data.how', xlabel: 'how' } },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'button',
+//                 xid: 'newpointer.button',
+//                 xlabel: 'new pointer',
+//                 xactions: [
+//                   {
+//                     set: {
+//                       type: '7',
+//                       value: '$value.newpointer'
+//                     }
+//                   },
+//                   {
+//                     init: { options: {} }
+//                   }
+//                 ]
+//               }
+//             },
+//             {
+//               type: 'content',
+//               props: {
+//                 xtype: 'html',
+//                 xid: 'createactions',
+//                 xvalue: '<b>Create Actions</b>',
+//                 xname: 'Create Actions'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'select',
+//                 xoptions: [
+//                   { name: 'api', value: 'api' },
+//                   { name: 'init', value: 'init' },
+//                   { name: 'get', value: 'get' },
+//                   { name: 'remove', value: 'remove' },
+//                   { name: 'set', value: 'set' },
+//                   { name: 'tx', value: 'tx' },
+//                   { name: 'utils', value: 'utils' }
+//                 ],
+//                 xid: 'createactions.actiontype',
+//                 xlabel: 'Action Type'
+//               }
+//             },
+//             {
+//               type: 'content',
+//               props: {
+//                 xtype: 'text',
+//                 xstate: ['config', 'actions', '$_actiontype', 'description'],
+//                 xid: 'createactions.description'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'array',
+//                 xid: 'createactions.actionstack',
+//                 xlabel: 'Action Stack',
+//                 xdata: []
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xtype: 'button',
+//                 xid: 'showmeta',
+//                 xlabel: 'META on/off',
+//                 xactions: [
+//                   { api: { commands: '$api.set({uri: `show.meta`, value: !$state.show.meta})' } }
+//                 ]
+//               }
+//             },
+//             {
+//               type: 'content',
+//               props: {
+//                 xif: ['$state.show', '$state.show.meta'],
+//                 xtype: 'text',
+//                 xid: 'showstateselect',
+//                 xstate: ['routes'],
+//                 xname: 'tomtom'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xlabel: 'stateselect',
+//                 xid: 'stateselect',
+//                 xtype: 'state'
+//               }
+//             },
+//             {
+//               type: 'content',
+//               props: {
+//                 xid: 'pointertest',
+//                 xtype: 'html',
+//                 xname: 'pointertest',
+//                 xif: [],
+//                 xpoint: '074c3b18bd6443865541cb76368621afa96b6ad62387fcb96971e88b6325eecc_839'
+//               }
+//             },
+//             {
+//               type: 'ui',
+//               props: {
+//                 xstyle: { width: 'fit-content', padding: '1em' },
+//                 xaction: 'utils',
+//                 xactions: [
+//                   {
+//                     api: {
+//                       async: true,
+//                       commands:
+//                         'return $api.set({value: {data: {from:[$value.stateselect],  how:`route`, to:[`tbd`]}} , type:`7`});'
+//                     }
+//                   },
+//                   {
+//                     set: {
+//                       uri: 'route2',
+//                       value: 'wtf'
+//                     }
+//                   },
+//                   {
+//                     api: {
+//                       commands:
+//                         'console.log({$value, $state, $outputs: $value.$outputs[1]}); return 24342'
+//                     }
+//                   }
+//                 ],
+//                 xtype: 'button',
+//                 xid: 'hashbutton',
+//                 xlabel: 'hash'
+//               }
+//             }
+//           ]
+//         }
+//       }
+//     }

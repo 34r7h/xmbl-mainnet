@@ -1,0 +1,55 @@
+import WebTorrent from 'webtorrent';
+import { EventEmitter } from 'events';
+
+export class GossipManager extends EventEmitter {
+  constructor() {
+    super();
+    this.client = new WebTorrent();
+    // Same rule as xpc/src/gossip.js: an unhandled 'error' from the WebTorrent conn-pool (EADDRINUSE when a
+    // second node shares the box) is a process-killing unhandled event. Gossip is best-effort; the node is not.
+    this.client.on('error', (e) => {
+      console.warn(`[xn-gossip] WebTorrent transport unavailable (${e && e.code ? e.code : e && e.message ? e.message : e}) — gossip degrades, the node keeps running`);
+    });
+    this.swarm = null;
+  }
+
+  async joinSwarm(swarmId) {
+    // Join WebTorrent swarm for gossip
+    this.swarm = this.client.add(swarmId, { announce: [] });
+    this.swarm.on('wire', (wire) => {
+      wire.on('message', (msg) => {
+        try {
+          this._handleMessage(JSON.parse(msg.toString()));
+        } catch (error) {
+          console.error('Error parsing gossip message:', error);
+        }
+      });
+    });
+  }
+
+  async broadcast(message) {
+    // Broadcast message to swarm
+    const msg = Buffer.from(JSON.stringify(message));
+    if (this.swarm) {
+      this.swarm.wires.forEach(wire => {
+        try {
+          wire.send(msg);
+        } catch (error) {
+          // Silently handle send errors - expected in test environments
+          // Error is caught and handled gracefully
+        }
+      });
+    }
+  }
+
+  _handleMessage(message) {
+    this.emit('message', message);
+  }
+
+  destroy() {
+    if (this.client) {
+      this.client.destroy();
+    }
+  }
+}
+

@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "XMBL Extension",
+  "description": "Manage XMBL",
+  "version": "1.0",
+  "icons": {
+    "16": "assets/logo.svg",
+    "48": "assets/logo.svg",
+    "128": "assets/logo.svg"
+  },
+  "action": {
+    "default_popup": "index.html",
+    "default_icon": "assets/logo.svg"
+  }
+}
