@@ -35,5 +35,6 @@
   },
   "exports": {
     ".": "./index.js"
-  }
+  },
+  "private": true
 }
