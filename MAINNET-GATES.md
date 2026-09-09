@@ -306,4 +306,12 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
       degenerate logic needing hand-verification. States the changes required (≥124-bit extension field,
       raise nq/lower ρ, clean+re-prove the verifier) and confirms FRI must stay firewalled from consensus/
       ledger/sealing until resolved. Claims nothing secure.
-- [ ] **T2.6** — whole-protocol threat model: module composition, trust boundaries, economic/DoS surface.
+- [x] **T2.6** — whole-protocol threat model authored: `docs/WHOLE-PROTOCOL-THREAT-MODEL.md`. The
+      composition view no single-module doc gives: the 10-module stack + one-directional dependency hygiene
+      (untrusted-WASM execution isolated to storage-compute; contracts injected, no cycle), the 7 trust
+      boundaries B1–B7, sealing as the highest-severity surface (the seal=selection-not-predicate invariant
+      and the fixed fork defect), and the **economic/DoS surface that only emerges in composition** — E1
+      compute market unmetered (no billing basis), E2 no aggregate admission control, E3/E4 ingress
+      cheap-send/expensive-verify asymmetry, E5 transport/NAT, plus cross-module risks X1 (keep FRI
+      firewalled) / X2 (contract determinism) / X3 (classical-vs-PQ sig boundaries) / X4 (state-proof
+      independence). Cross-references T2.1–T2.5. Claims nothing secure.
