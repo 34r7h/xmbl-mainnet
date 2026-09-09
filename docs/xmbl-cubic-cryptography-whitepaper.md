@@ -9,11 +9,10 @@ corresponding ⛔ AUDIT gate in [`MAINNET-GATES.md`](../MAINNET-GATES.md) is clo
 by a signed external report. The modules themselves report `secure: false,
 audited: false` in `describe()` and this document does not override that.
 
-This whitepaper is authored as audit-prep gate **T2.2** (Cubic-curve construction
-+ security assumptions, §2–§3) and **the Cubic-SIG analysis** (§5). The Cubic-LWE
-parameter justification (§4) is authored separately under gate **T2.3**
-(`cubic-lwe.js`, `seal.js`); §4 here is a placeholder cross-reference so the
-citations in the source resolve to a single document.
+This whitepaper is authored as audit-prep gates **T2.2** (Cubic-curve construction
++ security assumptions, §2–§3), **the Cubic-SIG analysis** (§5), and **T2.3** (the
+PQ-Cubic-LWE parameter justification / decryption-failure analysis, §4, over
+`cubic-lwe.js` and `seal.js`).
 
 Every constant, domain tag, and derivation step below is transcribed from the
 implementation and can be recomputed. Authoritative sources:
@@ -227,16 +226,120 @@ never asserts its own security; this document does not either.
 
 ---
 
-## 4. PQ-Cubic-LWE — parameter justification (authored under T2.3)
+## 4. PQ-Cubic-LWE — parameter justification (gate T2.3)
 
-**Deferred to gate T2.3.** `cubic-lwe.js` implements a ternary-lattice LWE
-encryption / KEM (`keyGen`, `encryptBit`/`decryptBit`, `encapsulate`/
-`decapsulate`, exercised in `cubic-crypto.test.mjs` TEST 3). The parameter-
-justification write-up — dimension/modulus rationale (the `N=729 / q` choice),
-error distribution, and decryption-failure analysis — is tracked as T2.3 against
-`cubic-lwe.js` and `seal.js` and will populate this section. It is intentionally
-**not** drafted here to avoid an under-analysed PQ claim; Cubic-LWE is the
-post-quantum confidentiality path referenced by §1.3 and by `cubic-sig.js`.
+`cubic-lwe.js` implements a **plain (unstructured) matrix-LWE** IND-CPA public-key
+encryption and the KEM built on it; `seal.js` wraps the KEM into a hybrid sealed
+envelope (KEM → HKDF-SHA256 → AES-256-GCM). This section justifies the parameters
+and states — without softening — the decryption-failure behaviour and the two
+findings an auditor must weigh (M1 sampler bias, M2 IND-CPA-only).
+
+### 4.1 Construction
+
+Regev-style LWE over `Z_q`. Secret `s`, error `e`, and all ephemeral randomness are
+sampled from the **ternary ball `{−1,0,1}^N`** (`η = 1`). Public matrix `A` is
+uniform `N×N`.
+
+- **`keyGen`:** `s, e ← ternary^N`, `A ← U(Z_q^{N×N})`, `pk = (A, b = A·s + e mod q)`,
+  `sk = s`.
+- **`encryptBit(pk, m∈{0,1})`:** `r, e₁ ← ternary^N`, `e₂ ← ternary`;
+  `u = Aᵀ·r + e₁`, `v = bᵀ·r + e₂ + m·⌊q/2⌋` (mod `q`). Ciphertext `(u, v)`.
+- **`decryptBit(sk, (u,v))`:** `d = (v − sᵀ·u) mod q`; output `1` iff
+  `d ∈ (q/4, 3q/4)`, else `0`.
+- **KEM:** `encapsulate` draws a 256-bit secret, encrypts it **bit-by-bit** (256
+  independent LWE ciphertexts), and returns `SHA-256(secret)` as the shared key;
+  `decapsulate` decrypts the 256 bits and re-hashes. A fast exact-integer path is
+  used when `N·(q−1)² ≤ 2^53` (true for the shipped params) and is **bit-identical**
+  to the BigInt path (the bound guarantees no float rounding).
+
+### 4.2 Parameter choices
+
+| Param | Value | Rationale |
+|-------|-------|-----------|
+| `q` | **3329** (prime, ≈2¹²) | Kyber's modulus; `⌊q/2⌋ = 1664` is the bit-encoding anchor, `q/4 = 832` the decision margin. |
+| `N` (toy) | **27** = 3 faces × 9 blocks | Atomic-cube dimension. **DEMONSTRATION ONLY — no quantum margin.** `DEFAULT_N`. |
+| `N` (mainnet) | **729** = 27³ (`MAINNET_N`) | Level-2 supercube. `seal.js` **fails closed** below this: `seal()` throws for `N < 729` unless `allowWeak` (stamped non-value). Value envelopes therefore always ride `N = 729`. |
+| noise | ternary `η = 1` | Short-vector distribution; `‖s‖, ‖e‖` small ⇒ small decryption noise (§4.3). |
+
+**The "cubic" is dimension-labelling, not a source of hardness.** `N = 27` and
+`N = 729` are chosen to line up with cube/supercube geometry, but the scheme is
+ordinary plain-LWE with a ternary secret — the geometry adds *no* cryptographic
+structure or hardness beyond a standard LWE instance of that dimension. This is
+stated so the audit does not credit the construction with unearned novelty.
+
+**Structure note (not a vulnerability):** this is *plain* LWE (a full `N×N` matrix
+`A`), not Module/Ring-LWE. Keys are `O(N²)` and ciphertexts `O(N)`, so envelopes
+are large (`seal.js` notes ≈500 KB at `N = 729`). Plain-LWE has *fewer* algebraic
+structure concerns than Ring-LWE (a conservative choice), at a size cost.
+
+### 4.3 Decryption-failure analysis (verified empirically)
+
+Expanding `d − m·⌊q/2⌋` gives the noise
+**`E = eᵀr − sᵀe₁ + e₂`** — a sum of `2N + 1` products of independent ternary
+values, each product in `{−1,0,1}`. Correct decryption requires `|E| < q/4 = 832`.
+
+- **Worst-case bound.** `|E| ≤ 2N + 1`. For `N = 27` that is **55 < 832 → decryption
+  never fails** (matches the module's 100-trial self-test, 0 errors, and 3000-trial
+  check here, 0 errors). For `N = 729` the worst case is **1459 > 832**, so a
+  decryption failure is *not structurally impossible* and must be bounded
+  probabilistically.
+- **Measured behaviour (`N = 729`, `q = 3329`).** Over 5000 encrypt/decrypt trials
+  the noise is zero-mean with **σ ≈ 25.4** and observed **max |E| = 95** — i.e. the
+  `q/4 = 832` threshold sits **≈ 32σ** away. Per-bit failure probability is thus
+  cryptographically negligible (a Gaussian tail at 32σ is far below 2⁻¹⁰⁰);
+  amortised over the 256-bit KEM it remains negligible. (`N = 27`: σ ≈ 5.2, max 17,
+  threshold ≈ 160σ.)
+- **Audit deliverable.** A *rigorous* sub-Gaussian or exact-convolution decryption-
+  failure-probability (DFP) bound — not just the empirical σ above — should be
+  produced for `N = 729`, since the worst-case bound exceeds the threshold. The
+  empirical margin is large enough that this is expected to pass comfortably.
+
+### 4.4 Security assumptions and findings
+
+**Assumption L1 (LWE / SVP).** IND-CPA security of `encryptBit`/the KEM reduces to
+decision-LWE with ternary secret and noise over `Z_q`, dimension `N`, which reduces
+(worst-case) to `GapSVP`/`BDD` in `N`-dimensional lattices — believed hard for
+classical *and* quantum adversaries (immune to Shor). This is the standard,
+well-studied basis and is the scheme's genuine strength.
+
+**Claim to verify — the 2¹⁶⁸ figure.** The source asserts "Core-SVP hardness
+exceeds 2¹⁶⁸ quantum gates (NIST PQC Category 3+)" for `N = 729, q = 3329`. This
+figure is **not derived from a lattice-estimator run in this repo.** The Core-SVP
+estimate depends on `N`, `q`, the ternary secret/noise, and the number of LWE
+samples exposed by `pk` (here `N` samples). **Audit deliverable:** reproduce the
+estimate with the Albrecht *et al.* lattice estimator and confirm (or correct) the
+category claim; treat 2¹⁶⁸ as *unverified in-repo* until then.
+
+**Finding M1 — ternary sampler has a small modulo bias.** `sampleTernary` maps a
+uniform byte `b∈[0,255]` via `b % 3`, but 256 is not divisible by 3: residues
+distribute **86 / 85 / 85**, so `P(−1) ≈ 0.3363`, `P(0) ≈ 0.3329`, `P(+1) ≈ 0.3308`
+(verified empirically over 200k samples) — a ≈0.3% excess toward `−1`. This is a
+minor bias in an `η = 1` distribution and is unlikely to matter for SVP hardness at
+these margins, but it is a **statistical non-uniformity a reviewer will flag**;
+rejection sampling (discard `b ≥ 255`) removes it at negligible cost and should be
+adopted.
+
+**Finding M2 — the KEM is IND-CPA, NOT IND-CCA2.** `decapsulate` decrypts and
+re-hashes; it performs **no Fujisaki–Okamoto re-encryption/consistency check**.
+Kyber achieves IND-CCA2 precisely by adding FO on top of an IND-CPA core; this KEM
+omits it. Consequences: the KEM is malleable, and reuse of a receiver KEM public key
+against an adversary who can submit chosen ciphertexts and observe decapsulation is
+**not** covered by the security argument. `seal.js` layers AES-256-GCM (AEAD) over
+the HKDF-derived key, which authenticates the *symmetric payload* — but it does not
+turn the *KEM* into a CCA-secure one. **Audit deliverable / recommendation:** either
+apply an FO transform to reach IND-CCA2, or document and enforce single-use KEM
+public keys with the CPA limitation made explicit at the seal API.
+
+### 4.5 Summary (Cubic-LWE)
+
+| # | Statement | Type | Status |
+|---|-----------|------|--------|
+| L1 | IND-CPA ⇐ decision-LWE (ternary) ⇐ worst-case SVP/BDD; quantum-safe | Reduction | Standard LWE (§4.4) |
+| L2 | `N = 729, q = 3329` ⇒ decryption failure negligible | Assumption | Empirically σ≈25.4, ≈32σ margin; rigorous DFP bound is an audit deliverable (§4.3) |
+| L3 | Core-SVP ≥ 2¹⁶⁸ quantum (NIST Cat 3+) | Claim | **Unverified in-repo** — reproduce via lattice estimator (§4.4) |
+| M1 | Ternary sampler modulo bias (86/85/85) | Finding | Real, minor; fix with rejection sampling (§4.4) |
+| M2 | KEM is IND-CPA only (no FO transform) | Finding | Real; add FO for CCA2 or enforce single-use pk (§4.4) |
+| L4 | `seal.js` fails closed below `N = 729` for value | Enforced | Implemented (`MIN_SEAL_N`) (§4.2) |
 
 ---
 

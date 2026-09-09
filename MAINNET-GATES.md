@@ -280,8 +280,13 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
       signs on **standard secp256k1** (`a=0`), so its group security is inherited, not novel. Resolves the
       code's previously-dangling whitepaper citations (curve-source §2/§3.1, cubic-sig §5.2, cubic-lwe
       §3.2/§5.3). Claims nothing secure; `secure/audited` stay false pending the external report.
-- [ ] **T2.3** — Cubic-LWE parameter-justification write-up: N=729/q rationale, error distribution,
-      decryption-failure analysis (`cubic-lwe.js`, `seal.js`).
+- [x] **T2.3** — Cubic-LWE parameter-justification authored as whitepaper §4: N=729/q=3329 rationale,
+      ternary-η=1 construction, and a decryption-failure analysis verified empirically (noise σ≈25.4 at
+      N=729, ≈32σ margin to q/4; worst-case bound 2N+1=1459 > q/4 flagged for a rigorous DFP bound). States
+      L1 (IND-CPA ⇐ LWE/SVP, quantum-safe) and enforced L4 (seal.js fails closed below N=729), and records
+      two real findings for the audit: M1 the ternary sampler's 86/85/85 modulo bias, and M2 the KEM is
+      IND-CPA-only (no Fujisaki–Okamoto ⇒ not IND-CCA2). Flags the in-source 2^168 Core-SVP claim as
+      unverified-in-repo (reproduce via lattice estimator).
 - [ ] **T2.4** — compute-market isolation threat model: side-channels, metering correctness,
       Worker/sandbox escape (`compute.js`).
 - [ ] **T2.5** — FRI parameter/soundness write-up (`@xmbl/zero-knowledge`).
