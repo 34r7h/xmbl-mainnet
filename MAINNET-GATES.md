@@ -162,8 +162,25 @@ continue-on-error, and in the release workflow before any publish).
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 
 - [x] Ingress guard + invalid-eviction covered by node tests. — *ingress-guard, invalid-eviction*
-- [ ] Byzantine test matrix: equivocating leader, withheld coverage, network partition →
-      convergence or safe stall (no fork). Simulator has the pieces; wire as protocol tests.
+- [x] Byzantine / no-fork test matrix drives the **real** `SealRoundManager` across an in-memory
+      gossip bus with a partition mask, asserting the one safety property — honest seal-leads
+      converge on ONE sealed set-hash or safely STALL, never seal two different sets: **(a)** an
+      equivocating Byzantine peer cannot manufacture a second sealed set (pigeonhole: ≤1 vote per
+      hash per node); **(b)** a minority without the member data STALLS (never fabricates) and later
+      ADOPTS the identical hash once data arrives; **(c)** a partition with divergent pools STALLS on
+      both sides under the correct fixed quorum, then converges on heal — contrasted against the
+      presence-shrunk quorum, which forks PERMANENTLY (a sealed member cannot be re-adopted). Mutation
+      (`decideRound` seals one vote short) reproduces the fork → red. — *byzantine-matrix*
+- [x] **FORK DEFECT FOUND + FIXED (this gate):** the seal quorum (`XMBLCore._sealQuorum`) divided the
+      strict-majority threshold by the **presence-live** lead subset (`getLiveLeaders()`, TTL-filtered),
+      so a network partition shrank the denominator and each side independently reached a smaller
+      majority → two honest partitions seal two different faces from divergent pools → **permanent
+      fork with f=0** (on heal neither can `adoptSet` the other's set: its members already left the
+      pool). Seal is a *selection* (which set becomes this face), unlike validation's *predicate*
+      (idempotent, safe to shrink). Fixed: the denominator is now the **fixed configured lead set**
+      (`sealQuorumFrom(_leadAllowlist)`) — mainnet multinode REQUIRES `XPC_LEAD_ALLOWLIST` (the genesis
+      validator set); no allowlist ⇒ single-node dev (quorum 1). Regression + mutation in
+      *seal-quorum* (`packages/core`). Handoff task + issue track the finding for the auditors.
 
 ## `@xmbl/state-machine` — Verkle virtual state machine
 

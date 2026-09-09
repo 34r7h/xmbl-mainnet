@@ -26,6 +26,28 @@ export function liveLeadsFrom(peerRegistry, self, leadAllowlist, ttlMs, now = Da
   return leads.length ? leads : [self];
 }
 
+// SEAL quorum threshold, over the FIXED configured lead set — NOT the presence-live subset.
+//
+// WHY NOT liveLeadsFrom. Validation quorum agrees on a PREDICATE ("is this tx valid") — monotone and
+// idempotent, so under-counting under a shrinking live-set only DELAYS and can never produce two
+// competing histories; shrinking it there is a safe liveness aid (workflow.js _getValidationLeaders).
+// Seal quorum agrees on a SELECTION ("which set becomes this face"). Divide a SELECTION by the
+// presence-live subset and a partition manufactures TWO winners: each side sees a smaller n, computes
+// a smaller majority, and seals a DIFFERENT set from its own divergent pool. That fork is PERMANENT —
+// on heal neither side can adoptSet the other's set (its members already left the pool → adoptSet
+// returns false → stall-adopt forever), so the two set-hashes never reconcile (f=0, no Byzantine node
+// required). The denominator MUST therefore be fixed and partition-independent.
+//
+// configuredLeads = the declared lead set (XPC_LEAD_ALLOWLIST). None configured ⇒ single-node dev
+// (n=1, quorum 1, seals alone) as before. MAINNET multinode REQUIRES the allowlist: it is the genesis
+// validator set, and a fixed n makes two disjoint quorums impossible (2*(floor(n/2)+1) > n), so at most
+// one partition can ever seal ⇒ no fork. Deliberately no presence high-water-mark: a node that never
+// saw its peers would carry a low one, reintroducing the same shrink.
+export function sealQuorumFrom(configuredLeads) {
+  const n = Math.max(1, Array.isArray(configuredLeads) ? configuredLeads.length : 0);
+  return Math.floor(n / 2) + 1;
+}
+
 export class XMBLCore {
   constructor(config = {}) {
     this.config = config;
@@ -611,12 +633,13 @@ export class XMBLCore {
     if (this._sealTimer.unref) this._sealTimer.unref();
   }
 
-  // Strict-majority quorum of the live seal-leads (same set consensus uses). n includes self; > half ⇒ pigeonhole
-  // no-split-brain (seal-agreement.decideRound). Single-node dev (n=1) ⇒ quorum 1 (seals alone); the 3-node mesh ⇒ 2.
+  // Strict-majority seal quorum over the FIXED configured lead set (_leadAllowlist), NOT the presence-live
+  // subset — see sealQuorumFrom for why dividing a SELECTION by the live subset forks permanently under a
+  // partition. n includes self via the allowlist; > half ⇒ pigeonhole no-split-brain (seal-agreement.decideRound
+  // proves at most one set reaches a strict majority). Single-node dev (no allowlist) ⇒ n=1 ⇒ quorum 1 (seals
+  // alone); a 4-lead mainnet allowlist ⇒ 3, so two disjoint partitions (2+2) both stall — no fork.
   _sealQuorum() {
-    const leads = (this.xpc.getLiveLeaders && this.xpc.getLiveLeaders()) || [this.xid?.address];
-    const n = Math.max(1, leads.length);
-    return Math.floor(n / 2) + 1;
+    return sealQuorumFrom(this._leadAllowlist);
   }
 
   // XZK cube-commitment (opt-in, XZK_COMMIT=1). On each sealed FACE, commit the cube's ordered coordinate curve
