@@ -272,8 +272,14 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
       `int`→`void`, matching upstream's own `void` definition — a stale-forward-declaration build fix, zero
       algorithm change). Committed as `packages/identity/mayo-cube/mayo-fork.diff`; rationale in
       MAYO-PROVENANCE.md §T2.1-c.
-- [ ] **T2.2** — formal Cubic-curve construction + security-assumptions spec an outside cryptanalyst
-      can attack (`curve-source.js`).
+- [x] **T2.2** — formal Cubic-curve construction + security-assumptions spec authored:
+      `docs/xmbl-cubic-cryptography-whitepaper.md` (the reviewer-facing package the ⛔ AUDIT attacks).
+      Specifies `CubicCurveSource` step-by-step (§3), states the cryptanalysis assumptions A1–A3 + open
+      questions O1/O2 (§2, incl. the honest finding that derived curves have NO group-order/weak-curve
+      screening), and Cubic-SIG's EUF-CMA-under-ECDLP-in-ROM reduction (§5.2) — flagging that Cubic-SIG
+      signs on **standard secp256k1** (`a=0`), so its group security is inherited, not novel. Resolves the
+      code's previously-dangling whitepaper citations (curve-source §2/§3.1, cubic-sig §5.2, cubic-lwe
+      §3.2/§5.3). Claims nothing secure; `secure/audited` stay false pending the external report.
 - [ ] **T2.3** — Cubic-LWE parameter-justification write-up: N=729/q rationale, error distribution,
       decryption-failure analysis (`cubic-lwe.js`, `seal.js`).
 - [ ] **T2.4** — compute-market isolation threat model: side-channels, metering correctness,
