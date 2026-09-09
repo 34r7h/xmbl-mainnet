@@ -287,7 +287,15 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
       two real findings for the audit: M1 the ternary sampler's 86/85/85 modulo bias, and M2 the KEM is
       IND-CPA-only (no Fujisaki–Okamoto ⇒ not IND-CCA2). Flags the in-source 2^168 Core-SVP claim as
       unverified-in-repo (reproduce via lattice estimator).
-- [ ] **T2.4** — compute-market isolation threat model: side-channels, metering correctness,
-      Worker/sandbox escape (`compute.js`).
+- [x] **T2.4** — compute-market isolation threat model authored:
+      `packages/storage-compute/COMPUTE-ISOLATION-THREAT-MODEL.md`. Documents the trust boundaries and the
+      three ENFORCED+tested properties (cross-thread wall-clock termination, bounded WASM/V8 memory,
+      deny-by-default imports with inert stubs), the host-hook staged read/write path and its trusted-caller
+      `eval` assumption. Surfaces real findings for the audit: **C1 metering is DISCONNECTED** (`MarketPricing`
+      is exported but never called; `execute`/`runJob` measure no duration/memory and return no price → no
+      billing basis for a paid surface), C2 the host-source `eval` footgun, and open questions O1/O2 (no
+      aggregate/concurrency admission control), O3 (co-tenancy side/covert channels unmitigated — Worker
+      threads share the process), O4 (fuzz the hand-rolled section parser), O5 (contract-path determinism
+      unscreened). Claims nothing secure; the ⛔ AUDIT gate stays open.
 - [ ] **T2.5** — FRI parameter/soundness write-up (`@xmbl/zero-knowledge`).
 - [ ] **T2.6** — whole-protocol threat model: module composition, trust boundaries, economic/DoS surface.
