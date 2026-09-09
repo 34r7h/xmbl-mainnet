@@ -297,5 +297,13 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
       aggregate/concurrency admission control), O3 (co-tenancy side/covert channels unmitigated — Worker
       threads share the process), O4 (fuzz the hand-rolled section parser), O5 (contract-path determinism
       unscreened). Claims nothing secure; the ⛔ AUDIT gate stays open.
-- [ ] **T2.5** — FRI parameter/soundness write-up (`@xmbl/zero-knowledge`).
+- [x] **T2.5** — FRI parameter/soundness write-up authored:
+      `packages/zero-knowledge/FRI-SOUNDNESS.md`. Records the shipped params (BabyBear p=15·2²⁷+1 31-bit
+      field, K=32, N=128, ρ=1/4, nq=12) and computes soundness CONCRETELY: ~24 bits conjectured / ~8 bits
+      provable — a demonstration parameterisation, NOT 100/128-bit secure. Findings: F1 the 31-bit base
+      field makes Fiat–Shamir challenges grindable at 2³¹ (no extension field — the decisive gap), F2 no
+      grinding PoW / extension-field repetition, F3 the `friVerify` fold-consistency check has dead/
+      degenerate logic needing hand-verification. States the changes required (≥124-bit extension field,
+      raise nq/lower ρ, clean+re-prove the verifier) and confirms FRI must stay firewalled from consensus/
+      ledger/sealing until resolved. Claims nothing secure.
 - [ ] **T2.6** — whole-protocol threat model: module composition, trust boundaries, economic/DoS surface.
