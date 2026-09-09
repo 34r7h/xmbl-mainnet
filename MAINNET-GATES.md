@@ -198,8 +198,20 @@ continue-on-error, and in the release workflow before any publish).
 
 ## `@xmbl/networking` — libp2p P2P
 
-- [ ] No test files in-package. Needs: discovery under NAT, gossip fan-out, routing-table
-      poisoning resistance. Exercised indirectly by the simulator only today.
+- [x] In-package own-logic coverage (was ZERO test files). Adversarial suite over the logic this
+      package actually owns: `ConnectionManager` enforces its connection **cap** (a flood cannot
+      exceed `maxConnections`); `MessageRouter` is **deny-by-default** (an unknown/forged message
+      type invokes no handler — it throws, never silently dispatches) and never cross-wires types;
+      `PeerDiscovery` **never dials itself** (a self-only seed list dials nothing and arms no retry
+      loop) and never re-dials an already-connected seed. Mutations removing the cap, the
+      deny-by-default throw, or the self-dial guard each fail the suite. — *connection.js; routing.js;
+      discovery.js; own-logic.test.mjs*
+- [ ] ⛔ INTEGRATION/AUDIT (refiled from the row above) — discovery under NAT, gossip fan-out
+      rounds, and Kademlia routing-table poisoning resistance are behaviour of libp2p / WebTorrent
+      reached through thin wrappers here (this package has no peer routing table of its own), so they
+      are **not** unit-testable against this module. They belong to the simulator/integration surface
+      (where they are exercised indirectly today) and the whole-protocol external review (see
+      `@xmbl` audit gates). Do not close with an in-package mock.
 
 ## `@xmbl/core` — node runtime
 
