@@ -233,3 +233,24 @@ continue-on-error, and in the release workflow before any publish).
       rely on them.
 - [ ] Version `0.x` communicates pre-mainnet. Do **not** cut `1.0.0` until every ⛔ AUDIT gate
       above is closed.
+
+## Audit-prep deliverables (author in-repo BEFORE the ⛔ AUDIT reviews)
+
+Each ⛔ AUDIT gate needs a signed **external** report, but the reviewer-facing package it attacks
+is our own work and is currently **unwritten**. These are in-repo, closable now, and each is tracked
+as a handoff PREP task under the audit goal. Nothing external can start until the matching item is
+`[x]`.
+
+- [ ] **T2.1-a** — record & pin the exact upstream MAYO commit the fork derives from
+      (`packages/identity/MAYO-PROVENANCE.md`). *(blocks T2.1-b, T2.1-c)*
+- [ ] **T2.1-b** — reproducible byte-identical `mayo.wasm` build: a clean-checkout script whose
+      output sha256 equals the shipped artifact (shared with the Cross-cutting reproducible-build row).
+- [ ] **T2.1-c** — `mayo.wasm` fork-vs-upstream diff with every change explained.
+- [ ] **T2.2** — formal Cubic-curve construction + security-assumptions spec an outside cryptanalyst
+      can attack (`curve-source.js`).
+- [ ] **T2.3** — Cubic-LWE parameter-justification write-up: N=729/q rationale, error distribution,
+      decryption-failure analysis (`cubic-lwe.js`, `seal.js`).
+- [ ] **T2.4** — compute-market isolation threat model: side-channels, metering correctness,
+      Worker/sandbox escape (`compute.js`).
+- [ ] **T2.5** — FRI parameter/soundness write-up (`@xmbl/zero-knowledge`).
+- [ ] **T2.6** — whole-protocol threat model: module composition, trust boundaries, economic/DoS surface.
