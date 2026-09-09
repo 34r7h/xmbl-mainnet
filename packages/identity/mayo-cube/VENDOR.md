@@ -2,23 +2,26 @@
 
 Copied (not a git submodule) from https://github.com/PQCMayo/MAYO-C, pinned at
 commit `4b7cd94c96b9522864efe40c6ad1fa269584a807` ("Simplify downstream
-integration (#9)") — the same commit `docs/mayo-multiplication-map.md` is
-pinned to, and the same commit the now-removed `xid/mayo-c-source` was
+integration (#9)") — the same commit the now-removed `xid/mayo-c-source` was
 originally pinned to (see "A6" section below).
 
-## Building + testing from a fresh clone (A6)
+> **Full reviewer-facing provenance lives in [`../MAYO-PROVENANCE.md`](../MAYO-PROVENANCE.md)**
+> (audit prep T2.1-a/b/c): the pin, the verified 39/40 byte-identical inventory,
+> the single fork divergence with rationale, and the reproducible-build status.
+> This file is the vendoring/history log; that file is the authoritative summary.
+
+## Building + testing
+
+The compiled artifact (`mayo.cjs` + `mayo.wasm`) **is committed to git**, so a
+fresh clone runs the identity suite with no build step:
 
 ```bash
-npm install          # at the repo root — wires workspace deps
-cd xid
-npm test             # runs `pretest` -> build:wasm -> jest, needs emcc on PATH
+node scripts/run-node-tests.mjs packages/identity   # or: npm -w @xmbl/identity test
 ```
 
-`npm test` in `xid/` has a `pretest` hook that runs `npm run build:wasm`
-(→ `./build-mayo-cube-wasm.sh`) automatically, so a fresh clone with no
-machine-local prebuilt artifact and no manual build step still passes the
-full suite — the only external requirement is `emcc` (Emscripten) on
-`PATH`. CI (A4) installs it via an emsdk setup step.
+To rebuild the artifact from the vendored C (requires `emcc`/Emscripten on
+`PATH`), run `../build-mayo-cube-wasm.sh` — see the "Build" section below and
+`../MAYO-PROVENANCE.md` (T2.1-b) for the reproducibility status.
 
 Vendored: `src/`, `include/`, `LICENSE`, `NOTICE`, `README.md` (renamed
 `UPSTREAM-README.md` here to avoid shadowing this file).
@@ -49,19 +52,32 @@ advisor's A6 finding).
 
 **Resolution:** `xid/mayo-c-source` and the now-pointless `build-mayo-wasm.sh`
 (its only source target) have been deleted. `wasm-wrapper.js`'s default
-load path now points at `xid/mayo-cube/mayo.cjs`+`mayo.wasm` — this fork —
-so there is exactly one vendored copy, and it works from a fresh clone (see
-"Building + testing from a fresh clone" above). No more silent
-machine-dependence.
+load path now points at this fork's `mayo.cjs`+`mayo.wasm` (today at
+`packages/identity/mayo-cube/`), so there is exactly one vendored copy and it
+works from a fresh clone. No more silent machine-dependence.
 
 ## Build
 
-`../build-mayo-cube-wasm.sh` produces `mayo.cjs` + `mayo.wasm` here. Not
-committed (build output) — `npm test`'s `pretest` hook runs it locally, and
-CI (A4) runs it via an emsdk setup step.
+`../build-mayo-cube-wasm.sh` rebuilds `mayo.cjs` + `mayo.wasm` from the
+vendored C. The artifact is **committed to git** (`git ls-files mayo.wasm
+mayo.cjs`), so the identity suite runs from a fresh clone with no build step;
+the script is for reproducibility checks and toolchain bumps. By default it
+builds into a temp dir and does **not** touch the committed binary — pass
+`--install` (or `OUT=<dir>`) to write elsewhere; `--check` builds and diffs
+the sha256 against the committed artifact.
 
-Confirmed locally: `emcc` (Homebrew, `4.0.24-git`/`5.0.0` package) compiles
-this cleanly and the resulting artifact loads via `wasm-wrapper.js`.
+Recorded shipped sha256 (see `../MAYO-PROVENANCE.md` T2.1-b for the full
+reproducibility status, including the emsdk-pin caveat for byte-identity):
+
+```
+mayo.wasm  e20b15f0178db35ac21522bba065d17696c0d65e0f3b9ad3faf8f8cdd24dc3a6
+mayo.cjs   b8783ff8ba98c5c965f0ad3296a138d41d886b6d3652dfb21be0a9d122471d5c
+```
+
+Confirmed locally: `emcc` (Homebrew) compiles this cleanly and the resulting
+artifact loads via `wasm-wrapper.js` and passes the identity suite (functional
+equivalence); it is not byte-identical to the shipped bytes under a drifted
+toolchain (T2.1-b).
 
 ## KNOWN ISSUE (RESOLVED in F1a): keygen crashed under today's toolchain
 

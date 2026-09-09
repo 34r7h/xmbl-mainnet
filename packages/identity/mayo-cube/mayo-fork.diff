@@ -1,0 +1,20 @@
+Fork divergence of the vendored MAYO-C subtree from upstream
+PQCMayo/MAYO-C @ 4b7cd94c96b9522864efe40c6ad1fa269584a807.
+
+Exactly one file differs across the compiled src/ + include/ subtree
+(39 of 40 files byte-identical). Rationale: see ../MAYO-PROVENANCE.md (T2.1-c).
+The upstream header declared shake256 as `int`, but fips202.c *defines* it as
+`void` (lines 134/890, identical in both trees) — a stale forward declaration.
+wasm-ld links the type mismatch with only a warning and the call traps at
+runtime; correcting the declaration fixes the build. Function body untouched.
+
+--- upstream  src/common/fips202.h
++++ vendored  src/common/fips202.h
+@@ -6,7 +6,7 @@
+ #include <stddef.h>
+ 
+ int shake128(unsigned char *output, size_t outputByteLen, const unsigned char *input, size_t inputByteLen);
+-int shake256(unsigned char *output, size_t outputByteLen, const unsigned char *input, size_t inputByteLen);
++void shake256(unsigned char *output, size_t outputByteLen, const unsigned char *input, size_t inputByteLen);
+ 
+ #endif

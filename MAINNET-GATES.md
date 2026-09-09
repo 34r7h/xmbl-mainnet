@@ -258,11 +258,20 @@ is our own work and is currently **unwritten**. These are in-repo, closable now,
 as a handoff PREP task under the audit goal. Nothing external can start until the matching item is
 `[x]`.
 
-- [ ] **T2.1-a** — record & pin the exact upstream MAYO commit the fork derives from
-      (`packages/identity/MAYO-PROVENANCE.md`). *(blocks T2.1-b, T2.1-c)*
-- [ ] **T2.1-b** — reproducible byte-identical `mayo.wasm` build: a clean-checkout script whose
-      output sha256 equals the shipped artifact (shared with the Cross-cutting reproducible-build row).
-- [ ] **T2.1-c** — `mayo.wasm` fork-vs-upstream diff with every change explained.
+- [x] **T2.1-a** — upstream pin recorded in `packages/identity/MAYO-PROVENANCE.md`: PQCMayo/MAYO-C
+      @ `4b7cd94c96b9522864efe40c6ad1fa269584a807`, MAYO_1 `opt` param set, verified against the live
+      upstream (39/40 files of the compiled `src/`+`include/` subtree byte-identical), vendored inventory
+      documented. *(blocks T2.1-b, T2.1-c)*
+- [ ] **T2.1-b** — reproducible `mayo.wasm` build. DONE: `build-mayo-cube-wasm.sh` pins all build INPUTS
+      (sources/defines/flags/exports) + `--check` mode; rebuild passes the identity suite (functional
+      equivalence, 5/5) and its sha is recorded. BLOCKED on an operator decision for BYTE-identity: the
+      shipped artifact's emsdk version is not recorded and not recoverable (wasm `producers` section
+      stripped), and a rebuild under the drifted toolchain is not byte-identical — must either pin the
+      original emsdk or adopt a freshly-built artifact as canonical (see MAYO-PROVENANCE.md T2.1-b).
+- [x] **T2.1-c** — MAYO fork-vs-upstream diff explained: exactly one file differs (`fips202.h` `shake256`
+      `int`→`void`, matching upstream's own `void` definition — a stale-forward-declaration build fix, zero
+      algorithm change). Committed as `packages/identity/mayo-cube/mayo-fork.diff`; rationale in
+      MAYO-PROVENANCE.md §T2.1-c.
 - [ ] **T2.2** — formal Cubic-curve construction + security-assumptions spec an outside cryptanalyst
       can attack (`curve-source.js`).
 - [ ] **T2.3** — Cubic-LWE parameter-justification write-up: N=729/q rationale, error distribution,
