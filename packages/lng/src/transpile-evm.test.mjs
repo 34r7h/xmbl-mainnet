@@ -52,6 +52,14 @@ has('overload mangling: apply__1', OV, 'function apply__1(uint256 a)');
 has('overload mangling: apply__2', OV, 'function apply__2(uint256 a, uint256 b)');
 ok('non-overloaded name is NOT mangled', !transpile("~contract `C { ~on `once(`a ~u256) { return `a } }").includes('once__'));
 
+// `~e` (revert) must become Solidity revert(...), never a silently-dropped comment — otherwise a
+// guarded LNG contract transpiles to one that does NOT revert where the LNG did.
+{
+  const sol = transpile("~contract `G { ~state{~public{`v ~u256 0}} ~on `s(`x ~u256){ !(`x !> 100) ? { ~e 'too big' } `v = `x } }");
+  has('`~e transpiles to revert("msg")', sol, 'revert("too big")');
+  ok('`~e is NOT dropped to a comment', !sol.includes('unsupported statement'));
+}
+
 // Real compile with solcjs when present.
 let solc = null;
 try { execSync('which solcjs', { stdio: 'ignore' }); solc = 'solcjs'; } catch { }

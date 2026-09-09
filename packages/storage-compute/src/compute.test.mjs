@@ -35,6 +35,17 @@ const SPIN = B(
   0x0a, 0x09, 0x01, 0x07, 0x00, 0x03, 0x40, 0x0c, 0x00, 0x0b, 0x0b, // code: loop void; br 0; end; end
 );
 
+// trap()->i32 { unreachable }  export "trap" — a guest fault (this is what an LNG `~e` / imported
+// Solidity require()/revert compiles to). It must surface as a REJECTION, so a load-bearing caller
+// (XCL) commits no write-set: a trap on-chain is a revert, not a silent success.
+const TRAP = B(
+  ...HDR,
+  0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,                     // type ()->i32
+  0x03, 0x02, 0x01, 0x00,                                       // func[0] : type 0
+  0x07, 0x08, 0x01, 0x04, 0x74, 0x72, 0x61, 0x70, 0x00, 0x00,   // export "trap" func 0
+  0x0a, 0x05, 0x01, 0x03, 0x00, 0x00, 0x0b,                     // code: unreachable; end
+);
+
 // module importing env.foo (func ()->()) — nothing on the allow-list may pass
 const IMPORT_FOO = B(
   ...HDR,
@@ -55,6 +66,11 @@ await check('normal guest computes and returns (5 + 7 = 12)', async () => {
   const rt = new ComputeRuntime({ maxTime: 4000 });
   const r = await rt.execute(ADD, 'add', [5, 7]);
   assert.strictEqual(r, 12);
+});
+
+await check('a trapping guest (unreachable = revert) rejects, so no write-set is committed', async () => {
+  const rt = new ComputeRuntime({ maxTime: 2000 });
+  await assert.rejects(() => rt.execute(TRAP, 'trap', []));
 });
 
 await check('infinite-loop guest is terminated by the deadline', async () => {

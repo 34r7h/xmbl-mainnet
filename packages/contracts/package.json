@@ -21,12 +21,14 @@
   "peerDependencies": {
     "@xmbl/lng": "0.1.0",
     "@xmbl/storage-compute": "0.1.0",
-    "@xmbl/state-machine": "0.1.0"
+    "@xmbl/state-machine": "0.1.0",
+    "@xmbl/identity": "0.1.0"
   },
   "peerDependenciesMeta": {
     "@xmbl/lng": { "optional": true },
     "@xmbl/storage-compute": { "optional": true },
-    "@xmbl/state-machine": { "optional": true }
+    "@xmbl/state-machine": { "optional": true },
+    "@xmbl/identity": { "optional": true }
   },
   "scripts": {
     "test": "node ../../scripts/run-node-tests.mjs ."

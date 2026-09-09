@@ -130,11 +130,17 @@ function emitStmt(n, types, d) {
       if (e.kind === 'ternary') return emitIfElse(e, types, d);
       if (e.kind === 'emit') return `${pad(d)}emit ${e.name}(${e.args.map(a => emitExpr(a, types)).join(', ')});`;
       if (e.kind === 'print') return `${pad(d)}// ~p (no on-chain stdout): ${e.arg ? emitExpr(e.arg, types) : ''}`;
+      if (e.kind === 'error') return emitStmt(e, types, d);   // `~e → revert(...) (see the 'error' case)
       return `${pad(d)}${emitExpr(e, types)};`;
     }
     case 'countedfor': return `${pad(d)}for (uint256 ${n.varName} = ${emitExpr(n.start, types)}; ${n.varName} <= ${emitExpr(n.end, types)}; ${n.varName}++) {\n${n.body.body.map(s => emitStmt(s, types, d + 1)).join('\n')}\n${pad(d)}}`;
     case 'block': return n.body.map(s => emitStmt(s, types, d)).join('\n');
-    default: return `${pad(d)}// unsupported statement: ${n.kind}`;
+    // `~e` is a REVERT — it must become Solidity `revert(...)`, not a dropped comment. Silently
+    // omitting it would transpile a guarded LNG contract into a Solidity one that does NOT revert
+    // where the LNG did (the EVM-direction twin of the importer mistranslation). A string arg maps to
+    // revert("msg"); a non-string/absent arg to a bare revert().
+    case 'error': return `${pad(d)}revert(${n.arg && n.arg.kind === 'str' ? JSON.stringify(n.arg.value) : ''});`;
+    default: throw new Error('cannot transpile statement: ' + n.kind);
   }
 }
 const blockBody = (n) => (n.kind === 'block' || n.kind === 'anonfn') ? (n.body.body || n.body) : null;

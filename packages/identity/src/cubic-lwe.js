@@ -34,7 +34,12 @@ import { createHash, randomBytes } from 'node:crypto';
 // q must be prime, ≈ 2^12, so that q/2 ≈ 1665 and rounding noise ≤ 1 is
 // absorbed. Kyber uses q = 3329; we follow suit.
 const DEFAULT_Q = 3329n;
-const DEFAULT_N = 27;   // atomic cube dimension
+const DEFAULT_N = 27;   // atomic cube dimension (TOY — illustration only; no PQ margin)
+
+// The mainnet lattice dimension. N=27 is a demonstration ring with no security margin against
+// quantum SVP; a value-bearing seal MUST use N=729 (Level-2 supercube), where Core-SVP hardness
+// exceeds 2^168 quantum gates (NIST PQC Category 3+). seal.js refuses value seals below this.
+export const MAINNET_N = 729;
 
 /**
  * Sample a ternary vector {-1, 0, 1}^dim, reduced mod q.
@@ -199,13 +204,27 @@ export function decryptBitDetail(sk, ciphertext) {
 }
 
 // ── KEM (Key Encapsulation Mechanism) ──
+//
+// The KEM encrypts a 256-bit shared secret bit-by-bit (256 matrix-LWE ciphertexts). At the
+// mainnet dimension N=729 the naive BigInt path is ~2s per encapsulation — unusable on a
+// settlement route. Because every value here is < q and a dot product of N terms is bounded by
+// N·(q-1)² (for N=729,q=3329 that is 8.07e9, far below 2^53), the modular arithmetic is EXACT in
+// double-precision Number. We use that fast path when the bound holds and fall back to the BigInt
+// per-bit path otherwise (an unusually large q), so the result is bit-identical either way.
+
+function fitsSafeInteger(n, qNum) {
+  return Number.isFinite(qNum) && n * (qNum - 1) * (qNum - 1) <= Number.MAX_SAFE_INTEGER;
+}
+// Ternary sample as plain Numbers in [0,q): -1 → q-1, 0, 1. Same distribution as sampleTernary.
+function sampleTernaryNum(dim, qNum) {
+  const rb = randomBytes(dim);
+  const out = new Array(dim);
+  for (let i = 0; i < dim; i++) { const v = (rb[i] % 3) - 1; out[i] = v < 0 ? v + qNum : v; }
+  return out;
+}
 
 /**
  * Encapsulate: generate a random shared secret and encrypt it under pk.
- *
- * Encrypts a 256-bit shared secret bit-by-bit (256 LWE ciphertexts).
- * In production this would use ring-LWE for efficiency; matrix-LWE here
- * is the cleanest specification-grade construction.
  *
  * @param {{A: bigint[][], b: bigint[], n: number, q: bigint}} pk
  * @param {Object} [opts]
@@ -215,17 +234,29 @@ export function decryptBitDetail(sk, ciphertext) {
 export function encapsulate(pk, opts = {}) {
   const bits = opts.secretBits || 256;
   const secret = randomBytes(Math.ceil(bits / 8));
-  const ciphertext = [];
-  for (let i = 0; i < bits; i++) {
-    const byteIdx = Math.floor(i / 8);
-    const bitIdx = 7 - (i % 8);
-    const bit = (secret[byteIdx] >> bitIdx) & 1;
-    ciphertext.push(encryptBit(pk, bit));
+  const bitAt = (i) => (secret[i >> 3] >> (7 - (i & 7))) & 1;
+  const n = pk.n, qNum = Number(pk.q);
+
+  let ciphertext;
+  if (fitsSafeInteger(n, qNum)) {
+    // Fast exact path: precompute Aᵀ and b as Number once, reuse across all bits.
+    const A = pk.A, At = new Array(n), half = Math.floor(qNum / 2);
+    for (let i = 0; i < n; i++) { const col = new Array(n); for (let j = 0; j < n; j++) col[j] = Number(A[j][i]); At[i] = col; }
+    const bN = new Array(n); for (let i = 0; i < n; i++) bN[i] = Number(pk.b[i]);
+    ciphertext = new Array(bits);
+    for (let k = 0; k < bits; k++) {
+      const r = sampleTernaryNum(n, qNum), e1 = sampleTernaryNum(n, qNum), e2 = sampleTernaryNum(1, qNum)[0];
+      const u = new Array(n);
+      for (let i = 0; i < n; i++) { const row = At[i]; let s = 0; for (let j = 0; j < n; j++) s += row[j] * r[j]; u[i] = BigInt((s + e1[i]) % qNum); }
+      let btr = 0; for (let j = 0; j < n; j++) btr += bN[j] * r[j];
+      const v = BigInt(((btr + e2 + bitAt(k) * half) % qNum + qNum) % qNum);
+      ciphertext[k] = { u, v };
+    }
+  } else {
+    ciphertext = new Array(bits);
+    for (let k = 0; k < bits; k++) ciphertext[k] = encryptBit(pk, bitAt(k));
   }
-  return {
-    ciphertext,
-    sharedSecret: createHash('sha256').update(secret).digest(),
-  };
+  return { ciphertext, sharedSecret: createHash('sha256').update(secret).digest() };
 }
 
 /**
@@ -238,11 +269,21 @@ export function encapsulate(pk, opts = {}) {
 export function decapsulate(sk, ciphertext) {
   const bits = ciphertext.length;
   const secret = Buffer.alloc(Math.ceil(bits / 8));
+  const n = sk.n ?? (sk.s ? sk.s.length : 0), qNum = Number(sk.q);
+  const fast = fitsSafeInteger(n, qNum);
+  const sN = fast ? sk.s.map(Number) : null;
+  const quarter = fast ? Math.floor(qNum / 4) : 0;   // integer floor — matches decryptBit's q/4n exactly
   for (let i = 0; i < bits; i++) {
-    const bit = decryptBit(sk, ciphertext[i]);
-    const byteIdx = Math.floor(i / 8);
-    const bitIdx = 7 - (i % 8);
-    if (bit) secret[byteIdx] |= (1 << bitIdx);
+    let bit;
+    if (fast) {
+      const ct = ciphertext[i]; let stu = 0;
+      for (let j = 0; j < n; j++) stu += sN[j] * Number(ct.u[j]);
+      const d = ((Number(ct.v) - stu) % qNum + qNum) % qNum;
+      bit = (d > quarter && d < 3 * quarter) ? 1 : 0;
+    } else {
+      bit = decryptBit(sk, ciphertext[i]);
+    }
+    if (bit) secret[i >> 3] |= (1 << (7 - (i & 7)));
   }
   return createHash('sha256').update(secret).digest();
 }

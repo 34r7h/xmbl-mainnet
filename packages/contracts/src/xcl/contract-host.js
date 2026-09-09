@@ -24,14 +24,22 @@ export class ContractHost {
    *   `execute(bytes, fn, args, { host })` contract). REQUIRED — XCL does not sandbox.
    * @param {{get:Function, insert:Function, getRoot:Function}} [deps.state] a VerkleStateTree
    *   or compatible store. Defaults to an in-memory store so the module works standalone.
+   * @param {{verify:(presentation:object)=>Promise<{ok:boolean,reason?:string}>}} [deps.authorizer]
+   *   OPTIONAL true-impute delegation authorizer (identity `makeAuthorizer`). When present, a
+   *   call carrying `opts.auth` is REJECTED before any WASM runs unless the full delegation chain
+   *   (root → TEE coordinator → ZSP token → agent action-sig) verifies for this contract as the
+   *   audience. This is the load-bearing enforcement seam: identity checks the chain, XCL refuses
+   *   the state transition. A contract deployed as `gated` with no authorizer configured cannot
+   *   be called — fail closed, never open.
    */
-  constructor({ runtime, state } = {}) {
+  constructor({ runtime, state, authorizer } = {}) {
     if (!runtime || typeof runtime.execute !== 'function') {
       throw new Error('ContractHost requires a runtime with execute() (e.g. @xmbl/storage-compute ComputeRuntime)');
     }
     this.runtime = runtime;
     this.state = state || new InMemoryState();
-    this.contracts = new Map(); // id -> { wasm, coordinates, slots:Set }
+    this.authorizer = authorizer || null;
+    this.contracts = new Map(); // id -> { wasm, coordinates, slots:Set, gated:boolean }
   }
 
   /**
@@ -41,11 +49,14 @@ export class ContractHost {
    * @param {number[]} [slots=[]] the storage slots this contract uses (its state footprint)
    * @returns {{id:string, coordinates:object}}
    */
-  deploy(wasmBytes, slots = []) {
+  deploy(wasmBytes, slots = [], deployOpts = {}) {
     const bytes = wasmBytes instanceof Uint8Array ? wasmBytes : Uint8Array.from(wasmBytes);
     const id = contractId(bytes);
     const coordinates = contractCoordinates(id);
-    this.contracts.set(id, { wasm: bytes, coordinates, slots: new Set(slots.map((s) => s | 0)) });
+    this.contracts.set(id, {
+      wasm: bytes, coordinates, slots: new Set(slots.map((s) => s | 0)),
+      gated: !!deployOpts.gated,   // a gated contract requires a passing delegation chain on every call
+    });
     return { id, coordinates };
   }
 
@@ -64,6 +75,18 @@ export class ContractHost {
   async call(id, fnName, args = [], opts = {}) {
     const c = this.contracts.get(id);
     if (!c) throw new Error(`ContractHost.call: unknown contract ${id}`);
+
+    // ENFORCEMENT — the true-impute gate, load-bearing and fail-closed. A gated contract runs
+    // ONLY when the delegation chain verifies for THIS contract (id as audience) and the action
+    // (fnName) is in the token's scope. No authorizer configured but the contract is gated → the
+    // call is refused, never silently allowed. This is where identity's verifyChain stops an
+    // unauthorized state transition from ever touching the WASM or the state tree.
+    if (c.gated) {
+      if (!this.authorizer) throw new Error(`ContractHost.call: contract ${id} is gated but no authorizer is configured (fail-closed)`);
+      const pres = opts.auth ? { ...opts.auth, action: fnName, args } : null;
+      const decision = pres ? await this.authorizer.verify(pres) : { ok: false, reason: 'no-authorization-presented' };
+      if (!decision.ok) throw new Error(`ContractHost.call: unauthorized (${decision.reason}) for ${fnName} on ${id}`);
+    }
 
     // Stage the read-set: every slot the contract declared, read from committed state.
     const slots = {};

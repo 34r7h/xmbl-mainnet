@@ -16,3 +16,18 @@ export {
   decryptSecret,
   loadMasterKey,
 } from './src/agent-keystore.js';
+export {
+  mintGrant,
+  mintZspToken,
+  signAction,
+  verifyChain,
+  grantHash,
+  tokenHash,
+  makeAuthorizer,
+  RevocationSet,
+  NonceRegistry,
+  NO_ATTESTATION,
+} from './src/delegation.js';
+export { DurableNonceRegistry } from './src/durable-nonce-registry.js';
+export { sealSecret, openSecret, sealKeyPair } from './src/seal.js';
+export { MAINNET_N } from './src/cubic-lwe.js';

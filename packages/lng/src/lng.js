@@ -669,7 +669,11 @@ function evalNode(n, scope, out) {
       return v;
     }
     case 'exit': throw new ExitSignal(n.arg ? evalNode(n.arg, scope, out) : NULL);
-    case 'error': return new LError(n.arg ? evalNode(n.arg, scope, out) : '');
+    // `~e` ABORTS the call — it reverts, it does not evaluate to a discardable value. This is what a
+    // require()/revert lowers to, so the throw propagates past every enclosing block exactly as the
+    // WASM backend's `unreachable` trap aborts the whole call. (A non-aborting "error value" would let
+    // execution continue past a failed precondition — and would disagree with the on-chain backend.)
+    case 'error': { const m = n.arg ? evalNode(n.arg, scope, out) : ''; throw new LRevert(typeof m === 'string' ? m : lngStr(m, false)); }
     case 'return': throw new ReturnSignal(n.value ? evalNode(n.value, scope, out) : NULL);
 
     case 'block': {
@@ -696,8 +700,13 @@ function evalNode(n, scope, out) {
 
     case 'ternary': {
       const c = evalNode(n.cond, scope, out);
-      if (truthy(c)) return evalNode(n.thenB, scope, out);
-      return n.elseB ? evalNode(n.elseB, scope, out) : NULL;
+      const branch = truthy(c) ? n.thenB : n.elseB;
+      if (!branch) return NULL;
+      // A `{...}` branch is a `block` in then-position but parses as an `anonfn` closure in
+      // else-position; both mean "execute this block if taken". Run the anonfn's body rather than
+      // returning the unexecuted closure — otherwise an else-block (e.g. an imported if/else) is
+      // silently skipped, diverging from the WASM backend, which runs both branches.
+      return evalNode(branch.kind === 'anonfn' ? branch.body : branch, scope, out);
     }
 
     case 'member': {

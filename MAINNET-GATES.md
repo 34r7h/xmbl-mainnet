@@ -27,6 +27,47 @@ continue-on-error, and in the release workflow before any publish).
       the cube-of-cubes ledger) is novel and has **no external cryptanalysis**. No mainnet
       value may bind to it until audited. Until then it is classical-only (Shor-vulnerable) or
       experimental PQ; neither is a mainnet signer on its own.
+- [x] **True-impute delegation protocol** (`delegation.js`): the tiered authorization chain
+      handoff proved out — root MAYO identity → TEE coordinator → scoped short-TTL
+      Zero-Standing-Privilege token → agent action-sig — lifted onto XMBL and MAYO-signed at
+      every hop. `verifyChain` enforces EVERY hop (grant/token/action signatures, key↔address
+      derivation, scope attenuation ⊆ grant, audience binding, expiry, membership-is-liveness
+      revocation) and is the primitive a load-bearing seam calls to REJECT. TEE attestation is
+      honest by default (`NO_ATTESTATION` asserts nothing; a real quote verifier is injected).
+      36 conformance checks incl. real MAYO end-to-end. — *delegation.js; delegation.test.mjs*
+- [x] **Action authorization is SINGLE-USE** (no replay / double-spend). Each action-sig binds a
+      fresh nonce; `makeAuthorizer` verifies the chain and then CONSUMES `(tokenHash, nonce)`
+      exactly once (`NonceRegistry`), so re-presenting the same signed action is rejected
+      `action-replayed` and a presentation with no nonce is refused before any state change. Proven
+      at the load-bearing seam: replaying an authorized `ContractHost.call` does not advance the
+      slot. The registry evicts entries once their token expires, so it cannot grow without bound.
+      Proven that single-use holds across authorizer instances when ONE registry is shared (two
+      authorizers over a shared registry reject a cross-instance replay; two separate registries do
+      not — the guarantee IS the shared store). Proven at the seam with the DURABLE store too:
+      replaying an authorized `ContractHost.call` is rejected `action-replayed` and the slot is
+      unchanged even when the nonce store is RESTARTED (file closed + reopened) between the call and
+      the replay. — *delegation.js; delegation.test.mjs (§10); contract-host.test.mjs (b2 + durable-restart)*
+- [x] **Durable, shared nonce store for a real deployment.** `DurableNonceRegistry` backs the
+      single-use ledger with a `node:sqlite` file over the SAME `consume(tokenHash,nonce,exp)`
+      contract, injected as `policy.nonces`. `consume` is one `INSERT OR IGNORE` against a UNIQUE
+      primary key — a real compare-and-set: the first insert wins (`changes===1`), every later one
+      (this process, a prior run, or another node sharing the file) loses, so two concurrent nodes
+      cannot both accept one nonce without relying on JS being single-threaded. It is synchronous, so
+      the seam keeps its no-await-between-check-and-burn guarantee; single-use survives a restart
+      (reopen the file → the replay is refused) and holds cross-instance. Expired-token rows are
+      swept amortized. — *durable-nonce-registry.js; durable-nonce-registry.test.mjs*
+- [x] **Value seals ride the mainnet lattice** (`seal.js` PQ envelope: Cubic-LWE KEM + HKDF +
+      AES-256-GCM). `sealSecret` REFUSES a receiver ring below N=729 (`MAINNET_N`) unless an
+      explicit `allowWeak` non-value demo, which is stamped `weak:true`; `sealKeyPair` mints at
+      N=729 by default. The KEM arithmetic uses a provably-exact `Number` fast path (n·q² ≪ 2^53),
+      so a mainnet-dimension seal runs in ~200 ms instead of ~2 s. A sealed EVM key round-trips and
+      controls the same funded address; a wrong LWE key and any AAD/receiver rebinding fail the GCM
+      tag. The KEM ring is PINNED to the receiver's own secret key on open — an envelope whose `n`/`q`
+      was altered is rejected, never decapsulated under attacker-chosen parameters. — *cubic-lwe.js;
+      seal.js; seal.test.mjs*
+      - [ ] ⛔ AUDIT — the **Cubic-LWE** construction (ternary matrix-LWE over the cube ring) is
+        novel and unaudited; N=729 clears the self-imposed dimension gate but external
+        cryptanalysis is still required before value depends on it.
 
 ## `@xmbl/storage-compute` — P2P storage + compute market
 
@@ -42,17 +83,28 @@ continue-on-error, and in the release workflow before any publish).
       in-worker host imports over a staged read-set and collect a write-set, so synchronous WASM
       host calls work without giving the untrusted guest any handle to parent state. This is the
       generic executor capability; the XMBL contract semantics live in @xmbl/contracts. — *compute.test.mjs*
-- [ ] Availability-proof soundness (`availability.js`) needs an adversarial test: a node that
-      does **not** hold a shard must fail the probe. (Currently happy-path only.)
+- [x] **Availability-proof soundness**: `AvailabilityTester` no longer scores a node available
+      from a bare `/health` 200 (liveness ≠ possession). `probeNode()` issues a fresh nonce and
+      decides availability solely from `proof === computeProbeProof(nonce, expectedBytes)`, never
+      the responder's `held` flag — so a node that does **not** hold the shard fails, a liar
+      answering `held:true` with a fabricated or wrong-byte proof is rejected, and a proof captured
+      under one nonce does not replay under a fresh one. Responder side (`respondToProbe`) proven in
+      *storage-node.js; availability-probe.test.mjs*; verifier side (the named module) in
+      *availability.js; availability.test.mjs*.
 - [ ] ⛔ AUDIT — the compute market is a paid execution surface; the isolation model needs a
       security review (side-channels, resource accounting, worker escape) before untrusted pay.
 
 ## `@xmbl/zero-knowledge` — cube-curve state commitment (FRI)
 
-- [ ] Currently additive/opt-in only (`core` `_setupZkCommit`, `XZK_COMMIT=1`) and **never
-      consensus-load-bearing**. That guard is correct and must **stay** until the gate below.
-- [ ] No conformance suite in the package (0 test files). Port the FRI soundness/completeness
-      vectors and make them part of `test:protocol`.
+- [x] **Additive/opt-in guard pinned**: with `XZK_COMMIT` unset `_setupZkCommit` attaches no
+      `face:complete` listener and creates no state; opted in it is a side buffer only — a ZK
+      failure in the handler is swallowed (a sealed face never breaks) and commitments are reachable
+      solely through the read-only `getZkCommitments()` query, never feeding ledger/consensus/seal.
+      — *core/index.js `_setupZkCommit`; core/zk-additive.test.mjs*
+- [x] **FRI conformance suite** in `test:protocol`: pins completeness (an honest cube-curve proof
+      verifies), soundness (a forged derived y±1 and a wrong derivedX are rejected against the same
+      proof), the zero-knowledge shape (the proof carries no secret point values), and blind-
+      invariance. — *xzk.js; xzk.test.mjs*
 - [ ] ⛔ AUDIT — experimental, unaudited FRI. Must not gate consensus, ledger, or sealing until
       audited. The `core` wiring already enforces "additive only" — do not remove that.
 
@@ -65,9 +117,24 @@ continue-on-error, and in the release workflow before any publish).
 - [x] **Determinism gate enforced**: both backends refuse a contract that reads wall-clock,
       randomness, or otherwise diverges across nodes. — *determinism-gate.test.mjs*
 - [x] **WASM backend is mainnet-safe**: emits NO imports and a BOUNDED memory maximum, so a
-      compiled contract clears storage-compute's hardened runtime instead of being refused.
-      — *compile-wasm.js; compile-wasm.test.mjs*
+      compiled contract clears storage-compute's hardened runtime instead of being refused. `~e`
+      (LNG revert — what an imported `require()`/`revert` lowers to) compiles to a `unreachable`
+      trap, the same rollback the overflow/÷0 guards use, so a guarded contract enforces on-chain
+      rather than only in the interpreter. — *compile-wasm.js; compile-wasm.test.mjs*
 - [ ] EVM backend output is structurally asserted and solc-compiles, but is not deployed/audited.
+- [ ] **Browser panel ports have NO parity guard.** handoff ships hand-synced browser copies of the
+      interpreter/EVM/WASM backends (`web/views/config-panels/lng-{interp,evm,wasm}.js`). They were
+      brought back into agreement with the reference (the `~e`→trap/revert and if/else-else-block
+      fixes applied to all three), but nothing FAILS if they drift again. Needs a generated-from-source
+      build step or a diff check in CI so a fix here can't leave the panels stale.
+- [x] **Solidity → LNG importer** (`import-solidity.js`, the reverse of the EVM backend): an
+      existing Solidity contract is lifted to LNG so it can run natively on XMBL. Proven by
+      BEHAVIOR — `LNG →transpile→ Solidity →importSolidity→ LNG` runs to the same output, and
+      hand-written Solidity imports, **compiles to WASM, and TRAPS on a failed `require`** (the
+      revert fires on-chain, not just under the interpreter). `msg.value` is REFUSED, never aliased
+      to `` `caller `` (which would silently neuter a payable/price guard); `msg.sender` still lowers
+      to `` `caller ``. Unsupported constructs (inheritance, structs, modifiers, `while`, arrays) are
+      REFUSED by name, never silently mistranslated. 21 checks. — *import-solidity.js; import-solidity.test.mjs*
 
 ## `@xmbl/contracts` — the contract layer (XCL)
 
@@ -80,9 +147,17 @@ continue-on-error, and in the release workflow before any publish).
 - [x] **A compute node composes it**: a `ComputeNode` injected with a `ContractHost` runs
       contracts, while its raw market path still denies the host import. — *compute-node-integration.test.mjs*
 - [x] **Usable standalone**: falls back to an in-memory store when no state tree is injected. — *contract-host.test.mjs*
+- [x] **Authorization is load-bearing and fail-closed** (true-impute enforcement): a contract
+      deployed `{gated:true}` runs a state transition ONLY when an injected `authorizer`
+      (@xmbl/identity `makeAuthorizer` over `verifyChain`) passes for it — unauthorized,
+      out-of-scope, and REVOKED calls are refused BEFORE any WASM runs and leave state
+      unchanged; a gated contract with no authorizer configured cannot be called (never fails
+      open). — *contract-host.js; contract-host.test.mjs*
 - [ ] The XCL host ABI is the v0 **slot** form (i32 slots/values). Extend to the byte-pointer
       ABI in agentic-contracts-proto.md §3.1 (xmbl_verkle_get/set + cubic_sig/mayo/lwe verify),
       and have the LNG WASM backend emit those host calls, so a full LNG contract drives state.
+      (Today: a hand-written host-ABI contract drives XCL slots; an LNG-compiled contract runs
+      import-free with its state in module memory — the two ABIs do not yet meet.)
 
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 
@@ -97,14 +172,29 @@ continue-on-error, and in the release workflow before any publish).
 - [x] **Feature-creep removed**: the duplicate, insecure `WASMExecutor` (raw WebAssembly with a
       fake fallback that fabricated state transitions) and `executeTransaction` were DELETED.
       WASM execution is storage-compute's; this module owns state only. — *state-machine.js*
-- [ ] Verkle proof verification against an **independent** verifier (not the same code that
-      produced the proof).
+- [x] Verkle proof verification against an **independent** verifier (not the same code that
+      produced the proof). A from-scratch reconstruction (only `node:crypto`, nothing imported from
+      `verkle-tree.js`) recomputes the committed root from `(key, value, proof.path)` — leaf =
+      `sha256(value)`, internal = `sha256(256×32-byte child slots)`, nibble = `sha256(key)[depth]` —
+      and binds the verdict to the tree's **real** root (`getRoot()`), never the attacker-supplied
+      `proof.root`. Valid proofs verify; tampered value, key, root-binding, sibling hash, and a
+      spliced keyA→keyB proof are all rejected; a stale proof fails against a changed root. A mutation
+      drifting `_hashValue` (shared by the prover **and** the tree's own `verifyProof`) leaves the
+      built-in verifier green but the independent one goes red — so a bug shared by prover+verifier
+      cannot pass both. — *verkle-tree.js; verkle-independent-verify.test.mjs*
 
 ## `@xmbl/cubic-ledger` — blocks → faces → cubes
 
 - [x] Deterministic placement, cross-node cube-sync convergence, membership persistence, golden
       micromine vector — all covered. — *6 suites*
-- [ ] Adversarial sync: a peer feeding an inconsistent block set must be rejected, not merged.
+- [x] Adversarial sync: a peer feeding an inconsistent block set is rejected, not merged. The live
+      ingestion path (`CubeSyncManager._onCube` → `adopt`) runs the self-certifying `verifyCube`
+      gate before any write; every contradictory set — tampered member tx, swapped hash, truncated/
+      padded/short face count, lying face or cube merkleRoot, and a valid cube served under the
+      **wrong id** (fork attempt) — is rejected and **local state is left byte-for-byte unchanged**
+      (no cube record, no member block, no partial adoption). A mutation dropping the requested-id
+      binding adopts the id-substituted and fork payloads → the test fails. Honest sync still
+      converges (control). — *cube-sync.js; cube-sync-manager.js; cube-sync-adversarial.test.mjs*
 
 ## `@xmbl/networking` — libp2p P2P
 

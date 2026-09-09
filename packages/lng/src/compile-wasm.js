@@ -282,7 +282,12 @@ function collectLocals(nodes, ctx, params, declare) {
     if (s.kind === 'exprstmt' && s.expr && s.expr.kind === 'ternary') tern(s.expr, ctx, params, declare);
   }
 }
-function tern(t, ctx, params, dl) { const b = (x) => { if (!x) return; if (x.kind === 'block') collectLocals(x.body, ctx, params, dl); else if (x.kind === 'ternary') tern(x, ctx, params, dl); }; b(t.thenB); b(t.elseB); }
+// A ternary else-branch written as `{ ... }` parses as `anonfn` (a block in expression
+// position), while a then-branch `{ ... }` parses as `block`. Both denote a statement block
+// here, so unwrap anonfn to its block — otherwise a block else-branch (e.g. from an imported
+// Solidity if/else) reaches emitP as an uncompilable `anonfn`.
+function asBlock(x) { return x && x.kind === 'anonfn' ? x.body : x; }
+function tern(t, ctx, params, dl) { const b = (x0) => { const x = asBlock(x0); if (!x) return; if (x.kind === 'block') collectLocals(x.body, ctx, params, dl); else if (x.kind === 'ternary') tern(x, ctx, params, dl); }; b(t.thenB); b(t.elseB); }
 
 function fieldAddr(ctx, name) { return ctx.FIELD_BASE + ctx.slot.get(name) * SLOT; }
 
@@ -318,16 +323,21 @@ function emitStmt(s, code, ctx, params, get) {
       break;
     }
     case 'block': for (const b of s.body) emitStmt(b, code, ctx, params, get); break;
+    // `~e` (LNG error/revert — what an imported Solidity require()/revert lowers to) is a trap,
+    // exactly like the overflow/÷0 guards above: it aborts the call and rolls back, the on-chain
+    // equivalent of the interpreter throwing LError. Without this an imported require() contract
+    // could only ever run in the interpreter, never compile to WASM.
+    case 'error': code.push(O.unreachable); break;
     default: throw new Error('cannot compile statement: ' + s.kind);
   }
 }
 function emitIf(t, code, ctx, params, get) {
   emitTruth(t.cond, code, ctx, params, get); code.push(O.if, 0x40);
   branch(t.thenB, code, ctx, params, get);
-  if (t.elseB) { code.push(O.else); if (t.elseB.kind === 'ternary') emitIf(t.elseB, code, ctx, params, get); else branch(t.elseB, code, ctx, params, get); }
+  if (t.elseB) { code.push(O.else); const e = asBlock(t.elseB); if (e.kind === 'ternary') emitIf(e, code, ctx, params, get); else branch(e, code, ctx, params, get); }
   code.push(O.end);
 }
-function branch(b, code, ctx, params, get) { if (b.kind === 'block') for (const s of b.body) emitStmt(s, code, ctx, params, get); else emitStmt({ kind: 'exprstmt', expr: b }, code, ctx, params, get); }
+function branch(b0, code, ctx, params, get) { const b = asBlock(b0); if (b.kind === 'block') for (const s of b.body) emitStmt(s, code, ctx, params, get); else emitStmt({ kind: 'exprstmt', expr: b }, code, ctx, params, get); }
 function emitTruth(n, code, ctx, params, get) { emitP(n, code, ctx, params, get); code.push(O.i32const, ...sleb(ctx.Z), O.call, ...uleb(ctx.H.cmp)); } // cmp(ptr,0)∈{0,1} for unsigned
 
 function emitP(n, code, ctx, params, get) {
@@ -358,16 +368,20 @@ function emitP(n, code, ctx, params, get) {
       throw new Error('WASM backend: operator ' + op);
     }
     case 'ternary': {
+      const isBlk = (x) => x && (x.kind === 'block' || x.kind === 'anonfn');
       emitTruth(n.cond, code, ctx, params, get); code.push(O.if, I32);
-      emitP(n.thenB.kind === 'block' ? blockValue(n.thenB) : n.thenB, code, ctx, params, get);
-      code.push(O.else); emitP(n.elseB ? (n.elseB.kind === 'block' ? blockValue(n.elseB) : n.elseB) : { kind: 'num', value: 0 }, code, ctx, params, get);
+      emitP(isBlk(n.thenB) ? blockValue(n.thenB) : n.thenB, code, ctx, params, get);
+      code.push(O.else); emitP(n.elseB ? (isBlk(n.elseB) ? blockValue(n.elseB) : n.elseB) : { kind: 'num', value: 0 }, code, ctx, params, get);
       code.push(O.end); return;
     }
+    // `~e` in value position (e.g. a require-guarded value-ternary's else branch): trap. `unreachable`
+    // is stack-polymorphic, so it satisfies the branch's i32 result type without pushing a value.
+    case 'error': code.push(O.unreachable); return;
     default: throw new Error('WASM backend: cannot compile expression ' + n.kind);
   }
 }
 // shift count is an i64 (low limb of the operand value)
 function emitShiftCount(n, code, ctx, params, get) { emitP(n, code, ctx, params, get); code.push(O.i64load, ...m64(0)); }
-function blockValue(b) { const last = b.body[b.body.length - 1]; if (last && last.kind === 'exprstmt') return last.expr; throw new Error('WASM backend: value-ternary branch must end in an expression'); }
+function blockValue(b0) { const b = asBlock(b0); const last = b.body[b.body.length - 1]; if (last && last.kind === 'exprstmt') return last.expr; if (last && last.kind === 'error') return last; /* a revert branch: emitP traps */ throw new Error('WASM backend: value-ternary branch must end in an expression'); }
 
 export { compile };

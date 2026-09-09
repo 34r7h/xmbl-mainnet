@@ -11,6 +11,12 @@ import { ComputeRuntime } from '@xmbl/storage-compute';
 import { VerkleStateTree } from '@xmbl/state-machine';
 import { ContractHost, InMemoryState, contractCoordinates, contractId } from './index.js';
 import { compile } from '@xmbl/lng';
+import {
+  Identity, mintGrant, mintZspToken, signAction, makeAuthorizer, RevocationSet, DurableNonceRegistry,
+} from '@xmbl/identity';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 let pass = 0, fail = 0;
 const check = async (n, f) => {
@@ -114,6 +120,106 @@ await check('an LNG-compiled contract runs in the delegated sandbox, determinist
   const b = await runtime().execute(wasm, 'add', [2, 3]);
   assert.strictEqual(a, b, 'same inputs must yield the same output');
   assert.strictEqual(typeof a, 'number');
+});
+
+// ============================================================================
+// TRUE-IMPUTE ENFORCEMENT — a gated contract runs ONLY under a valid delegation chain.
+// The gate is load-bearing: an unauthorized call is REFUSED before the WASM ever runs and
+// before any slot is written, so the state root does NOT move on a rejected call.
+// ============================================================================
+await check('gated contract with NO authorizer configured fails closed (never runs)', async () => {
+  const host = new ContractHost({ runtime: runtime() });         // no authorizer
+  const { id } = host.deploy(COUNTER, [0], { gated: true });
+  await assert.rejects(() => host.call(id, 'increment'), /gated but no authorizer/);
+  assert.strictEqual(host.getSlot(id, 0), 0, 'no state written on a fail-closed refusal');
+});
+
+await check('gated contract runs under a valid root→coordinator→agent chain, and is rejected without one', async () => {
+  // Real MAYO identities for the whole chain.
+  const root = await Identity.create();
+  const coord = await Identity.create();
+  const agent = await Identity.create();
+  const host0 = new ContractHost({ runtime: runtime() });
+  const { id } = host0.deploy(COUNTER, [0]);                     // learn the id (audience) deterministically
+
+  const grant = await mintGrant(root, { coordinatorPub: coord.publicKey, scope: ['increment'], exp: 4000000000, tee: null });
+  const token = await mintZspToken(coord, { grant, agentPub: agent.publicKey, aud: `contract:${id}`, scope: ['increment'], ttlSeconds: 3600 });
+  const { sig: actionSig, nonce } = await signAction(agent, { token, action: 'increment', args: [] });
+  const presentation = { grant, token, actionSig, nonce };      // action/args filled in by ContractHost from the call
+
+  const rev = new RevocationSet();
+  const authorizer = makeAuthorizer({ rootAddress: root.address, aud: `contract:${id}`, isRevoked: (h) => rev.isRevoked(h) });
+  const host = new ContractHost({ runtime: runtime(), authorizer });
+  host.deploy(COUNTER, [0], { gated: true });
+
+  // (a) no authorization presented → refused, no state change
+  await assert.rejects(() => host.call(id, 'increment'), /unauthorized \(no-authorization-presented\)/);
+  assert.strictEqual(host.getSlot(id, 0), 0);
+
+  // (b) valid chain → runs, state advances
+  const r = await host.call(id, 'increment', [], { auth: presentation });
+  assert.strictEqual(r.result, 1, 'authorized call executes the real WASM');
+  assert.strictEqual(host.getSlot(id, 0), 1);
+
+  // (b2) REPLAY of the SAME presentation is refused — one signed action = one state transition.
+  // Without single-use, this same actionSig would drive the counter up on every resend (double-spend).
+  await assert.rejects(() => host.call(id, 'increment', [], { auth: presentation }), /unauthorized \(action-replayed\)/);
+  assert.strictEqual(host.getSlot(id, 0), 1, 'a replayed action must not advance state');
+
+  // (c) an action the token does not scope → refused before running
+  const { sig: badSig, nonce: badNonce } = await signAction(agent, { token, action: 'selfdestruct', args: [] });
+  await assert.rejects(
+    () => host.call(id, 'selfdestruct', [], { auth: { grant, token, actionSig: badSig, nonce: badNonce } }),
+    /unauthorized \(action-out-of-scope\)/,
+  );
+
+  // (d) burn the token → the very same presentation is now refused (revocation is live)
+  rev.burn(token);
+  await assert.rejects(() => host.call(id, 'increment', [], { auth: presentation }), /unauthorized \(revoked\)/);
+  assert.strictEqual(host.getSlot(id, 0), 1, 'a revoked call must not advance state');
+});
+
+// (b2 durable) The SAME anti-replay guarantee holds when single-use is backed by the DURABLE
+// store (T1.1) injected as policy.nonces — INCLUDING across a restart of that store between the
+// first presentation and the replay. The slot state is continuous (one host); only the nonce
+// ledger is the external durable store being restarted (close the file, reopen it). Without
+// durability the reopened store would have forgotten the nonce and the replay would drive the
+// counter a second time — the exact hole the in-memory registry leaves open.
+await check('gated seam: a durable nonce store rejects a replay action-replayed across a store restart, slot unchanged', async () => {
+  const root = await Identity.create();
+  const coord = await Identity.create();
+  const agent = await Identity.create();
+  const host0 = new ContractHost({ runtime: runtime() });
+  const { id } = host0.deploy(COUNTER, [0]);
+
+  const grant = await mintGrant(root, { coordinatorPub: coord.publicKey, scope: ['increment'], exp: 4000000000, tee: null });
+  const token = await mintZspToken(coord, { grant, agentPub: agent.publicKey, aud: `contract:${id}`, scope: ['increment'], ttlSeconds: 3600 });
+  const { sig: actionSig, nonce } = await signAction(agent, { token, action: 'increment', args: [] });
+  const presentation = { grant, token, actionSig, nonce };
+
+  const dir = mkdtempSync(join(tmpdir(), 'xmbl-xcl-nonce-'));
+  const dbPath = join(dir, 'nonces.db');
+
+  const host = new ContractHost({ runtime: runtime() });
+  host.deploy(COUNTER, [0], { gated: true });
+
+  // First run: authorizer over the durable store → the call advances the slot and burns the nonce to disk.
+  const store1 = new DurableNonceRegistry({ path: dbPath });
+  host.authorizer = makeAuthorizer({ rootAddress: root.address, aud: `contract:${id}`, nonces: store1 });
+  const r = await host.call(id, 'increment', [], { auth: presentation });
+  assert.strictEqual(r.result, 1, 'authorized call executes');
+  assert.strictEqual(host.getSlot(id, 0), 1);
+  store1.close(); // == restart of the durable nonce store
+
+  // After restart: a fresh authorizer over the REOPENED file. The slot state is unchanged (same host);
+  // the replayed, authorized call must be rejected because the durable store remembers the burn.
+  const store2 = new DurableNonceRegistry({ path: dbPath });
+  host.authorizer = makeAuthorizer({ rootAddress: root.address, aud: `contract:${id}`, nonces: store2 });
+  await assert.rejects(() => host.call(id, 'increment', [], { auth: presentation }), /unauthorized \(action-replayed\)/);
+  assert.strictEqual(host.getSlot(id, 0), 1, 'a replayed action must not advance state, even across a store restart');
+  store2.close();
+
+  rmSync(dir, { recursive: true, force: true });
 });
 
 console.log(`\nXCL conformance: ${pass} passed, ${fail} failed`);
