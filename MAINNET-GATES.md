@@ -122,11 +122,22 @@ continue-on-error, and in the release workflow before any publish).
       trap, the same rollback the overflow/÷0 guards use, so a guarded contract enforces on-chain
       rather than only in the interpreter. — *compile-wasm.js; compile-wasm.test.mjs*
 - [ ] EVM backend output is structurally asserted and solc-compiles, but is not deployed/audited.
-- [ ] **Browser panel ports have NO parity guard.** handoff ships hand-synced browser copies of the
-      interpreter/EVM/WASM backends (`web/views/config-panels/lng-{interp,evm,wasm}.js`). They were
-      brought back into agreement with the reference (the `~e`→trap/revert and if/else-else-block
-      fixes applied to all three), but nothing FAILS if they drift again. Needs a generated-from-source
-      build step or a diff check in CI so a fix here can't leave the panels stale.
+- [ ] **Browser panel ports have NO parity guard — and the guard cannot live in this repo.** handoff
+      ships hand-synced browser copies of the interpreter/EVM/WASM backends
+      (`web/views/config-panels/lng-{interp,evm,wasm}.js`). They were brought back into agreement with
+      the reference (the `~e`→trap/revert and if/else-else-block fixes applied to all three), but
+      nothing FAILS if they drift again. Established empirically: those panel files live in a SEPARATE
+      git repo (`/Users/34r7h/Developer/projects/handoff`, a distinct `git rev-parse --show-toplevel`),
+      and xmbl-mainnet vendors NO copy of them (`find` for `lng-*.js` here returns nothing). So neither
+      option this row used to name is runnable from this repo's CI: a diff check pointed at an absolute
+      sibling-repo path passes only on the author's machine and skips or errors in every other checkout
+      (a check that can't fail in CI is not a gate — the same C1 "exported but called by nothing"
+      anti-pattern this doc treats as a defect), and the panels are 9–42 KB of UI-wrapped logic with no
+      clean seam to "generate from source." OPERATOR DECISION REQUIRED, pick one: **(a)** the guard
+      lives in the handoff repo, consuming published `@xmbl/lng` (or a vendored reference) and diffing
+      the backend-logic portions there; or **(b)** the panels are vendored INTO xmbl-mainnet so a
+      generated-from-source build step / diff check here can observe drift. Until one is chosen this
+      stays open — no in-repo code can close it.
 - [x] **Solidity → LNG importer** (`import-solidity.js`, the reverse of the EVM backend): an
       existing Solidity contract is lifted to LNG so it can run natively on XMBL. Proven by
       BEHAVIOR — `LNG →transpile→ Solidity →importSolidity→ LNG` runs to the same output, and
