@@ -1,26 +1,35 @@
 /*
- * LNG → WASM compiler (XCL backend) — self-contained, import-free, full 256-bit integers.
+ * LNG → WASM compiler (XCL backend) — full 256-bit integers; import-free by default,
+ * with an OPT-IN Verkle-backed state mode.
  *
  * DEPLOY TARGET: @xmbl/storage-compute's hardened ComputeRuntime, driven by @xmbl/contracts'
  * ContractHost. That runtime is deny-by-default on imports and REFUSES unbounded memory, so
- * this backend emits a module that declares NO imports and a BOUNDED memory maximum. The
- * `xmbl_*` host imports the architecture doc (agentic-contracts-proto.md §3.1) envisions —
- * and the XCL slot ABI already implements — are the next extension of this backend; today it
- * runs everything in-module:
+ * this backend emits a module with a BOUNDED memory maximum and — in the DEFAULT mode — NO
+ * imports at all:
  *   - values are unsigned 256-bit integers, 32 little-endian bytes (4×i64 limbs) in memory;
  *   - the full ALU (add sub mul div mod cmp and or xor not shl shr) is emitted WASM, fuzzed
  *     against BigInt in the compile-wasm test;
  *   - checked overflow / underflow / ÷0 → `unreachable` (a trap = the interpreter's revert);
- *   - state fields live at fixed 32-byte slots in memory (persist for the instance lifetime;
- *     Verkle-backed cross-call persistence is XCL's job via the host ABI — @xmbl/contracts);
+ *   - state fields live at fixed 32-byte slots in memory (persist for the INSTANCE lifetime);
  *   - `~emit` bumps an exported event counter (coordinator host binding is future work).
  * Exports: entrypoints, `memory`, `__alloc()`, `__reset()`, `__field(i)`, `__events()`.
+ *
+ * HOST-STATE MODE — `compile(src, { hostState: true })`: emits the XCL byte-pointer state ABI
+ * (agentic-contracts-proto.md §3.1) so a `~u256` field PERSISTS ACROSS CALLS through Verkle
+ * instead of living only in per-instance memory. The module then imports env.xmbl_verkle_get/
+ * set (indices 0/1); every entrypoint loads its fields from the host on entry and flushes each
+ * field to the host immediately on assignment (so early `return` never drops a write). This is
+ * strictly opt-in: the default stays import-free so it still clears the deny-by-default runtime
+ * on the raw market path. The §3.1 crypto host calls (cubic_sig/mayo/lwe verify) are NOT
+ * emitted — see abi.js for why (sync host imports vs async MAYO; eval'd-source growth).
+ * NOTE: `~u256` PARAMS still arrive as memory pointers; passing plain-int args through
+ * ContractHost is a separate, unbuilt marshalling concern.
  *
  * Signed integer types (~i8..~i256) and ~decimal are REJECTED with a clear error (the
  * interpreter and EVM backend support them; this backend is unsigned-only) — never silently
  * mis-computed.
  *
- * API:    import { compile } from '@xmbl/lng';  // compile(src) -> Uint8Array (WASM)
+ * API:    import { compile } from '@xmbl/lng';  // compile(src, opts?) -> Uint8Array (WASM)
  */
 import { lex, parse, INT_WIDTHS } from './lng.js';
 import { assertDeterministic } from './typecheck.js';
@@ -49,11 +58,19 @@ const SLOT = 32;
 const SCRATCH_BASE = 16;              // 16 i64 mul accumulators (128 bytes) — full product
 const LIT_BASE = SCRATCH_BASE + 128;
 
-function compile(src) {
+function compile(src, opts = {}) {
   assertDeterministic(src, 'WASM compile');
   const ast = parse(lex(src));
   const c = ast.body.find(n => n.kind === 'contract');
   if (!c) throw new Error('no ~contract found to compile');
+
+  // hostState (opt-in): emit the XCL byte-pointer state ABI so committed state persists
+  // across calls through Verkle. DEFAULT stays import-free and byte-identical — the mainnet
+  // -safe gate (no imports, bounded memory) must not regress. When on, the module imports
+  // env.xmbl_verkle_get/set at indices 0/1, so EVERY defined-function index shifts by
+  // IMPORT_COUNT (imports occupy the low indices). We carry that shift through `fi` below.
+  const hostState = !!(opts && opts.hostState);
+  const IMPORT_COUNT = hostState ? 2 : 0;
 
   const bad = (t, w) => { if (t && (t in INT_WIDTHS) && INT_WIDTHS[t][0]) throw new Error(`WASM backend is unsigned-only: signed ~${t} ${w} unsupported (use the EVM backend)`); if (t === 'decimal') throw new Error(`WASM backend does not support ~decimal ${w} (use the EVM backend)`); };
   for (const f of c.fields) bad(f.type, `field \`${f.name}`);
@@ -64,7 +81,20 @@ function compile(src) {
   const lit = (v) => { v = BigInt(v); if (v < 0n) v = (1n << 256n) + v; if (!lits.has(v)) lits.set(v, LIT_BASE + lits.size * SLOT); return lits.get(v); };
   const Z = lit(0n), ONE = lit(1n), ONES = lit((1n << 256n) - 1n);
   for (const mth of c.methods) gatherLits(mth.body.body, lit);
-  const FIELD_BASE = LIT_BASE + lits.size * SLOT;
+  // State-field byte keys (hostState only) live in a data region between the literal pool
+  // and the field storage, so the guest can pass (key_ptr, key_len) to the host ABI. Each
+  // field's key is its own UTF-8 name; per-contract namespacing is the host's job (byteKey).
+  const KEYS_BASE = LIT_BASE + lits.size * SLOT;
+  const keyPtr = [], keyLen = [], keyBytes = [];
+  if (hostState) {
+    let off = KEYS_BASE;
+    for (const f of c.fields) {
+      const kb = [...Buffer.from(f.name, 'utf8')];
+      keyPtr.push(off); keyLen.push(kb.length); keyBytes.push(...kb); off += kb.length;
+    }
+  }
+  const KEYS_SIZE = hostState ? Math.ceil(keyBytes.length / SLOT) * SLOT : 0;
+  const FIELD_BASE = KEYS_BASE + KEYS_SIZE;   // == LIT_BASE + lits.size*SLOT when !hostState
   const EVENTS_ADDR = FIELD_BASE + c.fields.length * SLOT;
   const HEAP_BASE = EVENTS_ADDR + 8;
 
@@ -72,7 +102,7 @@ function compile(src) {
   const T = (p, r) => { const t = [0x60, ...vec(p), ...vec(r)]; const k = t.join(','); if (!tmap.has(k)) { tmap.set(k, types.length); types.push(t); } return tmap.get(k); };
   const T_v_i32 = T([], [I32]), T_v = T([], []), T_1 = T([I32], [I32]), T_2 = T([I32, I32], [I32]), T_2n = T([I32, I64], [I32]);
 
-  const H = {}; let fi = 0;
+  const H = {}; let fi = IMPORT_COUNT;   // defined functions start ABOVE the imported ones
   ['alloc', 'add', 'sub', 'cmp', 'and', 'or', 'xor', 'not', 'shl', 'shr', 'mul', 'div', 'mod', 'isz', 'reset', 'field', 'events', 'frombool'].forEach(h => H[h] = fi++);
   const ENTRY0 = fi;
   const defined = [];
@@ -103,12 +133,22 @@ function compile(src) {
   const exports = [];
   c.methods.forEach((mth, mi) => {
     const ti = T(new Array(mth.params.length).fill(I32), [I32]);
-    const built = compileMethod(mth, { slot, FIELD_BASE, lit, Z, ONE, ONES, H, EVENTS_ADDR });
+    const built = compileMethod(mth, { slot, FIELD_BASE, lit, Z, ONE, ONES, H, EVENTS_ADDR,
+      fields: c.fields.length,
+      hostState: hostState ? { vget: 0, vset: 1, keyPtr, keyLen } : null });
     F(ti, built.locals, built.code);
     exports.push([...nm(finalName(mth)), 0x00, ...uleb(ENTRY0 + mi)]);
   });
 
+  // Import types (hostState only) — registered after the method types so the default path's
+  // type section is untouched. get: (i32,i32,i32)->i32; set: (i32,i32,i32,i32)->i32.
+  const T_get = hostState ? T([I32, I32, I32], [I32]) : 0;
+  const T_set = hostState ? T([I32, I32, I32, I32], [I32]) : 0;
   const typeSec = section(1, vec(types));
+  const importSec = hostState ? section(2, vec([
+    [...nm('env'), ...nm('xmbl_verkle_get'), 0x00, ...uleb(T_get)],
+    [...nm('env'), ...nm('xmbl_verkle_set'), 0x00, ...uleb(T_set)],
+  ])) : [];
   const funcSec = section(3, vec(defined.map(f => uleb(f.ti))));
   // Memory: 16 pages min (1 MiB), with a BOUNDED maximum. A contract that ships to the
   // storage-compute market must declare a hard maximum — an unbounded memory is refused by
@@ -122,8 +162,11 @@ function compile(src) {
   const codeSec = section(10, vec(defined.map(f => { const body = [...vec(groupLocals(f.locals)), ...f.code]; return [...uleb(body.length), ...body]; })));
   const litBytes = [];
   [...lits.entries()].sort((a, b) => a[1] - b[1]).forEach(([v]) => { for (let i = 0; i < 32; i++) litBytes.push(Number((v >> BigInt(i * 8)) & 0xffn)); });
-  const dataSec = lits.size ? section(11, vec([[0x00, O.i32const, ...sleb(LIT_BASE), O.end, ...uleb(litBytes.length), ...litBytes]])) : [];
-  return Uint8Array.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, ...typeSec, ...funcSec, ...memSec, ...globalSec, ...exportSec, ...codeSec, ...dataSec]);
+  const dataSegs = [];
+  if (lits.size) dataSegs.push([0x00, O.i32const, ...sleb(LIT_BASE), O.end, ...uleb(litBytes.length), ...litBytes]);
+  if (hostState && keyBytes.length) dataSegs.push([0x00, O.i32const, ...sleb(KEYS_BASE), O.end, ...uleb(keyBytes.length), ...keyBytes]);
+  const dataSec = dataSegs.length ? section(11, vec(dataSegs)) : [];
+  return Uint8Array.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, ...typeSec, ...importSec, ...funcSec, ...memSec, ...globalSec, ...exportSec, ...codeSec, ...dataSec]);
 }
 
 // ===== helper bodies (a=0,b=1) =====
@@ -268,6 +311,19 @@ function compileMethod(m, ctx) {
   ctx = Object.assign({}, ctx, { vt });
   const code = []; let ret = false;
   const get = (name) => params.has(name) ? params.get(name) : idx.get(name);
+  // hostState prologue: load every committed field from Verkle into its memory word BEFORE
+  // the body runs, so a read sees the state persisted by an earlier call (not just this
+  // instance's zero-initialised memory). Absent keys yield 32 zero bytes — the same value an
+  // unset field already holds. Persist is eager (on each field assign, below), so early
+  // `return` never skips a write.
+  if (ctx.hostState) {
+    for (let i = 0; i < ctx.fields; i++) {
+      code.push(O.i32const, ...sleb(ctx.hostState.keyPtr[i]),
+                O.i32const, ...sleb(ctx.hostState.keyLen[i]),
+                O.i32const, ...sleb(ctx.FIELD_BASE + i * SLOT),
+                O.call, ...uleb(ctx.hostState.vget), O.drop);
+    }
+  }
   for (const s of m.body.body) { emitStmt(s, code, ctx, params, get); if (isReturn(s)) ret = true; }
   if (!ret) code.push(O.i32const, ...sleb(ctx.Z));
   code.push(O.end);
@@ -298,6 +354,16 @@ function emitStmt(s, code, ctx, params, get) {
         emitP(s.value, code, ctx, params, get); code.push(O.lset, ...uleb(ctx.vt)); // vt = value ptr
         const addr = fieldAddr(ctx, s.name);
         for (let k = 0; k < 4; k++) code.push(O.i32const, ...sleb(addr), O.lget, ...uleb(ctx.vt), O.i64load, ...m64(k * 8), O.i64store, ...m64(k * 8));
+        // hostState: flush this field to Verkle immediately after the memory write, so the
+        // write survives to the next call even if a later `return` exits before other fields.
+        if (ctx.hostState) {
+          const fidx = ctx.slot.get(s.name);
+          code.push(O.i32const, ...sleb(ctx.hostState.keyPtr[fidx]),
+                    O.i32const, ...sleb(ctx.hostState.keyLen[fidx]),
+                    O.i32const, ...sleb(addr),
+                    O.i32const, ...sleb(SLOT),
+                    O.call, ...uleb(ctx.hostState.vset), O.drop);
+        }
       } else {
         emitP(s.value, code, ctx, params, get); code.push(O.lset, ...uleb(get(s.name)));
       }

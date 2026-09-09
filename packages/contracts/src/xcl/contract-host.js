@@ -1,4 +1,4 @@
-import { HOST_ABI_SOURCE, slotKey } from './abi.js';
+import { HOST_ABI_SOURCE, HOST_ABI_SOURCE_BYTES, slotKey, byteKey, XCL_WORD_BYTES } from './abi.js';
 import { contractId, contractCoordinates } from './placement.js';
 import { InMemoryState } from './in-memory-state.js';
 
@@ -56,6 +56,11 @@ export class ContractHost {
     this.contracts.set(id, {
       wasm: bytes, coordinates, slots: new Set(slots.map((s) => s | 0)),
       gated: !!deployOpts.gated,   // a gated contract requires a passing delegation chain on every call
+      // byteState: the contract was compiled with the byte-pointer ABI (LNG `compile(src,
+      // {hostState:true})`), so its `~u256` fields persist through Verkle as 32-byte words
+      // under byte keys. byteKeys grows as writes are observed, exactly like `slots`.
+      byteState: !!deployOpts.byteState,
+      byteKeys: new Set(),
     });
     return { id, coordinates };
   }
@@ -94,10 +99,20 @@ export class ContractHost {
       const v = this.state.get(slotKey(id, slot));
       slots[slot] = (v === undefined || v === null) ? 0 : (v | 0);
     }
+    // Byte-keyed read-set (byteState contracts): every byte key the contract has touched,
+    // read from committed state as its 32-byte hex word. A key never written stays absent
+    // (the ABI's get zero-fills it), so a fresh contract stages nothing.
+    const kv = {};
+    for (const hk of c.byteKeys) {
+      const v = this.state.get(byteKey(id, hk));
+      if (v !== undefined && v !== null) kv[hk] = v;
+    }
 
     const host = {
-      source: HOST_ABI_SOURCE,
-      data: { slots, caller: (opts.caller | 0) },
+      // The byte-pointer ABI and the v0 slot ABI collide on the names xmbl_verkle_get/set
+      // (different signatures), so a call uses exactly ONE of them per the contract's kind.
+      source: c.byteState ? HOST_ABI_SOURCE_BYTES : HOST_ABI_SOURCE,
+      data: { slots, caller: (opts.caller | 0), kv },
     };
     // The runtime satisfies an import from the host module if the ABI provides it, and denies
     // anything else — so the ABI keys ARE the allow surface for this call, scoped to this call.
@@ -105,10 +120,19 @@ export class ContractHost {
     // runtime would leak a standing allowance to later, unrelated jobs on the same instance.
     const { result, writes } = await this.runtime.execute(c.wasm, fnName, args, { host });
 
-    // Apply the write-set atomically. Record touched slots so later calls stage them too.
-    for (const [slot, val] of writes) {
-      c.slots.add(slot | 0);
-      await this.state.insert(slotKey(id, slot), val | 0);
+    // Apply the write-set atomically. Byte writes are tagged `['bytes', hexKey, hexVal]`
+    // (entry[0] is the string 'bytes'); slot writes are `[slotNum, valNum]` (entry[0] is a
+    // number). Tag-checking each entry keeps the two ABIs from mis-applying each other's writes.
+    for (const w of writes) {
+      if (typeof w[0] === 'string' && w[0] === 'bytes') {
+        const [, hk, hv] = w;
+        c.byteKeys.add(hk);
+        await this.state.insert(byteKey(id, hk), hv);
+      } else {
+        const [slot, val] = w;
+        c.slots.add(slot | 0);
+        await this.state.insert(slotKey(id, slot), val | 0);
+      }
     }
     return { result, writes, stateRoot: this.state.getRoot(), coordinates: c.coordinates };
   }
@@ -117,5 +141,23 @@ export class ContractHost {
   getSlot(id, slot) {
     const v = this.state.get(slotKey(id, slot));
     return (v === undefined || v === null) ? 0 : (v | 0);
+  }
+
+  /**
+   * Read a byteState contract's committed field as a BigInt (0n if never written). The field
+   * name is the byte key; its value is the 32-byte little-endian XCL word. This is how a caller
+   * observes an LNG-compiled contract's persisted state without re-entering the WASM (whose
+   * return value is only an in-worker memory pointer).
+   * @param {string} id
+   * @param {string} name field name (as written in the LNG `~state` block)
+   * @returns {bigint}
+   */
+  getBytes(id, name) {
+    const hk = Buffer.from(name, 'utf8').toString('hex');
+    const hv = this.state.get(byteKey(id, hk));
+    if (hv === undefined || hv === null) return 0n;
+    let v = 0n;
+    for (let i = 0; i < XCL_WORD_BYTES; i++) v |= BigInt(parseInt(hv.slice(i * 2, i * 2 + 2), 16)) << BigInt(i * 8);
+    return v;
   }
 }

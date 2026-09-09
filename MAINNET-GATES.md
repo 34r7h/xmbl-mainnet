@@ -153,11 +153,27 @@ continue-on-error, and in the release workflow before any publish).
       out-of-scope, and REVOKED calls are refused BEFORE any WASM runs and leave state
       unchanged; a gated contract with no authorizer configured cannot be called (never fails
       open). — *contract-host.js; contract-host.test.mjs*
-- [ ] The XCL host ABI is the v0 **slot** form (i32 slots/values). Extend to the byte-pointer
-      ABI in agentic-contracts-proto.md §3.1 (xmbl_verkle_get/set + cubic_sig/mayo/lwe verify),
-      and have the LNG WASM backend emit those host calls, so a full LNG contract drives state.
-      (Today: a hand-written host-ABI contract drives XCL slots; an LNG-compiled contract runs
-      import-free with its state in module memory — the two ABIs do not yet meet.)
+- [x] **T6.1-a — byte-pointer STATE ABI meets the LNG backend.** Beyond the v0 slot ABI, the XCL
+      host ABI now has the byte-pointer state form from agentic-contracts-proto.md §3.1
+      (`xmbl_verkle_get(key_ptr,key_len,val_out_ptr)` / `xmbl_verkle_set(key_ptr,key_len,val_ptr,
+      val_len)` over the guest's linear memory — abi.js `HOST_ABI_SOURCE_BYTES` + `byteKey`), and
+      the LNG WASM backend EMITS it under opt-in `compile(src,{hostState:true})`: each entrypoint
+      loads its `~u256` fields from Verkle on entry and flushes on every assignment (so an early
+      `return` never drops a write). A full LNG-compiled contract now DRIVES persisted state —
+      proven by a FRESH-worker-per-call counter that reaches 3 only by reading each prior call's
+      committed write back through the host, and by two hosts over a real VerkleStateTree
+      converging to one root. The DEFAULT `compile()` stays import-free, so the mainnet-safe gate
+      above does not regress. — *compile-wasm.js; xcl/abi.js; xcl/contract-host.js;
+      contract-host.test.mjs (13/13); compile-wasm.test.mjs (26/26)*
+- [ ] **T6.1-b — crypto host calls + arg marshalling (open).** §3.1's `xmbl_cubic_sig_verify` /
+      `xmbl_mayo_verify` / `xmbl_lwe_decrypt` are deliberately NOT emitted: the compute worker binds
+      host imports SYNCHRONOUSLY from an eval'd source string (compute.js), and MAYO needs async
+      Emscripten instantiation a sync import cannot serve without a runtime change, while inlining
+      Cubic-SIG/LWE math would grow the eval'd-source surface flagged as finding C2 in
+      COMPUTE-ISOLATION-THREAT-MODEL.md. Separately, `~u256` params reach an LNG contract as memory
+      pointers, so passing plain-int args through ContractHost needs a marshalling layer not yet
+      built (the state path is proven with a no-arg literal counter). Both are the remaining §3.1
+      surface.
 
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 

@@ -100,6 +100,52 @@ try {
 ok('signed ~i256 field rejected', (() => { try { compile("~contract `S { ~state { ~public { `x ~i256 0 } } ~on `f(){ return 1 } }"); return false; } catch { return true; } })());
 ok('~decimal rejected', (() => { try { compile("~contract `D { ~state { ~public { `x ~decimal 1 } } ~on `f(){ return 1 } }"); return false; } catch { return true; } })());
 
+// ---- host-state (byte-pointer ABI) emission: OPT-IN, still mainnet-safe ----
+// compile(src, {hostState:true}) makes `~u256` fields persist across calls through the XCL
+// byte-pointer host ABI (env.xmbl_verkle_get/set). The DEFAULT compile() must stay import-free
+// (the mainnet-safe gate below), so this is strictly opt-in.
+{
+  // A no-arg increment: `~u256` PARAMS arrive as memory pointers, so a literal `+ 1` isolates
+  // the state path (arg marshalling is a separate concern owned by ContractHost).
+  const HS_SRC = '~contract `HC { ~state { ~public { `count ~u256 0 } } ~on `inc() { `count = `count + 1; return `count } }';
+  const HS = compile(HS_SRC, { hostState: true });
+  const hmod = new WebAssembly.Module(HS);
+  const imps = WebAssembly.Module.imports(hmod).map(i => i.module + '.' + i.name);
+  ok('hostState: imports exactly env.xmbl_verkle_get + env.xmbl_verkle_set',
+     imps.length === 2 && imps.includes('env.xmbl_verkle_get') && imps.includes('env.xmbl_verkle_set'));
+  ok('hostState: default compile() is STILL import-free (opt-in did not leak)',
+     WebAssembly.Module.imports(new WebAssembly.Module(compile(HS_SRC))).length === 0);
+
+  // Cross-INSTANCE persistence: every call is a FRESH instance (fresh memory); only the shared
+  // store carries over — the fresh-worker-per-call reality of the storage-compute deploy target.
+  const store = new Map();
+  const HX = '0123456789abcdef';
+  const keyHex = (v, p, l) => { let k = ''; for (let j = 0; j < l; j++) k += HX[v[p + j] >> 4] + HX[v[p + j] & 15]; return k; };
+  const runInc = () => {
+    const ref = {};
+    const host = { env: {
+      xmbl_verkle_get: (kp, kl, vo) => { const v = new Uint8Array(ref.i.exports.memory.buffer); const s = store.get(keyHex(v, kp, kl)); for (let j = 0; j < 32; j++) v[vo + j] = s ? parseInt(s.slice(j * 2, j * 2 + 2), 16) : 0; return 0; },
+      xmbl_verkle_set: (kp, kl, vp, vl) => { const v = new Uint8Array(ref.i.exports.memory.buffer); let val = ''; for (let j = 0; j < 32; j++) { const b = j < vl ? v[vp + j] : 0; val += HX[b >> 4] + HX[b & 15]; } store.set(keyHex(v, kp, kl), val); return 0; },
+    } };
+    ref.i = new WebAssembly.Instance(hmod, host);
+    ref.i.exports.__reset();
+    ref.i.exports.inc();
+  };
+  runInc(); runInc(); runInc();
+  const stored = [...store.values()][0] || '';
+  let count = 0n; for (let j = 0; j < 32; j++) count |= BigInt(parseInt(stored.slice(j * 2, j * 2 + 2) || '0', 16)) << BigInt(j * 8);
+  ok('hostState: `count` persists across 3 FRESH instances → 3 (state only survived via the host)', count === 3n);
+
+  // The opt-in module must ALSO clear the mainnet-safe memory gate.
+  (async () => {
+    const hm = await WebAssembly.compile(HS instanceof Uint8Array ? HS : Uint8Array.from(HS));
+    let pp = 8, mf = null; const u = HS;
+    const rdu = () => { let x = 0, s = 0, b; do { b = u[pp++]; x += (b & 0x7f) * (2 ** s); s += 7; } while (b & 0x80); return x; };
+    while (pp < u.length) { const id = u[pp++]; const size = rdu(); const end = pp + size; if (id === 5) { rdu(); mf = u[pp]; break; } pp = end; }
+    ok('hostState: emitted memory still declares a bounded maximum (mainnet-safe)', mf !== null && (mf & 0x01) === 0x01);
+  })();
+}
+
 // ---- mainnet-safety of the emitted module (pins the deploy reality) ----
 // The old fake WASMExecutor is gone; the deploy target is @xmbl/storage-compute's hardened
 // runtime, which REFUSES an unbounded-memory or import-carrying guest. So the compiler must

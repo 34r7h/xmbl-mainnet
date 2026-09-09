@@ -123,6 +123,52 @@ await check('an LNG-compiled contract runs in the delegated sandbox, determinist
 });
 
 // ============================================================================
+// BYTE-POINTER ABI (T6.1) — a FULL LNG-compiled contract drives PERSISTENT state.
+// Before this, an LNG contract ran import-free with its `~u256` fields living only in the
+// call's module memory, so nothing persisted across calls (each call is a fresh worker with
+// fresh memory). Compiled with `{hostState:true}` it imports env.xmbl_verkle_get/set (the
+// §3.1 byte-pointer ABI), and XCL stages the read-set / applies the write-set through Verkle —
+// so the two ABIs (hand-written host-ABI contract ↔ LNG-compiled contract) now MEET.
+// ============================================================================
+// A no-arg increment (the `1` is a literal, not a param): LNG's `~u256` PARAMS arrive as
+// memory pointers, and ContractHost.call passes raw i32 args (arg marshalling is a separate,
+// unbuilt concern — noted in abi.js). A literal-increment counter isolates the property this
+// gate is about: STATE that persists across calls, not argument passing.
+const LNG_COUNTER = '~contract `Counter { ~state { ~public { `count ~u256 0 } } '
+  + '~on `inc() { `count = `count + 1; return `count } '
+  + '~on `get() { return `count } }';
+
+await check('LNG-compiled contract PERSISTS state across calls via the byte-pointer ABI (0 → 1 → 2 → 3)', async () => {
+  const wasm = compile(LNG_COUNTER, { hostState: true });
+  const host = new ContractHost({ runtime: runtime() });
+  const { id } = host.deploy(wasm, [], { byteState: true });
+
+  assert.strictEqual(host.getBytes(id, 'count'), 0n, 'fresh contract state is 0');
+  const r1 = await host.call(id, 'inc');
+  assert.ok(r1.writes.some((w) => w[0] === 'bytes'), 'a byte write is staged back');
+  assert.strictEqual(host.getBytes(id, 'count'), 1n, 'call 1 persists count=1');
+  // Call 2 is a FRESH worker (fresh module memory): count=2 is only possible if it read the
+  // committed 1 back through xmbl_verkle_get — the exact cross-call persistence the gate needs.
+  await host.call(id, 'inc');
+  assert.strictEqual(host.getBytes(id, 'count'), 2n, 'call 2 read call 1’s write, then persisted 2');
+  await host.call(id, 'inc');
+  assert.strictEqual(host.getBytes(id, 'count'), 3n, 'accumulates across three independent calls');
+});
+
+await check('byte-pointer state persists through a real VerkleStateTree and two hosts converge', async () => {
+  const wasm = compile(LNG_COUNTER, { hostState: true });
+  const a = new ContractHost({ runtime: runtime(), state: new VerkleStateTree() });
+  const b = new ContractHost({ runtime: runtime(), state: new VerkleStateTree() });
+  const ida = a.deploy(wasm, [], { byteState: true }).id;
+  const idb = b.deploy(wasm, [], { byteState: true }).id;
+  const root0 = a.state.getRoot();
+  for (let i = 0; i < 3; i++) { await a.call(ida, 'inc'); await b.call(idb, 'inc'); }
+  assert.strictEqual(a.getBytes(ida, 'count'), 3n, 'real Verkle-backed state accumulates to 3');
+  assert.notStrictEqual(a.state.getRoot(), root0, 'committing byte-keyed state moves the Verkle root');
+  assert.strictEqual(a.state.getRoot(), b.state.getRoot(), 'same calls → same Verkle root');
+});
+
+// ============================================================================
 // TRUE-IMPUTE ENFORCEMENT — a gated contract runs ONLY under a valid delegation chain.
 // The gate is load-bearing: an unauthorized call is REFUSED before the WASM ever runs and
 // before any slot is written, so the state root does NOT move on a rejected call.
