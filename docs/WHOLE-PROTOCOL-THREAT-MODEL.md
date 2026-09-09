@@ -19,8 +19,8 @@ Companion documents (read alongside):
 
 ## 1. Module stack and dependency direction
 
-Ten protocol packages (the four apps — `cli`, `desktop-app`, `browser-extension`,
-`visualizer`/`simulator` — are out of scope for this protocol threat model):
+Ten protocol packages (the five apps — `cli`, `desktop-app`, `browser-extension`,
+`visualizer`, `simulator` — are out of scope for this protocol threat model):
 
 ```
                  ┌──────────────────────────────────────────────┐

@@ -99,10 +99,15 @@ deriving `a` and `b` **only** through a domain-separated hash into `F_p`
 is ever used as curve material.
 
 `curve-source.js` ships `matrixRankModP` specifically so this can be *measured*,
-not merely asserted: it computes, over `F_p`, the rank of the naive geometric
-outer-product versus the hash-expanded public block, demonstrating that the
+not merely asserted, and `cubic-crypto.test.mjs` (TEST 1) exercises it: it computes,
+over `F_p`, the rank of the naive geometric outer-product (`u·vᵀ` of two
+coordinate-derived vectors — **rank 1**, exactly the structure MinRank exploits)
+versus the hash-expanded material derived from the *same* coordinates (a `K×K`
+block of `H(seed‖i‖j)` — **full rank `K`**), demonstrating empirically that the
 hash step destroys the low-rank structure. **The audit is asked to confirm** that
-no residual low-rank relation survives the hash expansion.
+no residual low-rank relation survives the hash expansion (the in-repo check
+covers the naive outer product only; a MinRank cryptanalyst must rule out
+higher-rank / non-outer-product structure the test does not enumerate).
 
 **Assumption A2 (hash-expansion / random-oracle):** modelling `H` as a random
 oracle, `(a, b)` are computationally indistinguishable from uniform in `F_p²`

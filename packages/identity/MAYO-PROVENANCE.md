@@ -91,8 +91,8 @@ built with the same toolchain, so it is upstream's latent bug, not something ven
 introduced. The fork corrects only the forward declaration to match the real
 implementation; **the function body is untouched — zero algorithm/behavior change.**
 
-The authoritative diff is committed alongside this doc as
-[`mayo-fork.diff`](./mayo-fork.diff).
+The authoritative diff is committed next to the vendored source as
+[`mayo-cube/mayo-fork.diff`](./mayo-cube/mayo-fork.diff).
 
 Reproduce the whole-tree comparison yourself:
 
