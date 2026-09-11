@@ -163,15 +163,31 @@ export class MAYOWasm {
   }
 
   async verify(message, signature, publicKey) {
+    return this.verifySync(message, signature, publicKey);
+  }
+
+  /**
+   * Synchronous signature verification. The MAYO Emscripten module is instantiated
+   * asynchronously ONCE via {@link MAYOWasm.load}; the verification primitive itself
+   * (`_crypto_sign_verify`) is a synchronous WASM call, so once the module is loaded a
+   * verify needs no `await`. This is the form a synchronous WASM host import can serve
+   * (the compute worker binds `env.xmbl_mayo_verify` to it after awaiting `load()`), where
+   * the async `verify` wrapper cannot return an i32 to the guest.
+   * @param {Uint8Array|string} message
+   * @param {string} signature base64
+   * @param {string} publicKey base64
+   * @returns {boolean}
+   */
+  verifySync(message, signature, publicKey) {
     // Decode keys from base64
     const sigBytes = this._base64ToBytes(signature);
     const pkBytes = this._base64ToBytes(publicKey);
-    
+
     // Allocate memory
     const messagePtr = this._writeToMemory(message);
     const sigPtr = this._writeToMemory(sigBytes);
     const pkPtr = this._writeToMemory(pkBytes);
-    
+
     try {
       // Call verify function
       const result = this._crypto_sign_verify(
@@ -181,7 +197,7 @@ export class MAYOWasm {
         message.length,
         pkPtr
       );
-      
+
       // 0 means success, non-zero means failure
       return result === 0;
     } finally {

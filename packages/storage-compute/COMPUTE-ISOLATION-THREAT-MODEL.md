@@ -144,6 +144,17 @@ the safety is architectural/contractual. Audit should confirm no path routes
 untrusted input into `host.source`, and consider a capability object passed by
 structured clone instead of `eval` of a source string.
 
+**Direction taken for crypto (T6.1-c).** The signature-verification host calls
+(`env.xmbl_cubic_sig_verify` / `env.xmbl_mayo_verify`) do **not** inline Cubic-SIG or
+MAYO math into an eval'd string. They use the `host.init` hook, an `async (ctx,
+declared)` factory the worker **awaits before instantiation**, whose body `import()`s
+the **real** `@xmbl/identity` module and returns synchronous verify bindings (loading
+MAYO's Emscripten module once, only when the guest declares its import). This is the
+"capability by real module, not eval'd source" direction this finding recommends: the
+crypto path **shrinks** the eval surface rather than growing it. The signature material
+is chain-staged via `ctx.data.crypto` (identical on every node), so a gated contract's
+verdict is deterministic — a requirement, since `ContractHost` drives a shared root.
+
 ---
 
 ## 6. Open questions for the reviewer (NOT handled in-code)

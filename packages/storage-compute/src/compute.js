@@ -63,7 +63,7 @@ function readMemoryLimits(bytes) {
 
 (async () => {
   try {
-    const { wasmCode, functionName, args, maxPages, allowed, hostSource, hostData, marshalSource } = workerData;
+    const { wasmCode, functionName, args, maxPages, allowed, hostSource, hostData, marshalSource, initSource } = workerData;
     // wasmCode arrives as a Uint8Array (structured-cloned across threads) — no per-byte
     // re-materialisation. WebAssembly.compile accepts the typed array directly.
 
@@ -106,6 +106,21 @@ function readMemoryLimits(bytes) {
       // eslint-disable-next-line no-eval
       const makeMarshal = (0, eval)('(' + marshalSource + ')');
       marshal = makeMarshal(ctx) || {};
+    }
+
+    // ASYNC HOST INIT (deny-by-default, still). Some host bindings depend on an ASYNCHRONOUS
+    // one-time setup a synchronous factory cannot do -- e.g. a crypto verifier whose WASM is
+    // instantiated by an async import. initSource is the caller's own async factory, AWAITED
+    // here BEFORE the guest is instantiated, and told which imports the guest declared so it
+    // only pays for what is used. What it returns is merged into hostImports and so still goes
+    // through the same per-import lookup below -- an import the guest did not declare is unused,
+    // and one nothing provides is still denied.
+    if (initSource) {
+      const declared = WebAssembly.Module.imports(module).map((i) => i.module + '.' + i.name);
+      // eslint-disable-next-line no-eval
+      const makeInit = (0, eval)('(' + initSource + ')');
+      const initImports = (await makeInit(ctx, declared)) || {};
+      for (const k in initImports) if (typeof initImports[k] === 'function') hostImports[k] = initImports[k];
     }
 
     // (3) Deny-by-default imports. Each import is satisfied by the host module if it
@@ -192,6 +207,10 @@ export class ComputeRuntime {
    *   `marshal` is a stringified `(ctx) => ({ $args?, $result? })` factory (same ctx): `$args`
    *   transforms the call arguments with instance access (e.g. plain integers → guest-memory
    *   word pointers), `$result` transforms the raw return (e.g. a word pointer → BigInt).
+   *   Optional `init` is a stringified `async (ctx, declared) => ({ "env.name": fn, ... })`
+   *   factory AWAITED before instantiation (so a binding may depend on async one-time setup,
+   *   e.g. loading a crypto verifier's WASM); `declared` is the guest's declared import keys.
+   *   Its bindings merge into the host imports and obey the same deny-by-default lookup.
    * @returns {Promise<number|bigint|{result:any, writes:any[], log:any[]}>}
    */
   async execute(wasmCode, functionName, args = [], opts = {}) {
@@ -212,6 +231,7 @@ export class ComputeRuntime {
         hostSource: host ? host.source : null,
         hostData: host ? (host.data || {}) : null,
         marshalSource: host ? (host.marshal || null) : null,
+        initSource: host ? (host.init || null) : null,
       },
       resourceLimits: {
         // Hard V8 heap cap so a JS-side allocation bomb dies with the thread. WASM

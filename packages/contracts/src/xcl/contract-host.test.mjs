@@ -13,6 +13,7 @@ import { ContractHost, InMemoryState, contractCoordinates, contractId } from './
 import { compile } from '@xmbl/lng';
 import {
   Identity, mintGrant, mintZspToken, signAction, makeAuthorizer, RevocationSet, DurableNonceRegistry,
+  cubicSigKeyGen, cubicSigSign, MAYOWasm,
 } from '@xmbl/identity';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -242,6 +243,76 @@ await check('word-ABI + byteState together: `inc(by)` marshals the arg AND persi
   const r2 = await host.call(id, 'inc', [37n]);
   assert.strictEqual(r2.result, 42n, 'call 2 read the committed 5, added 37');
   assert.strictEqual(host.getBytes(id, 'count'), 42n, 'committed field agrees with the decoded return');
+});
+
+// ============================================================================
+// CRYPTO HOST CALLS (T6.1-c) — a contract asks the chain to VERIFY a signature, and the
+// verdict comes from the REAL @xmbl/identity verifiers (Cubic-SIG in pure JS; MAYO whose
+// WASM is loaded ONCE via the worker's async init hook — the "async" the operator chose).
+// The signature MATERIAL is chain-staged (identical on every node → deterministic verdict);
+// the guest supplies only the message bytes. A VALID signature verifies to 1, a signature
+// over a DIFFERENT message to 0 — a real cryptographic outcome, not a callable-stub check.
+// ============================================================================
+// A hand-encoded contract (like COUNTER, no LNG dependency for the runtime half) that imports
+// both crypto verifiers, holds a message in a data segment, exports its memory, and calls each
+// verifier over (msgPtr=0, msgLen=N).
+function cryptoContract(msg) {
+  const uleb = (n) => { const b = []; do { let x = n & 0x7f; n >>>= 7; if (n) x |= 0x80; b.push(x); } while (n); return b; };
+  const vec = (items) => [...uleb(items.length), ...items.flat()];
+  const section = (id, body) => [id, ...uleb(body.length), ...body];
+  const s = (t) => [...uleb(t.length), ...[...t].map((c) => c.charCodeAt(0))];
+  const N = msg.length;
+  const fnBody = (callIdx) => { const code = [0x00, 0x41, ...uleb(0), 0x41, ...uleb(N), 0x10, ...uleb(callIdx), 0x0b]; return [...uleb(code.length), ...code]; };
+  return Uint8Array.from([
+    ...HDR,
+    ...section(1, vec([[0x60, ...vec([0x7f, 0x7f]), ...vec([0x7f])], [0x60, ...vec([]), ...vec([0x7f])]])),
+    ...section(2, vec([
+      [...s('env'), ...s('xmbl_cubic_sig_verify'), 0x00, ...uleb(0)],
+      [...s('env'), ...s('xmbl_mayo_verify'), 0x00, ...uleb(0)],
+    ])),
+    ...section(3, vec([uleb(1), uleb(1)])),
+    ...section(5, vec([[0x01, ...uleb(1), ...uleb(1)]])),
+    ...section(7, vec([
+      [...s('memory'), 0x02, ...uleb(0)],
+      [...s('check_cubic'), 0x00, ...uleb(2)],
+      [...s('check_mayo'), 0x00, ...uleb(3)],
+    ])),
+    ...section(10, vec([fnBody(0), fnBody(1)])),
+    ...section(11, vec([[0x00, 0x41, ...uleb(0), 0x0b, ...vec([...msg])]])),
+  ]);
+}
+
+await check('crypto host call: Cubic-SIG verifies a VALID signature to 1 and a tampered one to 0 through ContractHost', async () => {
+  const msg = Uint8Array.from([11, 22, 33, 44, 55, 66]);
+  const host = new ContractHost({ runtime: new ComputeRuntime({ maxTime: 10000 }), state: new VerkleStateTree() });
+  const { id, coordinates } = host.deploy(cryptoContract(msg), [], { cryptoHost: true });
+  const { sk, pk } = cubicSigKeyGen();
+  const cubeContext = { cubeAddress: id, coordinates: coordinates.coordinates };
+  const good = cubicSigSign(msg, sk, pk, cubeContext);
+  const bad = cubicSigSign(Uint8Array.from([1, 2, 3]), sk, pk, cubeContext); // signs a DIFFERENT message
+  const call = async (sig) => (await host.call(id, 'check_cubic', [], { crypto: { cubicSig: { sig, pk, cubeContext } } })).result;
+  assert.strictEqual(await call(good), 1, 'a valid Cubic-SIG over the presented message verifies');
+  assert.strictEqual(await call(bad), 0, 'a signature over a different message is rejected');
+});
+
+await check('crypto host call: MAYO (async-loaded) verifies a VALID signature to 1 and a tampered one to 0 through ContractHost', async () => {
+  const msg = Uint8Array.from([7, 7, 7, 7, 8, 8]);
+  const host = new ContractHost({ runtime: new ComputeRuntime({ maxTime: 10000 }), state: new VerkleStateTree() });
+  const { id } = host.deploy(cryptoContract(msg), [], { cryptoHost: true });
+  const mayo = await MAYOWasm.load();
+  const kp = await mayo.keygen();
+  const good = await mayo.sign(msg, kp.privateKey);
+  const bad = await mayo.sign(Uint8Array.from([9, 9, 9]), kp.privateKey); // signs a DIFFERENT message
+  const call = async (signature) => (await host.call(id, 'check_mayo', [], { crypto: { mayo: { signature, publicKey: kp.publicKey } } })).result;
+  assert.strictEqual(await call(good), 1, 'a valid MAYO signature over the presented message verifies');
+  assert.strictEqual(await call(bad), 0, 'a MAYO signature over a different message is rejected');
+});
+
+await check('crypto host call: the same import declared WITHOUT cryptoHost is denied (deny-by-default holds)', async () => {
+  const msg = Uint8Array.from([1, 2, 3, 4]);
+  const host = new ContractHost({ runtime: runtime() });
+  const { id } = host.deploy(cryptoContract(msg), []); // NO cryptoHost → no crypto init attached
+  await assert.rejects(() => host.call(id, 'check_cubic'), /denied import: env\.xmbl_cubic_sig_verify/);
 });
 
 // ============================================================================

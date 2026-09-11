@@ -191,3 +191,68 @@ export const HOST_ABI_SOURCE_BYTES = `(ctx) => {
 export function byteKey(contractId, hexKey) {
   return `xcl/${contractId}/bkey/${hexKey}`;
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// CRYPTO HOST CALLS (agentic-contracts-proto.md §3.1) — a contract asks the chain to
+// VERIFY a signature. Unlike the state ABIs above (whose bindings are pure synchronous
+// JS eval'd from a source string), the crypto verifiers are REAL modules from
+// @xmbl/identity: this factory `import()`s the package inside the worker rather than
+// inlining Cubic-SIG/MAYO math into the eval'd string — the "capability by real module,
+// not eval'd source" direction the isolation threat model's finding C2 asks for, so this
+// path SHRINKS the eval surface instead of growing it.
+//
+// ASYNC, resolved: a WASM import must return synchronously, and it does — the only async
+// step is MAYO's one-time Emscripten instantiation. This factory is the worker's `host.init`
+// hook: it is `await`ed BEFORE the guest is instantiated, loads MAYO once (and ONLY if the
+// guest declares env.xmbl_mayo_verify), and returns SYNCHRONOUS import bindings that call the
+// already-loaded verifiers. Cubic-SIG verification is pure synchronous JS, no load needed.
+//
+// DETERMINISM (consensus-critical — ContractHost drives a shared state root): the signature
+// MATERIAL (Cubic-SIG {sig, pk, cubeContext}; MAYO {signature, publicKey}) is CHAIN-STAGED
+// through `ctx.data.crypto`, identical on every node, so the verdict is identical on every
+// node. The guest supplies only the MESSAGE bytes (a pointer+len into its own memory) to
+// check against that staged material. Both calls return 1 (valid) / 0 (invalid) and never
+// trap. `xmbl_lwe_decrypt` is deliberately NOT here: decryption needs a SECRET key, which is
+// neither chain-derivable nor safe to place in a guest's reach — it is carried as an open item.
+
+/** The import names the crypto ABI defines — the deny-by-default allow surface. */
+export const HOST_IMPORT_KEYS_CRYPTO = ['env.xmbl_cubic_sig_verify', 'env.xmbl_mayo_verify'];
+
+/**
+ * Crypto host-call initializer, as source (eval'd inside the worker and AWAITED before the
+ * guest is instantiated). Signature `async (ctx, declared) => ({ "env.name": fn, ... })`:
+ * `declared` is the guest's declared import keys (so MAYO is loaded only when needed), `ctx`
+ * is the same context object the state ABIs get (`ctx.mem()` gives guest memory after
+ * instantiation, `ctx.data.crypto` is the staged signature material, `ctx.log` collects a
+ * trace). Returns synchronous verify bindings.
+ * @type {string}
+ */
+export const HOST_ABI_CRYPTO_INIT_SOURCE = `async (ctx, declared) => {
+  var id = await import('@xmbl/identity');
+  var need = declared || [];
+  var mayo = null;
+  if (need.indexOf('env.xmbl_mayo_verify') !== -1) mayo = await id.MAYOWasm.load();
+  var crypto = (ctx.data && ctx.data.crypto) || {};
+  var readBytes = function (ptr, len) {
+    var m = ctx.mem && ctx.mem(); if (!m) return null;
+    if (ptr < 0 || len < 0 || ptr + len > m.buffer.byteLength) return null;
+    return new Uint8Array(m.buffer.slice(ptr, ptr + len));
+  };
+  var out = {};
+  out['env.xmbl_cubic_sig_verify'] = function (msgPtr, msgLen) {
+    var msg = readBytes(msgPtr, msgLen); if (!msg) return 0;
+    var c = crypto.cubicSig; if (!c || !c.sig || !c.pk || !c.cubeContext) return 0;
+    var ok = id.cubicSigVerify(msg, c.sig, c.pk, c.cubeContext) ? 1 : 0;
+    ctx.log.push(['cubic_sig_verify', msgLen, ok]);
+    return ok;
+  };
+  out['env.xmbl_mayo_verify'] = function (msgPtr, msgLen) {
+    if (!mayo) return 0;
+    var msg = readBytes(msgPtr, msgLen); if (!msg) return 0;
+    var c = crypto.mayo; if (!c || !c.signature || !c.publicKey) return 0;
+    var ok = mayo.verifySync(msg, c.signature, c.publicKey) ? 1 : 0;
+    ctx.log.push(['mayo_verify', msgLen, ok]);
+    return ok;
+  };
+  return out;
+}`;

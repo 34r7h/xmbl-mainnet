@@ -1,4 +1,7 @@
-import { HOST_ABI_SOURCE, HOST_ABI_SOURCE_BYTES, XCL_WORD_MARSHAL_SOURCE, slotKey, byteKey, XCL_WORD_BYTES } from './abi.js';
+import {
+  HOST_ABI_SOURCE, HOST_ABI_SOURCE_BYTES, XCL_WORD_MARSHAL_SOURCE, HOST_ABI_CRYPTO_INIT_SOURCE,
+  slotKey, byteKey, XCL_WORD_BYTES,
+} from './abi.js';
 import { contractId, contractCoordinates } from './placement.js';
 import { InMemoryState } from './in-memory-state.js';
 
@@ -67,6 +70,11 @@ export class ContractHost {
       // written into guest memory and the returned pointer is decoded to a BigInt. A
       // hand-encoded i32-ABI contract leaves this off and its args/return pass through as-is.
       wordAbi: !!deployOpts.wordAbi,
+      // cryptoHost: the contract calls the §3.1 crypto verifiers (env.xmbl_cubic_sig_verify /
+      // env.xmbl_mayo_verify). When set, ContractHost attaches the async crypto init hook so
+      // those imports bind to the REAL @xmbl/identity verifiers, and stages the signature
+      // material from the call's `opts.crypto` (chain-provided, identical on every node).
+      cryptoHost: !!deployOpts.cryptoHost,
     });
     return { id, coordinates };
   }
@@ -122,10 +130,14 @@ export class ContractHost {
       // The byte-pointer ABI and the v0 slot ABI collide on the names xmbl_verkle_get/set
       // (different signatures), so a call uses exactly ONE of them per the contract's kind.
       source: c.byteState ? HOST_ABI_SOURCE_BYTES : HOST_ABI_SOURCE,
-      data: { slots, caller: (opts.caller | 0), kv },
+      // A cryptoHost contract also gets the staged signature material under `crypto`, read by
+      // the crypto init bindings and identical on every node (so the verdict is deterministic).
+      data: { slots, caller: (opts.caller | 0), kv, crypto: c.cryptoHost ? (opts.crypto || null) : null },
       // A word-ABI (LNG-compiled) contract needs its `~u256` args marshalled into guest-memory
       // word pointers and its returned pointer decoded; a hand-encoded i32-ABI contract does not.
       marshal: c.wordAbi ? XCL_WORD_MARSHAL_SOURCE : null,
+      // A cryptoHost contract needs the async crypto verifiers bound before it runs.
+      init: c.cryptoHost ? HOST_ABI_CRYPTO_INIT_SOURCE : null,
     };
     // The runtime satisfies an import from the host module if the ABI provides it, and denies
     // anything else — so the ABI keys ARE the allow surface for this call, scoped to this call.

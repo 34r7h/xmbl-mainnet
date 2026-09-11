@@ -191,13 +191,31 @@ continue-on-error, and in the release workflow before any publish).
       failing LOUDLY instead of passing ints through, and by a `byteState`+`wordAbi` `inc(by)` that
       marshals the arg AND persists 5 → 42 across calls. — *xcl/abi.js; xcl/contract-host.js;
       storage-compute/compute.js; contract-host.test.mjs (18/18)*
-- [ ] **T6.1-c — crypto host calls (open).** §3.1's `xmbl_cubic_sig_verify` / `xmbl_mayo_verify` /
-      `xmbl_lwe_decrypt` are deliberately NOT emitted: the compute worker binds host imports
-      SYNCHRONOUSLY from an eval'd source string (compute.js), and MAYO needs async Emscripten
-      instantiation a sync import cannot serve without a runtime change, while inlining Cubic-SIG/LWE
-      math would grow the eval'd-source surface flagged as finding C2 in
-      COMPUTE-ISOLATION-THREAT-MODEL.md. This is the remaining §3.1 surface and needs an operator
-      decision on the async-vs-sync runtime shape before it can be built.
+- [x] **T6.1-c — signature-verification host calls, bound to the REAL verifiers.** §3.1's
+      `xmbl_cubic_sig_verify` and `xmbl_mayo_verify` are now callable from a contract and answered by
+      the actual `@xmbl/identity` verifiers. The operator's "async" decision resolved the one real
+      async step: a WASM import must return synchronously and does — the only async work is MAYO's
+      ONE-TIME Emscripten instantiation, so ComputeRuntime gained an `host.init` hook (a stringified
+      `async (ctx, declared) => bindings` factory) AWAITED before the guest is instantiated; it loads
+      MAYO once and ONLY when the guest declares `env.xmbl_mayo_verify`, then binds SYNCHRONOUS verify
+      functions (`MAYOWasm.verifySync`, added as the sync twin of the async wrapper; Cubic-SIG verify
+      is already sync). The init factory `import()`s the real module INSTEAD of inlining Cubic-SIG/MAYO
+      math into the eval'd string — the "capability by real module, not eval'd source" direction C2 in
+      COMPUTE-ISOLATION-THREAT-MODEL.md asks for, so this SHRINKS the eval surface. DETERMINISM
+      (ContractHost drives a shared root): the signature MATERIAL is chain-staged via `ctx.data.crypto`
+      (identical on every node); the guest supplies only the message bytes. Proven by a hand-encoded
+      contract (no LNG dependency, like COUNTER) whose call returns 1 for a VALID Cubic-SIG / MAYO
+      signature and 0 for one over a different message — a real cryptographic verdict — plus a
+      deny-by-default check that the same import without the `cryptoHost` flag is refused. — *xcl/abi.js
+      (`HOST_ABI_CRYPTO_INIT_SOURCE`); xcl/contract-host.js; storage-compute/compute.js;
+      identity/wasm-wrapper.js (`verifySync`); contract-host.test.mjs (21/21)*
+- [ ] **T6.1-d — LNG source can CALL the crypto verifiers, and `xmbl_lwe_decrypt` (open).** The
+      runtime/ABI half of the crypto calls (T6.1-c) is reachable today only from a hand-encoded WASM
+      contract; the LNG compiler does not yet emit `env.xmbl_cubic_sig_verify` / `env.xmbl_mayo_verify`
+      from `~contract` source (needs surface syntax + typecheck + backend emission). Separately,
+      `xmbl_lwe_decrypt` is deliberately NOT provided: decryption needs a SECRET key, which is neither
+      chain-derivable nor safe to place in a guest's reach — its determinism and key-custody model is
+      an open design question, not a build task. Both are the remaining §3.1 surface.
 
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 
