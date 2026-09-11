@@ -1,4 +1,4 @@
-import { HOST_ABI_SOURCE, HOST_ABI_SOURCE_BYTES, slotKey, byteKey, XCL_WORD_BYTES } from './abi.js';
+import { HOST_ABI_SOURCE, HOST_ABI_SOURCE_BYTES, XCL_WORD_MARSHAL_SOURCE, slotKey, byteKey, XCL_WORD_BYTES } from './abi.js';
 import { contractId, contractCoordinates } from './placement.js';
 import { InMemoryState } from './in-memory-state.js';
 
@@ -61,6 +61,12 @@ export class ContractHost {
       // under byte keys. byteKeys grows as writes are observed, exactly like `slots`.
       byteState: !!deployOpts.byteState,
       byteKeys: new Set(),
+      // wordAbi: the contract uses the LNG word calling convention — `~u256` args arrive as
+      // pointers to 32-byte little-endian word buffers and the return value is such a pointer.
+      // When set, ContractHost hands the runtime the word marshal so plain-integer args are
+      // written into guest memory and the returned pointer is decoded to a BigInt. A
+      // hand-encoded i32-ABI contract leaves this off and its args/return pass through as-is.
+      wordAbi: !!deployOpts.wordAbi,
     });
     return { id, coordinates };
   }
@@ -72,10 +78,14 @@ export class ContractHost {
    *
    * @param {string} id contract id from {@link deploy}
    * @param {string} fnName exported entrypoint
-   * @param {number[]} [args=[]] i32 arguments
+   * @param {Array<number|bigint>} [args=[]] entrypoint arguments — plain i32 for a hand-encoded
+   *   contract; for a `wordAbi` (LNG-compiled) contract, `~u256` values (Number or BigInt) that
+   *   are marshalled into 32-byte little-endian word pointers before the call
    * @param {object} [opts]
    * @param {number} [opts.caller=0] caller id (low 32 bits surfaced via xmbl_caller)
-   * @returns {Promise<{result:number, writes:Array<[number,number]>, stateRoot:string, coordinates:object}>}
+   * @returns {Promise<{result:(number|bigint), writes:Array, stateRoot:string, coordinates:object}>}
+   *   `result` is the entrypoint return: an i32 for a hand-encoded contract, a decoded BigInt
+   *   (the returned 32-byte word) for a `wordAbi` contract
    */
   async call(id, fnName, args = [], opts = {}) {
     const c = this.contracts.get(id);
@@ -113,6 +123,9 @@ export class ContractHost {
       // (different signatures), so a call uses exactly ONE of them per the contract's kind.
       source: c.byteState ? HOST_ABI_SOURCE_BYTES : HOST_ABI_SOURCE,
       data: { slots, caller: (opts.caller | 0), kv },
+      // A word-ABI (LNG-compiled) contract needs its `~u256` args marshalled into guest-memory
+      // word pointers and its returned pointer decoded; a hand-encoded i32-ABI contract does not.
+      marshal: c.wordAbi ? XCL_WORD_MARSHAL_SOURCE : null,
     };
     // The runtime satisfies an import from the host module if the ABI provides it, and denies
     // anything else — so the ABI keys ARE the allow surface for this call, scoped to this call.

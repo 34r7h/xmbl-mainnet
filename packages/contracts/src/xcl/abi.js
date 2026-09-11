@@ -81,6 +81,65 @@ export const HOST_IMPORT_KEYS_BYTES = ['env.xmbl_verkle_get', 'env.xmbl_verkle_s
 /** The fixed XCL state-word width, in bytes (256-bit little-endian). */
 export const XCL_WORD_BYTES = 32;
 
+// ────────────────────────────────────────────────────────────────────────────
+// WORD-ABI ARGUMENT / RETURN MARSHALLING — the calling convention for LNG-compiled
+// entrypoints. An LNG `~u256` parameter does NOT arrive as a plain integer: the WASM
+// backend passes each parameter as an i32 POINTER to a 32-byte little-endian word buffer
+// in guest memory, and returns an i32 pointer to a 32-byte word. So a caller that hands
+// ContractHost `[7, 3]` for `add(a, b)` would, without marshalling, have 7 and 3 read as
+// memory ADDRESSES — the empirical break (`add(7,3)` returns a garbage pointer, not 10).
+//
+// This is the missing half of the LNG↔XCL seam: the byte-pointer STATE ABI above lets a
+// `~u256` FIELD persist through Verkle; this lets a `~u256` ARGUMENT and RETURN VALUE cross
+// the ComputeRuntime boundary. It is the exact convention proven by @xmbl/lng's own WASM
+// harness (compile-wasm.test.mjs): `__reset()`, then per arg `p = __alloc(); write 32 LE
+// bytes at p`, pass the pointers, and decode the returned pointer's 32 LE bytes back to a
+// value. It MUST run inside the compute worker — only there is guest memory reachable
+// (`ctx.instance.exports.__alloc` / `memory`) — so it is shipped as source and applied by
+// the worker's arg/return hook, exactly like the host ABIs above.
+//
+// It is OPT-IN per contract (ContractHost's `wordAbi` deploy flag): a hand-encoded i32-ABI
+// contract must NOT be marshalled (its args and return are plain i32). A word-ABI contract
+// that is missing `__alloc` (i.e. was not produced by @xmbl/lng) fails LOUDLY rather than
+// silently passing integers through — the fail-closed idiom, never a hidden fallback.
+
+/**
+ * Word-ABI marshalling factory, as source (eval'd inside the worker, given the same `ctx`
+ * as the host ABIs so it can reach `ctx.instance` after instantiation). Returns:
+ *   $args(args)  → maps plain-integer args to pointers to freshly-allocated 32-byte LE words
+ *   $result(ptr) → decodes a returned 32-byte LE word pointer back to a BigInt (pass-through
+ *                  for a non-pointer return, so a void/i32 entrypoint is unaffected)
+ * @type {string}
+ */
+export const XCL_WORD_MARSHAL_SOURCE = `(ctx) => {
+  var WORD = ${XCL_WORD_BYTES};
+  var LIMBS = WORD / 8;
+  var MASK64 = (1n << 64n) - 1n;
+  var FULL = (1n << BigInt(WORD * 8)) - 1n;
+  var dv = function () { return new DataView(ctx.instance.exports.memory.buffer); };
+  return {
+    $args: function (args) {
+      var ex = ctx.instance.exports;
+      if (typeof ex.__alloc !== 'function') throw new Error('XCL word-abi contract is missing the __alloc export (was it compiled by @xmbl/lng?)');
+      if (typeof ex.__reset === 'function') ex.__reset();
+      return (args || []).map(function (a) {
+        var p = ex.__alloc();
+        var v = BigInt(a) & FULL;
+        var d = dv();
+        for (var i = 0; i < LIMBS; i++) { d.setBigUint64(p + i * 8, v & MASK64, true); v >>= 64n; }
+        return p;
+      });
+    },
+    $result: function (ptr) {
+      if (typeof ptr !== 'number') return ptr;
+      var d = dv();
+      var v = 0n;
+      for (var i = LIMBS - 1; i >= 0; i--) v = (v << 64n) | d.getBigUint64(ptr + i * 8, true);
+      return v;
+    },
+  };
+}`;
+
 /**
  * Byte-pointer host-module factory, as source (eval'd inside the worker). `ctx.data.kv`
  * is the staged read-set: `{ [hexKey:string]: hexValue64chars }`. `ctx.writes` collects

@@ -169,6 +169,82 @@ await check('byte-pointer state persists through a real VerkleStateTree and two 
 });
 
 // ============================================================================
+// WORD-ABI ARGUMENT MARSHALLING (T6.1-b) — an LNG-compiled entrypoint takes its `~u256`
+// ARGUMENTS through ContractHost, and returns a decoded value. Before this, ContractHost
+// passed raw integers straight to the runtime, where the WASM read each as a memory ADDRESS
+// (an LNG `~u256` param is a POINTER to a 32-byte little-endian word) — so `add(7,3)` returned
+// a garbage pointer, not 10. The proof is PARITY against BigInt: the ContractHost path must
+// agree with the reference semantics for the same contract and args (the exact discrimination
+// @xmbl/lng's own WASM harness makes, now driven through the full XCL binding).
+// ============================================================================
+const ALU = '~contract `A {'
+  + ' ~on `add(`a ~u256, `b ~u256) { return `a + `b }'
+  + ' ~on `sub(`a ~u256, `b ~u256) { return `a - `b }'
+  + ' ~on `mul(`a ~u256, `b ~u256) { return `a * `b }'
+  + ' ~on `div(`a ~u256, `b ~u256) { return `a / `b }'
+  + ' ~on `mod(`a ~u256, `b ~u256) { return `a % `b }'
+  + ' ~on `shl(`a ~u256, `b ~u256) { return `a b< `b }'
+  + ' ~on `shr(`a ~u256, `b ~u256) { return `a b> `b } }';
+const MASK = (1n << 256n) - 1n;
+
+await check('word-ABI args through ContractHost match BigInt (add/sub/mul/div/mod/shl/shr) over random 256-bit operands', async () => {
+  const host = new ContractHost({ runtime: runtime() });
+  const { id } = host.deploy(compile(ALU), [], { wordAbi: true });
+  const rnd = () => { let v = 0n; for (let i = 0; i < 4; i++) v = (v << 64n) | (BigInt(Math.floor(Math.random() * 2 ** 32)) << 32n) | BigInt(Math.floor(Math.random() * 2 ** 32)); return v & MASK; };
+  const val = async (fn, a, b) => (await host.call(id, fn, [a, b])).result;
+  for (let t = 0; t < 24; t++) {
+    const a = rnd(), b = rnd();
+    if ((a + b) <= MASK) assert.strictEqual(await val('add', a, b), a + b, 'add');
+    if (a >= b) assert.strictEqual(await val('sub', a, b), a - b, 'sub');
+    const ma = a >> 128n, mb = b >> 128n;
+    assert.strictEqual(await val('mul', ma, mb), (ma * mb) & MASK, 'mul');
+    if (b !== 0n) { assert.strictEqual(await val('div', a, b), a / b, 'div'); assert.strictEqual(await val('mod', a, b), a % b, 'mod'); }
+    const sh = b % 200n;
+    assert.strictEqual(await val('shl', a, sh), (a << sh) & MASK, 'shl');
+    assert.strictEqual(await val('shr', a, sh), a >> sh, 'shr');
+  }
+  // 256-bit landmarks + the empirical break that started this
+  assert.strictEqual((await host.call(id, 'add', [7, 3])).result, 10n, 'add(7,3) is 10, not a pointer');
+  assert.strictEqual((await host.call(id, 'mul', [1n << 100n, 1n << 100n])).result, 1n << 200n, '2^100 * 2^100 = 2^200');
+  assert.strictEqual((await host.call(id, 'div', [MASK, 3n])).result, MASK / 3n, '(2^256-1)/3 exact');
+});
+
+await check('word-ABI accepts Number, BigInt and >2^53 args across the worker boundary', async () => {
+  const host = new ContractHost({ runtime: runtime() });
+  const { id } = host.deploy(compile(ALU), [], { wordAbi: true });
+  assert.strictEqual((await host.call(id, 'add', [7, 3])).result, 10n, 'plain Number args');
+  assert.strictEqual((await host.call(id, 'add', [7n, 3n])).result, 10n, 'BigInt args');
+  assert.strictEqual((await host.call(id, 'add', [1n << 200n, 1n << 200n])).result, 1n << 201n, 'args far beyond 2^53');
+});
+
+await check('word-ABI overflow/underflow/div-zero still TRAP (revert) through ContractHost', async () => {
+  const host = new ContractHost({ runtime: runtime() });
+  const { id } = host.deploy(compile(ALU), [], { wordAbi: true });
+  await assert.rejects(() => host.call(id, 'add', [MASK, 1n]), 'overflow reverts');
+  await assert.rejects(() => host.call(id, 'sub', [3n, 5n]), 'underflow reverts');
+  await assert.rejects(() => host.call(id, 'div', [6n, 0n]), 'div-by-zero reverts');
+});
+
+await check('a word-ABI deploy over a non-LNG contract (no __alloc) fails LOUDLY, never silently passes ints through', async () => {
+  const host = new ContractHost({ runtime: runtime() });
+  const { id } = host.deploy(COUNTER, [0], { wordAbi: true }); // hand-encoded, exports no __alloc
+  await assert.rejects(() => host.call(id, 'increment', [1]), /__alloc/);
+});
+
+await check('word-ABI + byteState together: `inc(by)` marshals the arg AND persists 5 → 42 across calls', async () => {
+  const wasm = compile('~contract `Counter { ~state { ~public { `count ~u256 0 } } '
+    + '~on `inc(`by ~u256) { `count = `count + `by; return `count } }', { hostState: true });
+  const host = new ContractHost({ runtime: runtime() });
+  const { id } = host.deploy(wasm, [], { byteState: true, wordAbi: true });
+  const r1 = await host.call(id, 'inc', [5]);
+  assert.strictEqual(r1.result, 5n, 'arg 5 read through the pointer, not as an address');
+  assert.ok(r1.writes.some((w) => w[0] === 'bytes'), 'the field is flushed to Verkle');
+  const r2 = await host.call(id, 'inc', [37n]);
+  assert.strictEqual(r2.result, 42n, 'call 2 read the committed 5, added 37');
+  assert.strictEqual(host.getBytes(id, 'count'), 42n, 'committed field agrees with the decoded return');
+});
+
+// ============================================================================
 // TRUE-IMPUTE ENFORCEMENT — a gated contract runs ONLY under a valid delegation chain.
 // The gate is load-bearing: an unauthorized call is REFUSED before the WASM ever runs and
 // before any slot is written, so the state root does NOT move on a rejected call.

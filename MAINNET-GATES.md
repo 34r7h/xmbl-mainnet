@@ -175,16 +175,29 @@ continue-on-error, and in the release workflow before any publish).
       committed write back through the host, and by two hosts over a real VerkleStateTree
       converging to one root. The DEFAULT `compile()` stays import-free, so the mainnet-safe gate
       above does not regress. — *compile-wasm.js; xcl/abi.js; xcl/contract-host.js;
-      contract-host.test.mjs (13/13); compile-wasm.test.mjs (26/26)*
-- [ ] **T6.1-b — crypto host calls + arg marshalling (open).** §3.1's `xmbl_cubic_sig_verify` /
-      `xmbl_mayo_verify` / `xmbl_lwe_decrypt` are deliberately NOT emitted: the compute worker binds
-      host imports SYNCHRONOUSLY from an eval'd source string (compute.js), and MAYO needs async
-      Emscripten instantiation a sync import cannot serve without a runtime change, while inlining
-      Cubic-SIG/LWE math would grow the eval'd-source surface flagged as finding C2 in
-      COMPUTE-ISOLATION-THREAT-MODEL.md. Separately, `~u256` params reach an LNG contract as memory
-      pointers, so passing plain-int args through ContractHost needs a marshalling layer not yet
-      built (the state path is proven with a no-arg literal counter). Both are the remaining §3.1
-      surface.
+      contract-host.test.mjs (18/18); compile-wasm.test.mjs (26/26)*
+- [x] **T6.1-b — `~u256` argument + return marshalling meets the LNG backend.** An LNG entrypoint
+      takes each `~u256` param as an i32 POINTER to a 32-byte little-endian word in guest memory and
+      returns such a pointer, so passing plain integers through `ContractHost.call` had the WASM read
+      them as ADDRESSES (`add(7,3)` returned a garbage pointer, not 10). ContractHost now carries a
+      `wordAbi` deploy flag; when set it hands the runtime a marshal (abi.js `XCL_WORD_MARSHAL_SOURCE`)
+      that runs INSIDE the compute worker — the only place guest memory is reachable — to `__reset()`,
+      `__alloc()` a 32-byte word per arg and write it little-endian, pass the pointers, and decode the
+      returned word pointer back to a BigInt. ComputeRuntime gained a generic `host.marshal` arg/return
+      hook (`$args`/`$result`) so XCL semantics are NOT hardcoded in the market runtime. Proven by
+      PARITY against BigInt over random 256-bit operands for add/sub/mul/div/mod/shl/shr through the
+      full XCL binding, by Number/BigInt/>2^53 args across the worker boundary, by overflow/underflow/
+      div-zero still trapping (revert), by a `wordAbi` deploy over a non-LNG contract (no `__alloc`)
+      failing LOUDLY instead of passing ints through, and by a `byteState`+`wordAbi` `inc(by)` that
+      marshals the arg AND persists 5 → 42 across calls. — *xcl/abi.js; xcl/contract-host.js;
+      storage-compute/compute.js; contract-host.test.mjs (18/18)*
+- [ ] **T6.1-c — crypto host calls (open).** §3.1's `xmbl_cubic_sig_verify` / `xmbl_mayo_verify` /
+      `xmbl_lwe_decrypt` are deliberately NOT emitted: the compute worker binds host imports
+      SYNCHRONOUSLY from an eval'd source string (compute.js), and MAYO needs async Emscripten
+      instantiation a sync import cannot serve without a runtime change, while inlining Cubic-SIG/LWE
+      math would grow the eval'd-source surface flagged as finding C2 in
+      COMPUTE-ISOLATION-THREAT-MODEL.md. This is the remaining §3.1 surface and needs an operator
+      decision on the async-vs-sync runtime shape before it can be built.
 
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 

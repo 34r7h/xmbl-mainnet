@@ -63,7 +63,7 @@ function readMemoryLimits(bytes) {
 
 (async () => {
   try {
-    const { wasmCode, functionName, args, maxPages, allowed, hostSource, hostData } = workerData;
+    const { wasmCode, functionName, args, maxPages, allowed, hostSource, hostData, marshalSource } = workerData;
     // wasmCode arrives as a Uint8Array (structured-cloned across threads) — no per-byte
     // re-materialisation. WebAssembly.compile accepts the typed array directly.
 
@@ -95,6 +95,17 @@ function readMemoryLimits(bytes) {
       // eslint-disable-next-line no-eval
       const makeHost = (0, eval)('(' + hostSource + ')');
       hostImports = makeHost(ctx) || {};
+    }
+
+    // ARG/RETURN MARSHAL (opt-in, trusted caller code). Like the host module it is the
+    // caller's own source, eval'd here and closing over the SAME ctx, so its transforms read
+    // ctx.instance lazily after instantiation. It maps the guest's calling convention (e.g.
+    // XCL's 32-byte word pointers) to/from plain values; absent it, args/return pass through.
+    let marshal = {};
+    if (marshalSource) {
+      // eslint-disable-next-line no-eval
+      const makeMarshal = (0, eval)('(' + marshalSource + ')');
+      marshal = makeMarshal(ctx) || {};
     }
 
     // (3) Deny-by-default imports. Each import is satisfied by the host module if it
@@ -133,7 +144,13 @@ function readMemoryLimits(bytes) {
     const fn = instance.exports[functionName];
     if (typeof fn !== 'function') { parentPort.postMessage({ ok: false, error: 'Function ' + functionName + ' not found' }); return; }
 
-    const result = fn(...(args || []));
+    // Marshal in, run, marshal out. $args transforms the incoming args with instance access
+    // (e.g. writes 32-byte LE word buffers via __alloc and returns their pointers); $result
+    // decodes the raw return (e.g. a returned word pointer to a BigInt). Both are pass-through
+    // when the caller supplied no marshal, so the raw compute-market path is unchanged.
+    const callArgs = marshal.$args ? marshal.$args(args || []) : (args || []);
+    const rawResult = fn(...callArgs);
+    const result = marshal.$result ? marshal.$result(rawResult) : rawResult;
     parentPort.postMessage({ ok: true, result, writes: ctx.writes, log: ctx.log });
   } catch (err) {
     parentPort.postMessage({ ok: false, error: String((err && err.message) || err) });
@@ -168,10 +185,13 @@ export class ComputeRuntime {
    * @param {string} functionName exported function to call
    * @param {Array<number|bigint>} [args]
    * @param {object} [opts]
-   * @param {{source:string, data?:object}} [opts.host] in-worker host module: `source` is a
-   *   stringified `(ctx) => ({ "env.name": fn, ... })` factory; `ctx.data` is the staged
-   *   read-set, `ctx.writes`/`ctx.log` are collectors posted back, `ctx.mem()` gives the
-   *   guest Memory after instantiation. Only imports it provides become callable.
+   * @param {{source:string, data?:object, marshal?:string}} [opts.host] in-worker host module:
+   *   `source` is a stringified `(ctx) => ({ "env.name": fn, ... })` factory; `ctx.data` is the
+   *   staged read-set, `ctx.writes`/`ctx.log` are collectors posted back, `ctx.mem()` gives the
+   *   guest Memory after instantiation. Only imports it provides become callable. Optional
+   *   `marshal` is a stringified `(ctx) => ({ $args?, $result? })` factory (same ctx): `$args`
+   *   transforms the call arguments with instance access (e.g. plain integers → guest-memory
+   *   word pointers), `$result` transforms the raw return (e.g. a word pointer → BigInt).
    * @returns {Promise<number|bigint|{result:any, writes:any[], log:any[]}>}
    */
   async execute(wasmCode, functionName, args = [], opts = {}) {
@@ -191,6 +211,7 @@ export class ComputeRuntime {
         wasmCode: wasmBytes, functionName, args, maxPages, allowed: this.allowedImports,
         hostSource: host ? host.source : null,
         hostData: host ? (host.data || {}) : null,
+        marshalSource: host ? (host.marshal || null) : null,
       },
       resourceLimits: {
         // Hard V8 heap cap so a JS-side allocation bomb dies with the thread. WASM
