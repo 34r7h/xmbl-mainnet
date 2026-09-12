@@ -4,7 +4,7 @@
 
 ### Project Setup
 - ✅ Installed dependencies: Vue 3, webextension-polyfill, webpack, babel, vue-loader
-- ✅ Created directory structure: src/, __tests__/, icons/, wasm/
+- ✅ Created directory structure: src/, tests/, icons/, wasm/
 - ✅ Updated manifest.json with proper permissions and configuration
 
 ### Background Script

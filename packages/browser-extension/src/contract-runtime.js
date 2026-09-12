@@ -6,7 +6,7 @@
 // LNG word calling convention. It exists as its own file (rather than importing contract-lab.js)
 // because that module auto-boots its DOM UI when a `document` is present, which the popup has.
 //
-// PARITY is not asserted by inspection: __tests__/contract-runtime.parity.test.mjs compiles a
+// PARITY is not asserted by inspection: tests/contract-runtime.parity.test.mjs compiles a
 // sample with THIS module and asserts contractIdOf(wasm) is byte-identical to @xmbl/contracts'
 // node-side `contractId` — the same guarantee verify-contract-lab.mjs makes for the miniapp.
 //

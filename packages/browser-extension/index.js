@@ -10,7 +10,7 @@
 //
 // The Contracts tab creates, deploys (to a local browser.storage registry), finds and calls
 // contracts entirely in-page — the REAL compiled bytecode, id byte-identical to a node
-// (__tests__/contract-runtime.parity.test.mjs). It is NOT the production execution path; see the
+// (tests/contract-runtime.parity.test.mjs). It is NOT the production execution path; see the
 // on-screen boundary note and MODULE-STATUS.md.
 
 export const manifest = { name: 'XMBL Wallet', surface: 'chromium-mv3' }

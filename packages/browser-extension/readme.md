@@ -19,24 +19,32 @@ npm run build -w packages/browser-extension
 Then in Chrome: `chrome://extensions` → enable Developer mode → **Load unpacked** →
 select `packages/browser-extension/`.
 
+> Chrome refuses to load an unpacked extension if **any** file or directory in the loaded tree has a
+> name starting with `_` (reserved, except `_locales`/`_metadata`). That is why the test dir is
+> `tests/` (not `__tests__/`) and the Playwright harness is `harness.html` (not `_harness.html`). Do
+> not drop a `_`-prefixed file at the package root or `Load unpacked` will fail with
+> *"Cannot load extension with file or directory name …"*.
+
 ## What works
 
 - **Contracts tab** — creates, deploys (to a `browser.storage.local` registry), finds and calls
   contracts entirely in-page. It inlines the REAL `@xmbl/lng` compiler and the miniapp's verified
   in-page executor (`src/contract-runtime.js`) and runs compiled WASM over a local Verkle stand-in.
   The content-addressed id and coordinates are **byte-identical to node `@xmbl/contracts`**, proven
-  by `__tests__/contract-runtime.parity.test.mjs` (`npm test`).
+  by `tests/contract-runtime.parity.test.mjs` (`npm test`).
 - **Wallet tab** — balance / send / node status. The node bridge is a **labeled stub**.
 
 ## Verify
 
-- `npm test -w packages/browser-extension` — node parity: the in-page `contractIdOf`/coordinates are
-  byte-identical to node `@xmbl/contracts`, plus real execution and a trapping revert.
+- `npm test -w packages/browser-extension` — runs `tests/assert-loadable.mjs` (fails if any
+  `_`-prefixed file/dir exists in the tree, the Chrome rule that blocks `Load unpacked`) then the node
+  parity test: the in-page `contractIdOf`/coordinates are byte-identical to node `@xmbl/contracts`,
+  plus real execution and a trapping revert.
 - `npm run verify:extension -w packages/browser-extension` — browser-surface: builds, then drives the
   REAL `dist/popup.js` in Playwright chromium through every workflow (create+compile all samples,
   deploy, find/search, call with committed-state changes, a reverting over-withdraw, and the Wallet
   tab) asserting zero page errors. Only `chrome.storage` and the stub node bridge are shimmed
-  (`_harness.html`, mirroring `src/background.js`); all popup/compile/execution code runs unmodified.
+  (`harness.html`, mirroring `src/background.js`); all popup/compile/execution code runs unmodified.
 
 ## Boundary
 

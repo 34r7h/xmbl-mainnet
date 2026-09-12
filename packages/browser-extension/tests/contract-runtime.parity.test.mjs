@@ -5,7 +5,7 @@
 // with @xmbl/contracts' `contractId`, for every starter sample — the same guarantee
 // verify-contract-lab.mjs makes for the miniapp. If they ever diverge, a contract "deployed" in the
 // extension would carry a different identity than the same bytes on a node, silently. Run with:
-//   node __tests__/contract-runtime.parity.test.mjs
+//   node tests/contract-runtime.parity.test.mjs
 // (also the package's `npm test`).
 
 import assert from 'node:assert'

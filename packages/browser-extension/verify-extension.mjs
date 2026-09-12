@@ -2,13 +2,13 @@
 //
 // Drives the REAL built popup (dist/popup.js) in a real browser engine (Playwright chromium) through
 // every workflow and asserts the rendered OUTCOME, exiting non-zero on any failure. Only the two
-// extension HOST APIs are shimmed, in _harness.html: chrome.storage.local (an in-memory store with
+// extension HOST APIs are shimmed, in harness.html: chrome.storage.local (an in-memory store with
 // chrome's callback semantics — identical API to what Chrome provides) and chrome.runtime.sendMessage
 // (emulating the node bridge the extension ships as a stub). Everything under test runs UNMODIFIED —
 // the Vue popup, webextension-polyfill, the real @xmbl/lng compiler, the contract-runtime executor,
 // content-addressed id derivation, the browser.storage registry, and revert handling.
 //
-// NOT a substitute for the node parity proof (__tests__/contract-runtime.parity.test.mjs asserts the
+// NOT a substitute for the node parity proof (tests/contract-runtime.parity.test.mjs asserts the
 // in-page id/coords are byte-identical to node @xmbl/contracts); this proves the popup's workflows
 // actually function in a browser. Needs a chromium binary (Playwright) + a built dist/, so it is run
 // on demand, not in the protocol hard gate. Build first:  npm run build -w packages/browser-extension
@@ -24,7 +24,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 let pass = 0, fail = 0;
 const check = (n, cond, detail = '') => { if (cond) { console.log(`  ok   ${n}`); pass++; } else { console.log(`  FAIL ${n}${detail ? '\n       ' + detail : ''}`); fail++; } };
 
-// ── static server over the extension dir (serves _harness.html + dist/popup.js) ──
+// ── static server over the extension dir (serves harness.html + dist/popup.js) ──
 const server = createServer(async (req, res) => {
   try {
     const p = join(HERE, decodeURIComponent(req.url.split('?')[0]));
@@ -35,7 +35,7 @@ const server = createServer(async (req, res) => {
 });
 await new Promise((r) => server.listen(0, r));
 const port = server.address().port;
-const URL = `http://localhost:${port}/_harness.html`;
+const URL = `http://localhost:${port}/harness.html`;
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 480, height: 900 } });
