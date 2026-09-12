@@ -212,7 +212,12 @@ continue-on-error, and in the release workflow before any publish).
 - [ ] **T6.1-d — LNG source can CALL the crypto verifiers, and `xmbl_lwe_decrypt` (open).** The
       runtime/ABI half of the crypto calls (T6.1-c) is reachable today only from a hand-encoded WASM
       contract; the LNG compiler does not yet emit `env.xmbl_cubic_sig_verify` / `env.xmbl_mayo_verify`
-      from `~contract` source (needs surface syntax + typecheck + backend emission). Separately,
+      from `~contract` source. This is a LANGUAGE-DESIGN task, not compiler wiring: both verifiers take
+      a MESSAGE as `(msg_ptr, msg_len)` bytes (see `abi.js` `HOST_ABI_CRYPTO_INIT_SOURCE`), and the WASM
+      backend's value model is 32-byte `~u256` words only — it has no bytes/`str` surface (the same
+      reason word-READ names field INDICES, not string names). Emitting these needs a new LNG byte-string
+      type (surface syntax + typecheck + a memory layout the backend can lower for BOTH backends), which
+      is out of scope for the composition increments and is tracked as its own language feature. Separately,
       `xmbl_lwe_decrypt` is deliberately NOT provided: decryption needs a SECRET key, which is neither
       chain-derivable nor safe to place in a guest's reach — its determinism and key-custody model is
       an open design question, not a build task. Both are the remaining §3.1 surface.
@@ -280,7 +285,11 @@ continue-on-error, and in the release workflow before any publish).
 - [ ] **T6.2 open remainders (HONEST scope of the "≥ Ethereum, fraction of resources" claim).** What
       T6.2 does NOT yet prove, and must not be claimed: *(a)* the UTXO proof contracts are hand-encoded
       and use **i64** amounts, not the `~u256` word width — LNG cannot yet EMIT `xmbl_utxo_*` calls from
-      `~contract` source (same gap as T6.1-d for crypto); *(b)* contract composition's **word-ABI SEND and
+      `~contract` source. Same LANGUAGE-DESIGN blocker as T6.1-d: the UTXO ABI names UTXO ids and
+      recipients as `(id_ptr, id_len)` / `(to_ptr, to_len)` BYTES (see `abi.js` `HOST_ABI_UTXO_SOURCE`),
+      and the WASM backend has no bytes surface — so emitting it needs the same new LNG byte-string type
+      (plus a decision on i64 vs `~u256` amount width), not compiler wiring. The value-conservation
+      SECURITY property is host-enforced and proven today on hand-encoded contracts regardless; *(b)* contract composition's **word-ABI SEND and
       READ are now EMITTED from `~contract` source** — `xmbl.coord.send(peer, amount)` lowers to the real
       `env.xmbl_send` import and `xmbl.coord.read(peer, field)` to `env.xmbl_read` (word-ABI compose source
       in `abi.js`, the `compose` opt in `compile-wasm.js`), both carrying a FULL 256-bit value by 32-byte
