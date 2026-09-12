@@ -122,9 +122,13 @@ export class ContractHost {
    *   are marshalled into 32-byte little-endian word pointers before the call
    * @param {object} [opts]
    * @param {number} [opts.caller=0] caller id (low 32 bits surfaced via xmbl_caller)
-   * @returns {Promise<{result:(number|bigint), writes:Array, stateRoot:string, coordinates:object}>}
+   * @returns {Promise<{result:(number|bigint), writes:Array, allWrites:Array, stateRoot:string, coordinates:object, frames:number}>}
    *   `result` is the entrypoint return: an i32 for a hand-encoded contract, a decoded BigInt
-   *   (the returned 32-byte word) for a `wordAbi` contract
+   *   (the returned 32-byte word) for a `wordAbi` contract. `writes` is the ENTRY frame's raw
+   *   guest write-set (the whole applied set only when `frames === 1`); `allWrites` is the
+   *   normalized union of state writes the transaction actually applied across every frame — use
+   *   it, not `writes`, as the record of what a multi-frame cascade changed. `frames > 1` signals a
+   *   message cascade ran.
    */
   async call(id, fnName, args = [], opts = {}) {
     const entry = this.contracts.get(id);
@@ -223,7 +227,18 @@ export class ContractHost {
       else { wc.slots.add(w.slot); await this.state.insert(slotKey(w.id, w.slot), w.val); }
     }
 
-    const out = { result: first.result, writes: first.writes, stateRoot: this.state.getRoot(), coordinates: entry.coordinates, frames: tx.frames };
+    const out = {
+      result: first.result,
+      // `writes` is the ENTRY frame's raw guest write-set only (back-compat: a single-contract
+      // call with no messages has exactly one frame, so this IS the whole applied set). When
+      // frames > 1 the transaction applied MORE than this — the complete, normalized set of state
+      // writes across every frame is `allWrites` (the audit record a node/light-client should log).
+      writes: first.writes,
+      allWrites: tx.writes,
+      stateRoot: this.state.getRoot(),
+      coordinates: entry.coordinates,
+      frames: tx.frames,
+    };
     if (entry.utxoHost || tx.spentIds.length || tx.outputs.length) out.utxo = { spent: tx.spentIds, created };
     return out;
   }

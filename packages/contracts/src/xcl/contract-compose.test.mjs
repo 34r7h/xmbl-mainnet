@@ -88,15 +88,19 @@ const VAULT = mod(
   ].flat())])),
 );
 
-// ATTACKER.receive(amount:i32): on being paid, immediately re-enter the vault. imports: xmbl_send(0).
-//   send(peer0 /* vault.withdraw */, amount)
+// ATTACKER.receive(amount:i32): RECORD what it was paid (slot0 = amount), then immediately re-enter
+// the vault. Recording the amount pins the message PAYLOAD — a cascade that ran 3 frames but carried
+// a zeroed amount would leave slot0 = 0, so the test's payout assertion cannot pass for the wrong
+// reason. imports: verkle_set(0), xmbl_send(1).
+//   set(0, amount); send(peer0 /* vault.withdraw */, amount)
 const ATTACKER = mod(
   sect(1, vec([T_GS, T_1V])),
-  sect(2, vec([imp('env', 'xmbl_send', 0)])),
-  sect(3, vec([[1]])),                      // func1 : type T_1V
-  sect(7, vec([exp('receive', 1)])),
+  sect(2, vec([imp('env', 'xmbl_verkle_set', 0), imp('env', 'xmbl_send', 0)])),
+  sect(3, vec([[1]])),                      // func2 : type T_1V
+  sect(7, vec([exp('receive', 2)])),
   sect(10, vec([func([], [
-    ...I32C(0), ...GET(0), ...CALL(0), DROP, // send(peer0, amount)
+    ...I32C(0), ...GET(0), ...CALL(0), DROP, // set(0, amount) — record the payout observed
+    ...I32C(0), ...GET(0), ...CALL(1), DROP, // send(peer0, amount)
   ].flat())])),
 );
 
@@ -176,6 +180,11 @@ await check('the DAO-vulnerable withdraw (send before zeroing) CANNOT be drained
   // the balance the FIRST frame had already zeroed (read-your-writes across frames), so the payout
   // branch fired exactly ONCE. On EVM the identical ordering drains the vault to zero over N re-entries.
   assert.strictEqual(out.frames, 3, `the cascade ran vault→attacker→vault (got ${out.frames} frames)`);
+  // The re-entry was REAL, not a no-op: the attacker's frame observed a payload of exactly 100 (it
+  // recorded what it was paid), and its re-entrant withdraw ran a third frame. What neutralized the
+  // drain was read-your-writes — not the message being empty. This pins the payload so the payout
+  // assertion below cannot pass for the wrong reason (a silently-zeroed send would leave this 0).
+  assert.strictEqual(host.getSlot(attackerId, 0), 100, 'the attacker was paid the real balance (100) and re-entered with it');
   assert.strictEqual(host.getSlot(vaultId, 1), 100, 'cumulative payout is the SINGLE withdrawal (100), not a drain (200)');
   assert.strictEqual(host.getSlot(vaultId, 0), 0, 'the balance was zeroed exactly once');
 });

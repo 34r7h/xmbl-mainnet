@@ -264,7 +264,12 @@ continue-on-error, and in the release workflow before any publish).
       transaction (a shared overlay giving read-your-writes across frames, conservation checked once over
       the UNION, a frame cap so a loop terminates in a revert, and a whole-cascade revert if any frame
       throws). Because a contract can NEVER yield control to another contract's code mid-execution, the
-      classic reentrancy attack is not guarded against — it is **inexpressible**. Proven as OUTCOMES in
+      classic reentrancy attack is not guarded against — it is **inexpressible**. What this eliminates is
+      SYNCHRONOUS re-entry, not every cross-contract ordering hazard: message cascades still interleave
+      effects across frames, so an author can still act on a `xmbl_read` value a later frame in the same
+      cascade invalidates (the actor-model analogue of a race) — the DAO drain is impossible, careless
+      cross-frame sequencing is still the author's responsibility, exactly as it is on any actor system.
+      Proven as OUTCOMES in
       *xcl/contract-compose.test.mjs (5/5)*: the canonical DAO-vulnerable withdraw (send BEFORE zeroing the
       balance) pays out exactly ONCE across a vault→attacker→vault cascade (cumulative payout 100, not the
       200 the identical EVM ordering drains); a synchronous read returns a peer's committed state; a read
