@@ -375,9 +375,13 @@ export function parseToModel (src) {
 // @xmbl/lng (bundled inline). Two modes (Visual builder / Code) over one source; a Test panel
 // whose state tiles flash as each call writes them; a Deploy button that commits a persistent,
 // content-addressed instance and switches Test onto it.
-const DTYPE_NOTE = 'Fields and parameters are ~u256 here (what test mode executes). The language also has ~boolean, ~address, ~bytes, ~decimal, ~string — use Code mode for those.'
+const DTYPE_NOTE = 'Every field and parameter is a u256 (unsigned 256-bit integer) — the type test mode runs. LNG also has boolean, address, bytes, decimal and string; reach for those in Code mode.'
 const OPS = ['', '+', '-', '*', '/', '%', 'b&', 'b|', 'b^', 'b<', 'b>', '==', '!==', '!<', '!>']
-const OP_LABEL = { '': '(none)', '+': '+ add', '-': '− sub', '*': '× mul', '/': '÷ div', '%': '% mod', 'b&': '& and', 'b|': '| or', 'b^': '^ xor', 'b<': '« shl', 'b>': '» shr', '==': '= eq', '!==': '≠ ne', '!<': '≥ gte', '!>': '≤ lte' }
+const OP_LABEL = { '': 'on its own', '+': '+  plus', '-': '−  minus', '*': '×  times', '/': '÷  divided by', '%': '%  modulo', 'b&': '&  bit-and', 'b|': '|  bit-or', 'b^': '^  bit-xor', 'b<': '«  shift left', 'b>': '»  shift right', '==': '=  equals', '!==': '≠  not equal', '!<': '≥  at least', '!>': '≤  at most' }
+// Plain-language names + ordering for the statement kinds (the builder reads as sentences).
+const KIND_LABEL = { set: 'Set field', local: 'Local value', return: 'Return', emit: 'Emit event', branch: 'If … else', loop: 'Repeat' }
+const KIND_ADD = { set: '+ Set', local: '+ Local', return: '+ Return', emit: '+ Emit', branch: '+ If/else', loop: '+ Repeat' }
+const KIND_ORDER = ['set', 'local', 'return', 'emit', 'branch', 'loop']
 
 function boot () {
   const root = document.getElementById('app')
@@ -402,13 +406,13 @@ function boot () {
 
   // ── shell ────────────────────────────────────────────────────────────────
   clear(root)
+  const dot = () => el('span', { class: 'dot', text: '·' })
   const head = el('header', { class: 'head' }, [
-    el('div', { class: 'brand' }, [
-      el('span', { class: 'logo', text: '◧' }),
-      el('div', {}, [
-        el('h1', { class: 'title', text: 'XMBL Contract Lab' }),
-        el('p', { class: 'sub', text: 'Build a contract visually or in code · run every call in test mode · deploy a live instance to xmbl' })
-      ])
+    el('h1', { class: 'title' }, [document.createTextNode('XMBL '), el('b', { text: 'Contract Lab' })]),
+    el('p', { class: 'sub' }, [
+      document.createTextNode('Build a contract — visually or in code'), dot(),
+      document.createTextNode('run every call against live state'), dot(),
+      document.createTextNode('deploy a content-addressed instance to xmbl')
     ])
   ])
   root.appendChild(head)
@@ -475,7 +479,7 @@ function boot () {
   root.appendChild(cols)
 
   // ── source ⇄ model plumbing ────────────────────────────────────────────────
-  function syncSourceFromModel () { S.src = modelToSource(S.model); codeArea.value = S.src }
+  function syncSourceFromModel () { S.src = modelToSource(S.model); codeArea.value = S.src; if (S._srcPre) S._srcPre.textContent = S.src }
   function loadSource (src) {
     S.src = src; codeArea.value = src
     try { S.model = parseToModel(src); parseMsg.className = 'parse-msg'; parseMsg.textContent = '' }
@@ -497,15 +501,26 @@ function boot () {
   codeArea.addEventListener('input', () => { S.src = codeArea.value })
 
   // ── VISUAL BUILDER render ───────────────────────────────────────────────────
+  // Every name in scope inside a method: its contract's fields, the method's params, and any
+  // locals / loop counters it declares. Threaded into each operand box as live suggestions, so
+  // the user never has to recall or retype a field name blind.
   const refsFor = (method) => {
     const r = (S.model.fields || []).map((f) => f.name).concat((method.params || []).map((p) => p.name))
     for (const s of (method.stmts || [])) { if (s.t === 'local') r.push(s.name); if (s.t === 'loop') r.push(s.varName) }
-    return r
+    return r.filter((x, idx) => x && r.indexOf(x) === idx)
   }
+  const word = (t, cls) => el('span', { class: 'word' + (cls ? ' ' + cls : ''), text: t })
+  let opUid = 0
+  // An operand box with its OWN datalist of the names in scope (a number literal is fine too).
   function operandInput (val, refs, on) {
-    const inp = el('input', { class: 'in operand', value: val == null ? '' : String(val), placeholder: 'field / param / 0', list: 'refs' })
+    const wrap = el('span', { class: 'expr' })
+    const id = 'refs-' + (opUid++)
+    const inp = el('input', { class: 'in operand', value: val == null ? '' : String(val), placeholder: 'value', list: id })
+    const dl = el('datalist', { id })
+    for (const r of (refs || [])) dl.appendChild(el('option', { value: r }))
     inp.addEventListener('input', () => { on(inp.value.trim()); syncSourceFromModel() })
-    return inp
+    wrap.appendChild(inp); wrap.appendChild(dl)
+    return wrap
   }
   function exprEditor (expr, refs) {
     expr.a = expr.a == null ? '0' : expr.a; expr.op = expr.op || ''; expr.b = expr.b == null ? '' : expr.b
@@ -520,11 +535,13 @@ function boot () {
     wrap.appendChild(a); wrap.appendChild(opSel); wrap.appendChild(b)
     return wrap
   }
+  // One statement, written as a plain-language sentence row.
   function stmtRow (list, i, method) {
     const s = list[i]; const refs = refsFor(method)
     const row = el('div', { class: 'stmt' })
-    const kind = el('select', { class: 'sel skind' })
-    for (const t of ['set', 'local', 'return', 'emit', 'branch', 'loop']) kind.appendChild(el('option', { value: t, text: t }))
+    // friendly kind select (reclassify in place; the labeled add-bar is the primary path)
+    const kind = el('select', { class: 'sel skind', title: 'statement kind' })
+    for (const t of KIND_ORDER) kind.appendChild(el('option', { value: t, text: KIND_LABEL[t] }))
     kind.value = s.t
     kind.addEventListener('change', () => { list[i] = defaultStmt(kind.value, method); syncSourceFromModel(); renderVisual() })
     row.appendChild(kind)
@@ -533,38 +550,39 @@ function boot () {
       for (const f of S.model.fields) sel.appendChild(el('option', { value: f.name, text: f.name }))
       sel.value = s.field || (S.model.fields[0] && S.model.fields[0].name) || ''
       sel.addEventListener('change', () => { s.field = sel.value; syncSourceFromModel() })
-      row.appendChild(sel); row.appendChild(el('span', { class: 'tok', text: '=' })); row.appendChild(exprEditor(s.expr, refs))
+      row.appendChild(sel); row.appendChild(word('to')); row.appendChild(exprEditor(s.expr, refs))
     } else if (s.t === 'local') {
       const nm = el('input', { class: 'in name', value: s.name || 'tmp' })
       nm.addEventListener('input', () => { s.name = nm.value.trim(); syncSourceFromModel() })
-      row.appendChild(el('span', { class: 'tok', text: 'let' })); row.appendChild(nm); row.appendChild(el('span', { class: 'tok', text: '~u256 =' })); row.appendChild(exprEditor(s.expr, refs))
+      row.appendChild(word('name')); row.appendChild(nm); row.appendChild(word('=')); row.appendChild(exprEditor(s.expr, refs))
     } else if (s.t === 'return') {
-      row.appendChild(exprEditor(s.expr, refs))
+      row.appendChild(word('the value')); row.appendChild(exprEditor(s.expr, refs))
     } else if (s.t === 'emit') {
       const sel = el('select', { class: 'sel' })
       for (const e of S.model.events) sel.appendChild(el('option', { value: e.name, text: e.name }))
-      if (!S.model.events.length) sel.appendChild(el('option', { value: '', text: '(declare an event first)' }))
+      if (!S.model.events.length) sel.appendChild(el('option', { value: '', text: '(add an event first)' }))
       sel.value = s.event || (S.model.events[0] && S.model.events[0].name) || ''
       sel.addEventListener('change', () => { s.event = sel.value; syncSourceFromModel() })
-      const args = el('span', { class: 'expr' })
       s.args = s.args && s.args.length ? s.args : ['0']
-      args.appendChild(operandInput(s.args[0], refs, (v) => { s.args[0] = v }))
-      row.appendChild(sel); row.appendChild(el('span', { class: 'tok', text: '(' })); row.appendChild(args); row.appendChild(el('span', { class: 'tok', text: ')' }))
+      row.appendChild(sel); row.appendChild(word('with', 'dim')); row.appendChild(operandInput(s.args[0], refs, (v) => { s.args[0] = v }))
     } else if (s.t === 'branch') {
       row.classList.add('nested')
-      row.appendChild(el('span', { class: 'tok', text: 'if' })); row.appendChild(exprEditor(s.cond, refs))
+      row.appendChild(word('the condition')); row.appendChild(exprEditor(s.cond, refs))
       const then = el('div', { class: 'block' }); const els = el('div', { class: 'block' })
       renderStmtList(then, s.then, method); renderStmtList(els, s.els, method)
-      row.appendChild(el('div', { class: 'branch-cols' }, [el('div', {}, [el('div', { class: 'mini', text: 'then' }), then]), el('div', {}, [el('div', { class: 'mini', text: 'else' }), els])]))
+      row.appendChild(el('div', { class: 'branch-cols' }, [
+        el('div', {}, [el('div', { class: 'mini', text: 'then do' }), then]),
+        el('div', {}, [el('div', { class: 'mini', text: 'otherwise' }), els])
+      ]))
     } else if (s.t === 'loop') {
       row.classList.add('nested')
       const nm = el('input', { class: 'in name', value: s.varName || 'i' })
       nm.addEventListener('input', () => { s.varName = nm.value.trim(); syncSourceFromModel() })
       const st = operandInput(s.start, refs, (v) => { s.start = v }); const en = operandInput(s.end, refs, (v) => { s.end = v })
-      row.appendChild(el('span', { class: 'tok', text: 'for' })); row.appendChild(nm); row.appendChild(el('span', { class: 'tok', text: 'from' })); row.appendChild(st); row.appendChild(el('span', { class: 'tok', text: 'to' })); row.appendChild(en)
+      row.appendChild(word('counter')); row.appendChild(nm); row.appendChild(word('from')); row.appendChild(st); row.appendChild(word('to')); row.appendChild(en)
       const body = el('div', { class: 'block' }); renderStmtList(body, s.body, method); row.appendChild(body)
     }
-    const del = el('button', { class: 'x', text: '×', title: 'remove' })
+    const del = el('button', { class: 'x', text: '×', title: 'remove statement' })
     del.addEventListener('click', () => { list.splice(i, 1); syncSourceFromModel(); renderVisual() })
     row.appendChild(del)
     return row
@@ -572,9 +590,14 @@ function boot () {
   function renderStmtList (container, list, method) {
     clear(container)
     for (let i = 0; i < list.length; i++) container.appendChild(stmtRow(list, i, method))
-    const add = el('button', { class: 'add sm', text: '+ statement' })
-    add.addEventListener('click', () => { list.push(defaultStmt('set', method)); syncSourceFromModel(); renderVisual() })
-    container.appendChild(add)
+    // labeled add actions — pick the statement by what it DOES, no create-then-reclassify step
+    const addBar = el('div', { class: 'add-bar' })
+    for (const t of KIND_ORDER) {
+      const b = el('button', { class: 'add sm', text: KIND_ADD[t] })
+      b.addEventListener('click', () => { list.push(defaultStmt(t, method)); syncSourceFromModel(); renderVisual() })
+      addBar.appendChild(b)
+    }
+    container.appendChild(addBar)
   }
   function defaultStmt (t, method) {
     if (t === 'set') return { t: 'set', field: (S.model.fields[0] && S.model.fields[0].name) || 'count', expr: { a: (S.model.fields[0] && S.model.fields[0].name) || '0', op: '+', b: '1' } }
@@ -585,15 +608,16 @@ function boot () {
     if (t === 'loop') return { t: 'loop', varName: 'i', start: '1', end: (method.params[0] && method.params[0].name) || '1', body: [] }
     return { t: 'set', field: 'count', expr: { a: '0', op: '', b: '' } }
   }
-  function sectionHead (title, onAdd, addLabel) {
-    const h = el('div', { class: 'vb-sec-h' }, [el('span', { text: title })])
+  function sectionHead (title, hint, onAdd, addLabel) {
+    const h = el('div', { class: 'vb-sec-h' }, [el('span', { class: 'lbl', text: title })])
+    if (hint) h.appendChild(el('span', { class: 'ph-note', text: hint }))
     if (onAdd) { const b = el('button', { class: 'add', text: addLabel }); b.addEventListener('click', onAdd); h.appendChild(b) }
     return h
   }
   function renderVisual () {
     clear(visualPanel)
     // name
-    const nameRow = el('div', { class: 'row name-row' }, [el('span', { class: 'tok', text: '~contract' })])
+    const nameRow = el('div', { class: 'row name-row' }, [el('span', { class: 'lead', text: 'Contract' })])
     const nameInp = el('input', { class: 'in cname', value: S.model.name || 'Contract' })
     nameInp.addEventListener('input', () => { S.model.name = nameInp.value.trim() || 'Contract'; syncSourceFromModel() })
     nameRow.appendChild(nameInp)
@@ -601,7 +625,7 @@ function boot () {
 
     // fields
     const fsec = el('div', { class: 'vb-sec' })
-    fsec.appendChild(sectionHead('State fields', () => { S.model.fields.push({ name: 'field' + (S.model.fields.length + 1), type: 'u256', init: '0', vis: 'public' }); syncSourceFromModel(); renderVisual() }, '+ field'))
+    fsec.appendChild(sectionHead('Stored state', 'values the contract remembers between calls', () => { S.model.fields.push({ name: 'field' + (S.model.fields.length + 1), type: 'u256', init: '0', vis: 'public' }); syncSourceFromModel(); renderVisual() }, '+ field'))
     for (let i = 0; i < S.model.fields.length; i++) {
       const f = S.model.fields[i]
       const nm = el('input', { class: 'in name', value: f.name }); nm.addEventListener('input', () => { f.name = nm.value.trim(); syncSourceFromModel() })
@@ -609,42 +633,43 @@ function boot () {
       const vis = el('select', { class: 'sel vis' }); for (const v of ['public', 'private']) vis.appendChild(el('option', { value: v, text: v })); vis.value = f.vis || 'public'
       vis.addEventListener('change', () => { f.vis = vis.value; syncSourceFromModel(); renderVisual() })
       const del = el('button', { class: 'x', text: '×' }); del.addEventListener('click', () => { S.model.fields.splice(i, 1); syncSourceFromModel(); renderVisual() })
-      fsec.appendChild(el('div', { class: 'row' }, [el('span', { class: 'tok', text: '`' }), nm, el('span', { class: 'tok dim', text: '~u256 =' }), init, vis, del]))
+      fsec.appendChild(el('div', { class: 'row' }, [nm, word('starts at', 'dim'), init, vis, del]))
     }
     visualPanel.appendChild(fsec)
 
     // events
     const esec = el('div', { class: 'vb-sec' })
-    esec.appendChild(sectionHead('Events', () => { S.model.events.push({ name: 'Event' + (S.model.events.length + 1), params: [{ name: 'x', type: 'u256' }] }); syncSourceFromModel(); renderVisual() }, '+ event'))
+    esec.appendChild(sectionHead('Events', 'signals a call can emit to observers', () => { S.model.events.push({ name: 'Event' + (S.model.events.length + 1), params: [{ name: 'x', type: 'u256' }] }); syncSourceFromModel(); renderVisual() }, '+ event'))
     for (let i = 0; i < S.model.events.length; i++) {
       const ev = S.model.events[i]
       const nm = el('input', { class: 'in name', value: ev.name }); nm.addEventListener('input', () => { ev.name = nm.value.trim(); syncSourceFromModel() })
       const pn = el('input', { class: 'in name', value: (ev.params[0] && ev.params[0].name) || 'x' }); pn.addEventListener('input', () => { ev.params = [{ name: pn.value.trim() || 'x', type: 'u256' }]; syncSourceFromModel() })
       const del = el('button', { class: 'x', text: '×' }); del.addEventListener('click', () => { S.model.events.splice(i, 1); syncSourceFromModel(); renderVisual() })
-      esec.appendChild(el('div', { class: 'row' }, [el('span', { class: 'tok', text: '~event `' }), nm, el('span', { class: 'tok dim', text: '(`' }), pn, el('span', { class: 'tok dim', text: '~u256)' }), del]))
+      esec.appendChild(el('div', { class: 'row' }, [nm, word('carries', 'dim'), pn, del]))
     }
     visualPanel.appendChild(esec)
 
     // methods
     const msec = el('div', { class: 'vb-sec' })
-    msec.appendChild(sectionHead('Methods (calls)', () => { S.model.methods.push({ name: 'method' + (S.model.methods.length + 1), params: [], stmts: [{ t: 'return', expr: { a: '0', op: '', b: '' } }] }); syncSourceFromModel(); renderVisual() }, '+ method'))
+    msec.appendChild(sectionHead('Calls', 'the functions others invoke — each runs its steps in order', () => { S.model.methods.push({ name: 'method' + (S.model.methods.length + 1), params: [], stmts: [{ t: 'return', expr: { a: '0', op: '', b: '' } }] }); syncSourceFromModel(); renderVisual() }, '+ call'))
     for (let mi = 0; mi < S.model.methods.length; mi++) {
       const m = S.model.methods[mi]
       const card = el('div', { class: 'method' })
       const nm = el('input', { class: 'in name', value: m.name }); nm.addEventListener('input', () => { m.name = nm.value.trim(); syncSourceFromModel() })
-      const mdel = el('button', { class: 'x', text: '×', title: 'remove method' }); mdel.addEventListener('click', () => { S.model.methods.splice(mi, 1); syncSourceFromModel(); renderVisual() })
+      const mdel = el('button', { class: 'x', text: '×', title: 'remove call' }); mdel.addEventListener('click', () => { S.model.methods.splice(mi, 1); syncSourceFromModel(); renderVisual() })
       const paramsWrap = el('span', { class: 'params' })
       for (let pi = 0; pi < m.params.length; pi++) {
         const p = m.params[pi]
         const pn = el('input', { class: 'in name sm', value: p.name }); pn.addEventListener('input', () => { p.name = pn.value.trim(); syncSourceFromModel() })
         const px = el('button', { class: 'x', text: '×' }); px.addEventListener('click', () => { m.params.splice(pi, 1); syncSourceFromModel(); renderVisual() })
-        paramsWrap.appendChild(el('span', { class: 'param' }, [el('span', { class: 'tok', text: '`' }), pn, el('span', { class: 'tok dim', text: '~u256' }), px]))
+        paramsWrap.appendChild(el('span', { class: 'param' }, [pn, px]))
       }
-      const addP = el('button', { class: 'add sm', text: '+ arg' }); addP.addEventListener('click', () => { m.params.push({ name: 'a' + (m.params.length + 1), type: 'u256' }); syncSourceFromModel(); renderVisual() })
+      const addP = el('button', { class: 'add sm', text: '+ input' }); addP.addEventListener('click', () => { m.params.push({ name: 'a' + (m.params.length + 1), type: 'u256' }); syncSourceFromModel(); renderVisual() })
       paramsWrap.appendChild(addP)
-      card.appendChild(el('div', { class: 'method-h' }, [el('span', { class: 'tok', text: '~on `' }), nm, el('span', { class: 'tok dim', text: '(' }), paramsWrap, el('span', { class: 'tok dim', text: ')' }), mdel]))
+      nm.classList.add('fn')
+      card.appendChild(el('div', { class: 'method-h' }, [nm, word('('), paramsWrap, word(')'), mdel]))
       if (m.advanced) {
-        card.appendChild(el('div', { class: 'advanced' }, [el('span', { class: 'badge', text: 'advanced body' }), el('code', { text: m.raw || '' }), el('span', { class: 'mini', text: 'edit this method in Code mode' })]))
+        card.appendChild(el('div', { class: 'advanced' }, [el('span', { class: 'badge', text: 'advanced body' }), el('code', { text: m.raw || '' }), el('span', { class: 'mini', text: 'edit this call in Code mode' })]))
       } else {
         const body = el('div', { class: 'block' }); renderStmtList(body, m.stmts, m); card.appendChild(body)
       }
@@ -652,6 +677,11 @@ function boot () {
     }
     visualPanel.appendChild(msec)
     visualPanel.appendChild(el('p', { class: 'note tiny', text: DTYPE_NOTE }))
+
+    // live generated-source preview — what the builder is writing, updated as you edit
+    const pre = el('pre', { text: S.src })
+    S._srcPre = pre
+    visualPanel.appendChild(el('div', { class: 'src-preview' }, [el('div', { class: 'sub-h', text: 'Generated LNG — updates as you build' }), pre]))
   }
 
   // ── COMPILE / TEST ───────────────────────────────────────────────────────────
