@@ -174,7 +174,9 @@ function readMemoryLimits(bytes) {
     // wallMs is kept alongside as elapsed real time (>= cpuMs) for observability, not billing.
     // peakMemBytes is the guest's WASM LINEAR memory only — it never shrinks within a run, so the
     // byte length after the call is the run's peak. The worker's V8 heap (host-binding/marshalling
-    // allocations) is capped by maxOldGenerationSizeMb but is NOT included here (see threat model).
+    // allocations) is capped by maxOldGenerationSizeMb; it is now ALSO metered — heapUsedBytes is
+    // sampled after the run so a host-binding or marshalling allocation surge is visible to pricing,
+    // not just the WASM-linear cap (closes the "capped but not metered" gap in the threat model).
     const c0 = process.threadCpuUsage();
     const t0 = performance.now();
     const rawResult = fn(...callArgs);
@@ -184,8 +186,9 @@ function readMemoryLimits(bytes) {
     const result = marshal.$result ? marshal.$result(rawResult) : rawResult;
     const runMem = (instance.exports && instance.exports.memory) || providedMemory || null;
     const peakMemBytes = runMem ? runMem.buffer.byteLength : 0;
+    const heapUsedBytes = process.memoryUsage().heapUsed; // V8 heap after the run (host-side allocations)
     parentPort.postMessage({ ok: true, result, writes: ctx.writes, log: ctx.log,
-      metrics: { cpuMs, wallMs, peakMemBytes, peakMemPages: Math.ceil(peakMemBytes / WASM_PAGE_BYTES) } });
+      metrics: { cpuMs, wallMs, peakMemBytes, peakMemPages: Math.ceil(peakMemBytes / WASM_PAGE_BYTES), heapUsedBytes, killed: false } });
   } catch (err) {
     parentPort.postMessage({ ok: false, error: String((err && err.message) || err) });
   }
@@ -265,6 +268,7 @@ export class ComputeRuntime {
       },
     });
 
+    const hostStart = performance.now();
     return await new Promise((resolve, reject) => {
       let settled = false;
       const finish = (fn, v) => {
@@ -276,14 +280,29 @@ export class ComputeRuntime {
         fn(v);
       };
       // (1) The real deadline: terminate the thread. This kills a synchronous
-      // infinite loop in the guest, which a same-thread timer never could.
+      // infinite loop in the guest, which a same-thread timer never could. A killed job is NOT
+      // free: it held a worker slot for the full deadline and could have grown to its memory cap,
+      // so the rejection carries BILLING metrics (charged at the maximum — fail-closed against
+      // gaming, since the worker was terminated and cannot self-report a smaller figure). A pricing
+      // caller (ComputeNode.runJob) reads err.metrics and bills the killed job. Without this, an
+      // infinite-loop guest would consume a node's capacity for free — the E1/E2 DoS hole.
       const timer = setTimeout(
-        () => finish(reject, new Error('Execution time limit exceeded')),
+        () => {
+          const wallMs = performance.now() - hostStart;
+          const err = new Error('Execution time limit exceeded');
+          err.killed = true;
+          err.metrics = {
+            cpuMs: wallMs, wallMs, peakMemBytes: this.maxMemory,
+            peakMemPages: Math.ceil(this.maxMemory / WASM_PAGE_BYTES),
+            heapUsedBytes: this.maxMemory, killed: true,
+          };
+          finish(reject, err);
+        },
         this.maxTime,
       );
       worker.once('message', (m) => {
         if (m && m.ok) {
-          const metrics = m.metrics || { cpuMs: 0, wallMs: 0, peakMemBytes: 0, peakMemPages: 0 };
+          const metrics = m.metrics || { cpuMs: 0, wallMs: 0, peakMemBytes: 0, peakMemPages: 0, heapUsedBytes: 0, killed: false };
           // Host path already returns an object — attach metrics (non-breaking). Raw path stays a
           // BARE return by default (back-compat), and returns { result, metrics } only when the
           // caller opts in with { meter: true } — e.g. a compute node that must PRICE the job.

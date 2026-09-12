@@ -76,8 +76,16 @@ export class ComputeNode {
       const price = this.pricing.calculateComputePrice(metrics.cpuMs, metrics.peakMemBytes / (1024 * 1024));
       return { jobId, ok: true, result, metrics, price };
     } catch (error) {
-      // Over-cap (memory/time limit exceeded) or any other execution failure
-      // is a clean refusal, never a thrown error and never counted.
+      // A job KILLED at the deadline still consumed a worker slot for the full budget: it is
+      // BILLED (at the maximum the runtime attaches to the rejection), counted, and reported
+      // ok:false + killed:true with its price — so an infinite-loop guest cannot occupy a node's
+      // capacity for free (the E1/E2 economic-DoS hole). Any OTHER failure (bad input, over-cap
+      // rejection before execution, guest trap) is a clean, unbilled, uncounted refusal.
+      if (error && error.killed && error.metrics) {
+        this.computeJobsRun += 1;
+        const price = this.pricing.calculateComputePrice(error.metrics.cpuMs, error.metrics.peakMemBytes / (1024 * 1024));
+        return { jobId, ok: false, killed: true, error: error.message, metrics: error.metrics, price, billed: true };
+      }
       return { jobId, ok: false, error: error.message };
     }
   }

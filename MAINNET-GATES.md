@@ -323,13 +323,20 @@ continue-on-error, and in the release workflow before any publish).
       COMPARISON yet** — finding C1 is resolved for completed jobs (the compute worker measures real
       per-thread CPU time via `process.threadCpuUsage` — not wall-clock, so descheduled time is not
       billed — plus WASM-linear peak memory; `execute` surfaces `{cpuMs, wallMs, peakMemBytes,
-      peakMemPages}`, and `ComputeNode.runJob` prices from them via MarketPricing; proven in
-      compute.test.mjs 13/13, including the `cpuMs <= wallMs` invariant), but a like-for-like benchmark
-      against Ethereum (the SAME computation as an EVM contract vs. an XCL contract, both measured) is
-      separate work and is NOT claimed from the measurement alone; still open too: a job killed at the
-      deadline is unbilled, and worker V8-heap use (host-binding/marshalling allocations) is capped but
-      not metered (only WASM linear memory is). These are the substance of the remaining smart-contract
-      parity work.
+      peakMemPages, heapUsedBytes, killed}`, and `ComputeNode.runJob` prices from them via MarketPricing;
+      proven in compute.test.mjs 15/15, including the `cpuMs <= wallMs` invariant). **Two of the three
+      sub-gaps here are now CLOSED:** a job KILLED at the deadline is BILLED (the runtime attaches
+      maximum-charge metrics — full time budget, memory cap — to the deadline rejection; `runJob` counts
+      and prices it, returning `ok:false, killed:true, billed:true, price>0`), so an infinite-loop guest
+      can no longer occupy a node's capacity for free (the E1/E2 economic-DoS hole); and worker V8-heap
+      use (host-binding/marshalling allocations) is now METERED (`heapUsedBytes` sampled after the run,
+      surfaced alongside the WASM-linear peak). What REMAINS is the like-for-like benchmark against
+      Ethereum (the SAME computation as an EVM contract vs. an XCL contract, BOTH measured): it requires
+      an in-repo EVM EXECUTION engine to measure the EVM side (solc gives us compile + structural
+      assertion, not runtime cost), which is a new mainnet-repo dependency DECISION, not a wiring task —
+      a gas-estimate-vs-measured-cpuMs comparison is not like-for-like and is NOT claimed. So the
+      "fraction of the resources" claim keeps its honest scope: a real MEASUREMENT basis, no cross-VM
+      COMPARISON.
 
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 
@@ -466,8 +473,8 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
       `eval` assumption. Surfaces real findings for the audit: **C1 metering was DISCONNECTED** (`MarketPricing`
       was exported but never called; `execute`/`runJob` measured no duration/memory and returned no price → no
       billing basis for a paid surface) — **since RESOLVED for completed jobs** (per-thread CPU time +
-      WASM-linear peak memory now measured and priced; killed-job billing, worker-heap metering, and the
-      EVM comparison remain open — see T6.2 remainder (d)), C2 the host-source `eval` footgun, and open questions O1/O2 (no
+      WASM-linear peak memory now measured and priced; killed-job billing and worker-heap metering since
+      CLOSED, the EVM comparison still open — see T6.2 remainder (d)), C2 the host-source `eval` footgun, and open questions O1/O2 (no
       aggregate/concurrency admission control), O3 (co-tenancy side/covert channels unmitigated — Worker
       threads share the process), O4 (fuzz the hand-rolled section parser), O5 (contract-path determinism
       unscreened). Claims nothing secure; the ⛔ AUDIT gate stays open.

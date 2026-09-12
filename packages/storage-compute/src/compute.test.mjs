@@ -255,5 +255,31 @@ await check('metrics: a compute node PRICES a completed job from its measured me
   assert.ok(out.price > 0, 'a job that used real memory and CPU time has a strictly positive measured price');
 });
 
+await check('metrics: a completed job METERS its V8 heap use (not only WASM linear memory)', async () => {
+  const rt = new ComputeRuntime({ maxTime: 4000 });
+  const { metrics } = await rt.execute(ADD, 'add', [5, 7], { meter: true });
+  // heapUsedBytes is the worker's V8 heap after the run — host-binding/marshalling allocations that
+  // the WASM-linear peak (0 for ADD) does not see. It is always a positive real measurement (the
+  // worker isolate itself occupies heap), so metering it closes the "capped but not metered" gap.
+  assert.strictEqual(typeof metrics.heapUsedBytes, 'number', 'heap use is reported alongside WASM-linear peak');
+  assert.ok(metrics.heapUsedBytes > 0, 'a real V8-heap figure is metered');
+  assert.strictEqual(metrics.killed, false, 'a completed job is flagged not-killed');
+});
+
+await check('billing: a job KILLED at the deadline is BILLED (an infinite loop is not free)', async () => {
+  const { ComputeNode } = await import('./compute-node.js');
+  const { MarketPricing } = await import('./pricing.js');
+  const node = new ComputeNode({ runtime: new ComputeRuntime({ maxTime: 250 }) });
+  const out = await node.runJob({ jobId: 'kill1', wasmCode: SPIN, functionName: 'spin' });
+  assert.strictEqual(out.ok, false, 'a killed job did not complete');
+  assert.strictEqual(out.killed, true, 'it is reported as killed, not a plain refusal');
+  assert.strictEqual(out.billed, true, 'the killed job is billed — it held a worker slot for the full deadline');
+  assert.strictEqual(out.metrics.killed, true, 'its metrics carry the killed flag');
+  assert.ok(out.metrics.cpuMs > 0, 'a killed job is charged for the time budget it occupied');
+  const expected = new MarketPricing().calculateComputePrice(out.metrics.cpuMs, out.metrics.peakMemBytes / (1024 * 1024));
+  assert.strictEqual(out.price, expected, 'priced by the same model as a completed job, at the maximum');
+  assert.ok(out.price > 0, 'the price of a killed slot is strictly positive — the DoS hole is closed');
+});
+
 console.log(`\ncompute isolation: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

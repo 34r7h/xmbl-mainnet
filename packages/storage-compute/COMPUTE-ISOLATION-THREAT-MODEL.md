@@ -218,7 +218,7 @@ verdict is deterministic — a requirement, since `ContractHost` drives a shared
 | Bounded WASM/V8 memory | Enforced + tested (§2.2) |
 | Deny-by-default imports, inert stubs | Enforced + tested (§2.3) |
 | Host-hook staged read/write, per-call scoping | Enforced; trusted-caller assumption (§4) |
-| **Metering → billing** | **Finding C1 — measurement CONNECTED (per-thread cpuMs + WASM-linear peak memory measured, priced); killed-job billing, worker-heap metering, EVM comparison still open** |
+| **Metering → billing** | **Finding C1 — measurement CONNECTED (per-thread cpuMs + WASM-linear peak memory measured, priced); killed-job billing and worker-heap metering (heapUsedBytes) since CLOSED (a deadline-killed job is billed at the maximum; V8 heap metered alongside the WASM-linear peak — compute.test.mjs 15/15); EVM comparison still open (needs an in-repo EVM execution engine)** |
 | `eval` of host source | Finding C2 — safe only by contract |
 | Aggregate/concurrency caps | Open O1/O2 — out of scope here |
 | Side/covert channels (co-tenancy) | Open O3 — unmitigated |
