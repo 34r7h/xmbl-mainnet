@@ -1,9 +1,12 @@
 import { SystemSimulator } from './src/simulator.js';
 import { StructuredLogger } from './src/logger.js';
+import { LocalDevnet } from './src/devnet.js';
+import { DevnetRpc } from './src/devnet-rpc.js';
 
-const port = process.env.PORT || 3006;
-
-console.log(`XSIM (XMBL Simulator) starting on port ${port}`);
+// NOTE: the legacy SystemSimulator serves NO network port (it is an in-process soak). For a
+// runnable local network WITH an HTTP surface, use the LocalDevnet runner: `npm run devnet`
+// (src/devnet-run.mjs), which actually binds a loopback RPC and prints its URL.
+console.log('XSIM (XMBL Simulator) — legacy in-process soak; for a local network with an RPC run `npm run devnet`.');
 
 // If run directly, start the simulator
 const isMainModule = process.argv[1] && (
@@ -41,7 +44,7 @@ if (isMainModule || process.argv.includes('--run')) {
   });
 }
 
-export { SystemSimulator, StructuredLogger };
+export { SystemSimulator, StructuredLogger, LocalDevnet, DevnetRpc };
 
 
 

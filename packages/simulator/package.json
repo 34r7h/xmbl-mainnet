@@ -4,6 +4,11 @@
   "type": "module",
   "main": "index.js",
   "description": "XMBL Simulator",
+  "scripts": {
+    "devnet": "node src/devnet-run.mjs",
+    "soak": "node index.js --run",
+    "test": "node src/devnet.test.mjs && node src/devnet-rpc.test.mjs"
+  },
   "dependencies": {
     "@faker-js/faker": "^8.4.1",
     "chance": "^1.1.13"

@@ -55,9 +55,15 @@ export class LocalDevnet extends EventEmitter {
     };
   }
 
-  /** Boot: mint real identities and a real ledger with signature verification ON. */
+  /**
+   * Start accepting work. The FIRST call bootstraps (mints real identities + a real ledger with
+   * signature verification ON); later calls after a stop() just resume — identities, ledger and
+   * applied balances persist across a stop/start, as a real node's chain would. Full teardown is
+   * dispose().
+   */
   async start() {
     if (this.running) return this;
+    if (this.ledger) { this.running = true; this.emit('started', { identities: this.identities.length, resumed: true }); return this; }
     this.ledger = new Ledger({
       dbPath: this.options.dbPath,
       // Wiring this lookup is what activates ledger-side signature verification.
@@ -91,19 +97,30 @@ export class LocalDevnet extends EventEmitter {
   }
 
   /**
-   * Submit a SIGNED utxo transfer through the direct ledger path. Returns
-   * { ok, id, result?|error? }. Signature is verified by the ledger before it lands.
+   * Submit a SIGNED utxo transfer between two devnet participants (by index).
+   * Returns { ok, id, result?|error? }; the signature is verified by the ledger before it lands.
    */
   async submitTransfer(fromIndex, toIndex, amount) {
+    const to = this.identities[toIndex];
+    if (!to) throw new Error(`bad recipient index (have ${this.identities.length})`);
+    return this.submitTransferToAddress(fromIndex, to.address, amount);
+  }
+
+  /**
+   * Submit a SIGNED utxo transfer FROM a devnet participant TO an arbitrary address
+   * (the recipient need not be a known identity — the ledger only verifies the signer's
+   * ownership of `from`). This is what the RPC `sendTransaction` maps to.
+   */
+  async submitTransferToAddress(fromIndex, toAddress, amount) {
     if (!this.running) throw new Error('devnet not started');
     const from = this.identities[fromIndex];
-    const to = this.identities[toIndex];
-    if (!from || !to) throw new Error(`bad participant index (have ${this.identities.length})`);
+    if (!from) throw new Error(`bad sender index (have ${this.identities.length})`);
+    if (!toAddress || typeof toAddress !== 'string') throw new Error('toAddress required');
     const tx = {
       id: `dtx_${++this._seq}`,
       type: 'utxo',
       from: from.address,
-      to: to.address,
+      to: toAddress,
       amount,
       timestamp: Date.now(),
     };
@@ -149,10 +166,19 @@ export class LocalDevnet extends EventEmitter {
 
   isRunning() { return this.running; }
 
+  /** Halt accepting work but KEEP state (identities, ledger, balances) so start() can resume. */
   async stop() {
     if (!this.running) return;
     this.running = false;
-    try { await this.ledger?.close?.(); } catch { /* in-memory has no close */ }
     this.emit('stopped', { ...this.metrics });
+  }
+
+  /** Final teardown: stop and release the ledger. After this, start() bootstraps afresh. */
+  async dispose() {
+    await this.stop();
+    try { await this.ledger?.close?.(); } catch { /* in-memory has no close */ }
+    this.ledger = null;
+    this.identities = [];
+    this.byAddress.clear();
   }
 }
