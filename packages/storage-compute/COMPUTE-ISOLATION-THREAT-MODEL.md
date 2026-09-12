@@ -120,21 +120,33 @@ caller and checked in audit.
 
 ## 5. Findings (real, surfaced by this review)
 
-### C1 — Metering is DISCONNECTED from execution (billing-integrity gap)
+### C1 — Metering connected to execution (billing-integrity gap — RESOLVED for completed jobs)
 
-`MarketPricing.calculateComputePrice(durationMs, memoryMB)` exists and is exported,
-but **it is called by nothing in the execution path**: `execute()` and `runJob()`
-never measure wall-clock duration or actual memory used, never call `MarketPricing`,
-and return **no price/meter field** (`runJob` returns `{ jobId, ok, result }`).
-`maxTime`/`maxMemory` are enforced as *caps* (reject-if-exceeded), not *meters*
-(charge-for-what-was-used). For a **paid** execution surface this means there is
-currently **no measured, tamper-evident basis for billing** a job — pricing takes
-inputs (`durationMs`, `memoryMB`) that the runtime never produces. **Audit /
-build deliverable:** measure real CPU-time and peak memory in the worker, return
-them from `execute`, and drive `MarketPricing` from the measured values (and
-consider that a terminated over-deadline job still consumed resources that go
-unbilled). Until then, "compute market" is an execution sandbox, not a metered
-market.
+**Status: the measurement half is CLOSED.** The worker now measures the guest's
+execution — `performance.now()` across the `fn(...)` call (single-threaded, no host
+IO in the worker, so this is the guest's CPU time) and the linear memory it ended on
+(WASM linear memory only ever grows within a run — there is no shrink instruction — so
+the byte length after the call is the run's PEAK). `execute()` surfaces
+`{ cpuMs, peakMemBytes, peakMemPages }`: always on the host path, and on the raw path
+via opt-in `{ meter: true }` (the bare return stays the default, so every existing caller
+is unchanged). `ComputeNode.runJob` meters each job and returns its measured metrics plus
+a `price` = `MarketPricing.calculateComputePrice(cpuMs, peakMemBytes/MiB)` — the price is
+now MarketPricing applied to what the runtime actually measured. Proven as outcomes in
+`compute.test.mjs` (a memory-growing guest measures a larger peak than a no-memory one; a
+50M-iteration loop measures more cpuMs than a single add; a node's job price is exactly the
+model over the measured figures, strictly positive for a job that used real resources).
+
+*Originally:* `MarketPricing.calculateComputePrice(durationMs, memoryMB)` existed but was
+called by nothing in the execution path; `execute()`/`runJob()` never measured duration or
+memory and returned no price — `maxTime`/`maxMemory` were enforced as *caps*, not *meters*.
+
+**Still open (deliberately, tracked here):** *(a)* a job TERMINATED at the deadline (an
+over-time guest) still consumed resources that go **unbilled** — the worker is killed before
+it can post metrics, so only jobs that COMPLETE within caps are metered; charging for killed
+jobs needs the parent to attribute elapsed wall-clock on termination. *(b)* the measured
+basis is not yet a **comparison to Ethereum** — establishing "a fraction of the resources"
+requires a like-for-like benchmark (the same computation as an EVM contract vs. an XCL
+contract, both measured), which is separate work and must not be asserted from this alone.
 
 ### C2 — `eval` of host source is a standing footgun
 
@@ -195,7 +207,7 @@ verdict is deterministic — a requirement, since `ContractHost` drives a shared
 | Bounded WASM/V8 memory | Enforced + tested (§2.2) |
 | Deny-by-default imports, inert stubs | Enforced + tested (§2.3) |
 | Host-hook staged read/write, per-call scoping | Enforced; trusted-caller assumption (§4) |
-| **Metering → billing** | **Finding C1 — disconnected; no measured basis** |
+| **Metering → billing** | **Finding C1 — measurement CONNECTED (cpuMs + peak memory measured, priced); killed-job billing + EVM comparison still open** |
 | `eval` of host source | Finding C2 — safe only by contract |
 | Aggregate/concurrency caps | Open O1/O2 — out of scope here |
 | Side/covert channels (co-tenancy) | Open O3 — unmitigated |

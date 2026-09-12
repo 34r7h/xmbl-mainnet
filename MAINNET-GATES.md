@@ -262,10 +262,13 @@ continue-on-error, and in the release workflow before any publish).
       reproduction is proven across independent real node SUBSYSTEMS (three `Ledger`+`StateMachine`
       pairs converge on one root), but NOT yet across the full networking/consensus stack under
       adversarial timing (that stack's safety is covered separately by `@xmbl/consensus`'s
-      byzantine-matrix); *(d)* the **"fraction of the resources" claim is unmeasured** — finding C1
-      (`storage-compute` metering disconnected from execution) means there is no measured CPU/memory
-      basis to compare against Ethereum; the caps are enforced, the meter is not. These are the
-      substance of the remaining smart-contract parity work.
+      byzantine-matrix); *(d)* the **"fraction of the resources" claim now has a MEASURED basis but no
+      COMPARISON yet** — finding C1 is resolved for completed jobs (the compute worker measures real
+      cpuMs + peak memory, `execute` surfaces them, and `ComputeNode.runJob` prices from them via
+      MarketPricing; proven in compute.test.mjs 13/13), but a like-for-like benchmark against Ethereum
+      (the SAME computation as an EVM contract vs. an XCL contract, both measured) is separate work and
+      is NOT claimed from the measurement alone; a job killed at the deadline is also still unbilled.
+      These are the substance of the remaining smart-contract parity work.
 
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 
