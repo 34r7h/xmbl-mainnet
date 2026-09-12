@@ -33,13 +33,21 @@ sources it compiles — so a reviewer can confirm the exact bytes that produced 
 
 ## Browser-surface reproduction (app render, not a Node protocol run)
 
-The contract **lifecycle** — author an LNG contract → run every entrypoint in a test mode →
-derive its content-addressed on-chain identity — is reproduced not under `node` but on the
-handoff browser surface, because that IS the claim (a usable miniapp), and the reproduction is
-the artifact a publish uploads. It lives at `apps/app-builder/miniapp/contract-lab.{js,html}`
-(the **XMBL Contract Lab** miniapp) and is verified on both handoff surfaces — opaque-origin
-iframe and shadow-DOM `renderApp` — by `apps/app-builder/miniapp/verify-contract-lab.mjs`,
-which also asserts the id the page derives in-browser is byte-identical to `@xmbl/contracts`'
+The contract **builder + lifecycle** — build a contract visually or in code → run every
+entrypoint in a test mode → derive its content-addressed identity and deploy a live instance —
+is reproduced not under `node` but on the handoff browser surface, because that IS the claim (a
+usable miniapp), and the reproduction is the artifact a publish uploads (live at
+`handoff.lol/app/xmbl/contract-lab`). It lives at `apps/app-builder/miniapp/contract-lab.{js,html}`
+plus `samples.js` (the **XMBL Contract Lab** miniapp — a Visual builder and a Code editor over one
+AST-round-tripped model, a Test panel whose state tiles flash per write, and a Deploy button that
+commits a live content-addressed instance). Its five worked examples cover **every call type the
+host-state backend compiles** (state writes, getters, every arithmetic/bitwise/shift op,
+comparisons, a branch, an `~event`+`~emit`, a `~private` field, a counted `~for` loop).
+`apps/app-builder/miniapp/verify-contract-lab.mjs` proves it in three phases: (1) functionality —
+every entrypoint of every sample EXECUTED and asserted (38 assertions across 25 entrypoints,
+including the revert cases); (2) source→visual-model→source round-trip (5/5); (3) both handoff
+surfaces (opaque-origin iframe + shadow-DOM `renderApp`) build→test (a call updates a state
+tile)→deploy, with the id the page derives in-browser byte-identical to `@xmbl/contracts`'
 node-side `contractId`. Test mode runs the REAL compiled WASM in-page (`WebAssembly.instantiate`
 over a faithful copy of the XCL byte-pointer ABI), but is NOT the production execution path — the
 worker-isolated, metered, Verkle-committed, delegation-gated path is the headless
