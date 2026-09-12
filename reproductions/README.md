@@ -30,3 +30,27 @@ sources it compiles — so a reviewer can confirm the exact bytes that produced 
 |--------------|--------|------------------|
 | `agentic-contract-e2e.mjs` | `packages/contracts` + `identity` + `state-machine` | A gated agentic contract is hosted and USED with every function (machine-checked against the compiler's WASM exports) through the real root→coordinator→agent delegation chain; XMBL state is observed updating at every surface (contract fields, the Verkle root, the UTXO ledger), every unauthorized/out-of-scope/replayed/revoked/value-violating call leaves the root unmoved, each committed change is Verkle-provable, and the transition is deterministic across independent nodes. |
 | `contracts-reentrancy.mjs` | `packages/contracts` | A called contract never runs nested inside its caller's frame, so classic reentrancy is inexpressible by construction. |
+
+## Browser-surface reproduction (app render, not a Node protocol run)
+
+The contract **lifecycle** — author an LNG contract → run every entrypoint in a test mode →
+derive its content-addressed on-chain identity — is reproduced not under `node` but on the
+handoff browser surface, because that IS the claim (a usable miniapp), and the reproduction is
+the artifact a publish uploads. It lives at `apps/app-builder/miniapp/contract-lab.{js,html}`
+(the **XMBL Contract Lab** miniapp) and is verified on both handoff surfaces — opaque-origin
+iframe and shadow-DOM `renderApp` — by `apps/app-builder/miniapp/verify-contract-lab.mjs`,
+which also asserts the id the page derives in-browser is byte-identical to `@xmbl/contracts`'
+node-side `contractId`. Test mode runs the REAL compiled WASM in-page (`WebAssembly.instantiate`
+over a faithful copy of the XCL byte-pointer ABI), but is NOT the production execution path — the
+worker-isolated, metered, Verkle-committed, delegation-gated path is the headless
+`agentic-contract-e2e.mjs` above. Build + verify:
+
+```
+npm run build:contract-lab -w apps/app-builder && npm run verify:contract-lab -w apps/app-builder
+```
+
+Unlike the Node reproductions above, this one is **not** in the `npm run test:protocol` hard
+gate: it needs a built `dist-contract-lab/` bundle and a chromium binary (Playwright), so it is
+run on demand by the command above rather than on every gate run. A regression in
+`contract-lab.{js,html}` is therefore caught only when that command is re-run — re-run it after
+any edit to those files.

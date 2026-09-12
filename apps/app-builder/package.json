@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "build:contract-lab": "vite build --config vite.contract-lab.config.js && node miniapp/assemble-contract-lab.mjs",
+    "verify:contract-lab": "node miniapp/verify-contract-lab.mjs",
     "test:unit": "vitest",
     "test:e2e": "playwright test",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix --ignore-path .gitignore",
@@ -14,6 +16,8 @@
   },
   "dependencies": {
     "@isomorphic-git/lightning-fs": "^4.6.0",
+    "@xmbl/contracts": "*",
+    "@xmbl/lng": "*",
     "buffer": "^6.0.3",
     "isomorphic-dompurify": "^2.13.0",
     "isomorphic-git": "^1.29.0",

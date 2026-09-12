@@ -4,6 +4,7 @@ node_modules/
 dist/
 dist-node/
 dist-miniapp/
+dist-contract-lab/
 build/
 *.tsbuildinfo
 # rust builds
