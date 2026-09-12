@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   HOST_ABI_SOURCE, HOST_ABI_SOURCE_BYTES, XCL_WORD_MARSHAL_SOURCE, HOST_ABI_CRYPTO_INIT_SOURCE,
+  HOST_ABI_ZK_INIT_SOURCE, HOST_ABI_HE_INIT_SOURCE,
   HOST_ABI_UTXO_SOURCE, HOST_ABI_COMPOSE_SOURCE, HOST_ABI_COMPOSE_SOURCE_WORD,
   slotKey, byteKey, utxoKey, spendKey, callerTag,
   XCL_WORD_BYTES,
@@ -84,6 +85,21 @@ export class ContractHost {
       // those imports bind to the REAL @xmbl/identity verifiers, and stages the signature
       // material from the call's `opts.crypto` (chain-provided, identical on every node).
       cryptoHost: !!deployOpts.cryptoHost,
+      // zkHost: the contract asks the chain to VERIFY a coordinate/curve zero-knowledge proof
+      // (env.xmbl_zk_verify). When set, ContractHost attaches the async zk init hook (it import()s
+      // @xmbl/zero-knowledge inside the worker) and stages the proof + public anchor points from the
+      // call's `opts.zk` (chain-provided, identical on every node → deterministic verdict). The guest
+      // supplies the (derivedX, derivedY) coordinate it asserts, so the verdict binds to the
+      // contract's own state, not a host flag. EXPERIMENTAL/UNAUDITED (⛔) and OPT-IN — a contract
+      // that does not set this never touches the zk module, so zk never gates consensus/ledger.
+      zkHost: !!deployOpts.zkHost,
+      // heHost: the contract COMPUTES on encrypted values via the post-quantum cubic-LWE additive
+      // homomorphism (env.xmbl_he_add). When set, ContractHost attaches the async HE init hook (it
+      // import()s @xmbl/identity's addCiphertexts inside the worker) and stages the PUBLIC key
+      // parameters { n, q } from the call's `opts.he`. The homomorphic add needs NO secret key and
+      // NO decryption is exposed (that needs the secret key — the security boundary), so a contract
+      // can aggregate sealed inputs it cannot read; only the key holder opens the result off-chain.
+      heHost: !!deployOpts.heHost,
       // utxoHost: the contract SPENDS and CREATES xmbl UTXOs (env.xmbl_utxo_* / env.xmbl_input_*).
       // When set, ContractHost stages the input UTXOs named in `opts.inputs` from committed Verkle
       // state, attaches the UTXO value ABI, then enforces value conservation FAIL-CLOSED after the
@@ -378,15 +394,29 @@ export class ContractHost {
       ? parts[0]
       : `(ctx) => Object.assign({}, ${parts.map((p) => `(${p})(ctx)`).join(', ')})`;
 
+    // Async host-init hooks. compute.js consumes a SINGLE `init` (its returned map is merged into
+    // the host imports), so multiple opt-in capabilities are COMPOSED here into one factory that
+    // awaits each and merges their maps. Each sub-factory early-returns {} unless the guest declared
+    // its import (it is handed `declared`), so an unused capability imports nothing and costs nothing.
+    const inits = [];
+    if (c.cryptoHost) inits.push(HOST_ABI_CRYPTO_INIT_SOURCE);
+    if (c.zkHost) inits.push(HOST_ABI_ZK_INIT_SOURCE);
+    if (c.heHost) inits.push(HOST_ABI_HE_INIT_SOURCE);
+    const init = inits.length === 0 ? null
+      : inits.length === 1 ? inits[0]
+      : `async (ctx, declared) => Object.assign({}, ${inits.map((s) => `await (${s})(ctx, declared)`).join(', ')})`;
+
     const host = {
       source,
       data: {
         slots, caller: (callerI32 | 0), kv,
         crypto: c.cryptoHost ? (opts.crypto || null) : null,
+        zk: c.zkHost ? (opts.zk || null) : null,
+        he: c.heHost ? (opts.he || null) : null,
         utxos, inputIds, peers, foreign,
       },
       marshal: c.wordAbi ? XCL_WORD_MARSHAL_SOURCE : null,
-      init: c.cryptoHost ? HOST_ABI_CRYPTO_INIT_SOURCE : null,
+      init,
     };
     const { result, writes } = await this.runtime.execute(c.wasm, fnName, args, { host });
 

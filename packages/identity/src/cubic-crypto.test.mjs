@@ -12,7 +12,7 @@ import {
   SECP256K1_P,
 } from './curve-source.js';
 import { keyGen as sigKeyGen, sign as sigSign, verify as sigVerify } from './cubic-sig.js';
-import { keyGen as lweKeyGen, encryptBit, decryptBit, encapsulate, decapsulate } from './cubic-lwe.js';
+import { keyGen as lweKeyGen, encryptBit, decryptBit, encapsulate, decapsulate, addCiphertexts } from './cubic-lwe.js';
 
 console.log('=== TEST 1: CubicCurveSource ===');
 // Non-collinear points → non-zero plane normal → a real planar section.
@@ -113,7 +113,17 @@ for (let bit of [0, 1]) {
 const { ciphertext, sharedSecret: senderSS } = encapsulate(lweKeys.pk, { secretBits: 64 });
 const receiverSS = decapsulate(lweKeys.sk, ciphertext);
 assert.strictEqual(senderSS.equals(receiverSS), true, 'KEM shared secrets must match');
-console.log('PQ-Cubic-LWE: PASS');
+
+// Additive homomorphism (the property @xmbl/contracts' heHost exposes as env.xmbl_he_add):
+// ENC(a) ⊞ ENC(b) decrypts to a+b in the single-bit q/2 message space (a bit sum mod 2), with NO
+// secret key used to form the sum. Run enough trials that the doubled-noise decryption is exercised.
+for (let t = 0; t < 50; t++) {
+  const a = t & 1, b = (t >> 1) & 1;
+  const sum = addCiphertexts(encryptBit(lweKeys.pk, a), encryptBit(lweKeys.pk, b), lweKeys.pk.q);
+  assert.strictEqual(decryptBit(lweKeys.sk, sum), (a + b) & 1, `homomorphic ENC(${a}) ⊞ ENC(${b}) must open to ${(a + b) & 1}`);
+}
+assert.throws(() => addCiphertexts({ u: [1n], v: 0n }, { u: [1n, 2n], v: 0n }, lweKeys.pk.q), /dimension mismatch/, 'mismatched ciphertext dimensions are refused');
+console.log('PQ-Cubic-LWE (+ additive homomorphism): PASS');
 
 console.log('=== TEST 4: Signer seam integration (scheme: cubic) ===');
 import { Signer } from './signer.js';

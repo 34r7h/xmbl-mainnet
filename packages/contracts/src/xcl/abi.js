@@ -258,6 +258,152 @@ export const HOST_ABI_CRYPTO_INIT_SOURCE = `async (ctx, declared) => {
 }`;
 
 // ────────────────────────────────────────────────────────────────────────────
+// ZK HOST CALL (agentic-contracts-proto.md §3.1) — a contract asks the chain to VERIFY a
+// coordinate/curve zero-knowledge proof. Same seam as the crypto verifiers above: the binding
+// is NOT inlined field math in the eval'd string — this factory `import()`s @xmbl/zero-knowledge
+// inside the worker (capability-by-real-module, the C2-shrinking direction), so the eval surface
+// does not grow. ASYNC one-time, resolved: the only async step is the dynamic import; the returned
+// binding is SYNCHRONOUS, as a WASM import must be.
+//
+// WHAT THIS PROVES IN ZK: xzk commits a blinded degree-bounded curve through public anchor points
+// and a derived coordinate, leaking nothing about the secret points. The statement is "the
+// committed curve passes through the public points AND through (derivedX, derivedY)".
+//
+// STATEMENT BINDING (why this is REAL zk use by the contract, not a trusted host boolean): the
+// PROOF, the public anchor points, and the setup params are CHAIN-STAGED through `ctx.data.zk`
+// (identical on every node → identical verdict → consensus-safe), exactly as the crypto init
+// stages signature material. The guest supplies the (derivedX, derivedY) COORDINATE IT asserts —
+// two 32-byte little-endian words read from its OWN linear memory — and the binding returns 1 only
+// if the staged proof verifies for THAT coordinate. The verdict is therefore bound to bytes the
+// contract chose (its own asserted state), not to a precomputed flag: a contract that asserts a
+// coordinate the committed secret curve does not pass through gets 0, and gates its state write on it.
+//
+// DETERMINISM: xzk.verify is pure BigInt field math over a Fiat-Shamir transcript built only from
+// the staged proof's Merkle roots (hash of strings, no floats, no ambient state), so every node
+// reaches the same verdict for the same staged proof + asserted coordinate.
+//
+// NEVER TRAPS: a WASM import that throws aborts the WHOLE call; verify() over a malformed staged
+// proof would throw (friVerify indexes proof arrays with no shape check). The call is wrapped so any
+// failure returns 0 — a refusal the contract can branch on, never a trap (matches the crypto bindings).
+//
+// EXPERIMENTAL / UNAUDITED (MAINNET-GATES ⛔): @xmbl/zero-knowledge is a post-quantum FRI prototype
+// pending a ZK-cryptographer sign-off. This wiring is OPT-IN per contract (the `zkHost` deploy flag)
+// and MUST NOT gate consensus/ledger/sealing — a contract that does not opt in never touches it.
+
+/** The import names the zk ABI defines — the deny-by-default allow surface. */
+export const HOST_IMPORT_KEYS_ZK = ['env.xmbl_zk_verify'];
+
+/**
+ * ZK host-call initializer, as source (eval'd inside the worker and AWAITED before the guest is
+ * instantiated). Signature `async (ctx, declared) => ({ "env.xmbl_zk_verify": fn })`: `declared`
+ * is the guest's declared import keys (so the package is imported only when the guest uses it),
+ * `ctx.data.zk` is the staged `{ opts?, proof, publicPoints }`, `ctx.mem()` gives guest memory
+ * after instantiation, `ctx.log` collects a trace. Returns a synchronous verify binding:
+ *   xmbl_zk_verify(x_ptr:i32, y_ptr:i32) -> i32
+ *     reads the 32-byte little-endian words at x_ptr and y_ptr (the coordinate the guest asserts)
+ *     and returns 1 if the staged proof verifies for (derivedX=x, derivedY=y), else 0. Never traps.
+ * @type {string}
+ */
+export const HOST_ABI_ZK_INIT_SOURCE = `async (ctx, declared) => {
+  var need = declared || [];
+  if (need.indexOf('env.xmbl_zk_verify') === -1) return {};
+  var zk = await import('@xmbl/zero-knowledge');
+  var staged = (ctx.data && ctx.data.zk) || {};
+  var zkctx = zk.setup(staged.opts || {});
+  var proof = staged.proof || null;
+  var publicPoints = staged.publicPoints || null;
+  var WORD = 32;
+  var wordAt = function (ptr) {
+    var m = ctx.mem && ctx.mem(); if (!m) return null;
+    if (ptr < 0 || ptr + WORD > m.buffer.byteLength) return null;
+    var v = new Uint8Array(m.buffer, ptr, WORD);
+    var x = 0n; for (var i = WORD - 1; i >= 0; i--) x = (x << 8n) | BigInt(v[i]);
+    return x;
+  };
+  var out = {};
+  out['env.xmbl_zk_verify'] = function (xPtr, yPtr) {
+    if (!proof || !publicPoints) return 0;
+    var x = wordAt(xPtr | 0); var y = wordAt(yPtr | 0);
+    if (x === null || y === null) return 0;
+    var ok = 0;
+    try { ok = zk.verify(zkctx, { proof: proof, publicPoints: publicPoints, derivedX: x, derivedY: y }) ? 1 : 0; }
+    catch (e) { ok = 0; }
+    ctx.log.push(['zk_verify', ok]);
+    return ok;
+  };
+  return out;
+}`;
+
+// ────────────────────────────────────────────────────────────────────────────
+// HOMOMORPHIC-ENCRYPTION HOST CALL — a contract COMPUTES on encrypted values it cannot read.
+// Same seam as the crypto/zk verifiers: this factory `import()`s @xmbl/identity inside the worker
+// and calls its REAL additive homomorphism (cubicLwe `addCiphertexts`) — no inlined lattice math in
+// the eval'd string. The post-quantum cubic-LWE scheme is additively homomorphic by construction
+// (decryption is linear), so ENC(m_a) ⊞ ENC(m_b) = ENC(m_a + m_b) — and the sum is produced with
+// NO secret key, which is exactly why a guest may be given it:
+//
+//   xmbl_he_add(a_ptr:i32, b_ptr:i32, out_ptr:i32) -> i32
+//     reads two ciphertexts from guest memory, writes their homomorphic sum to out_ptr, returns
+//     0 ok / 1 unavailable (no params staged / no memory) / 2 a region is out of bounds. A
+//     ciphertext is (n+1) CONTIGUOUS 32-byte little-endian words: u[0..n-1] then v, where n is the
+//     lattice dimension (staged public key parameter). Never traps (a bad region returns a status).
+//
+// DECRYPTION IS DELIBERATELY ABSENT (the security boundary): recovering a plaintext needs the
+// SECRET key, which is neither chain-derivable nor safe in a guest's reach — the SAME reason
+// xmbl_lwe_decrypt is excluded from the crypto ABI. A contract can AGGREGATE sealed inputs and
+// persist the encrypted aggregate (via the state ABI); only the key holder opens it OFF-chain. A
+// contract that declares env.xmbl_lwe_decrypt / a decrypt import gets nothing — it is not on any
+// allow surface, so it is denied by default.
+//
+// DETERMINISM: the homomorphic add is pure modular vector arithmetic (no randomness — encryption,
+// which IS randomized, happens off-chain), so every node computes the identical sum ciphertext.
+//
+// n and q are PUBLIC key parameters, chain-staged through `ctx.data.he = { n, q }`.
+
+/** The import names the HE ABI defines — the deny-by-default allow surface (add only; NO decrypt). */
+export const HOST_IMPORT_KEYS_HE = ['env.xmbl_he_add'];
+
+/**
+ * HE host-call initializer, as source (eval'd inside the worker and AWAITED before the guest is
+ * instantiated). Signature `async (ctx, declared) => ({ "env.xmbl_he_add": fn })`: `declared` is the
+ * guest's declared import keys, `ctx.data.he` is `{ n, q }` (the public key's dimension + modulus),
+ * `ctx.mem()` gives guest memory. Returns a synchronous binding that performs the homomorphic add
+ * via @xmbl/identity's `addCiphertexts`. Needs no secret key and exposes no decryption.
+ * @type {string}
+ */
+export const HOST_ABI_HE_INIT_SOURCE = `async (ctx, declared) => {
+  var need = declared || [];
+  if (need.indexOf('env.xmbl_he_add') === -1) return {};
+  var id = await import('@xmbl/identity');
+  var he = (ctx.data && ctx.data.he) || {};
+  var n = he.n | 0;
+  var q = he.q ? BigInt(he.q) : 3329n;
+  var WORD = 32;
+  var COUNT = n + 1;
+  var view = function () { var m = ctx.mem && ctx.mem(); return m ? new Uint8Array(m.buffer) : null; };
+  var readWord = function (v, ptr) { var x = 0n; for (var i = WORD - 1; i >= 0; i--) x = (x << 8n) | BigInt(v[ptr + i]); return x; };
+  var writeWord = function (v, ptr, x) { var t = ((x % q) + q) % q; for (var i = 0; i < WORD; i++) { v[ptr + i] = Number(t & 0xffn); t >>= 8n; } };
+  var out = {};
+  out['env.xmbl_he_add'] = function (aPtr, bPtr, outPtr) {
+    if (n <= 0) return 1;
+    var v = view(); if (!v) return 1;
+    var span = COUNT * WORD;
+    if (aPtr < 0 || aPtr + span > v.length) return 2;
+    if (bPtr < 0 || bPtr + span > v.length) return 2;
+    if (outPtr < 0 || outPtr + span > v.length) return 2;
+    var ua = [], ub = [];
+    for (var i = 0; i < n; i++) { ua.push(readWord(v, aPtr + i * WORD)); ub.push(readWord(v, bPtr + i * WORD)); }
+    var va = readWord(v, aPtr + n * WORD), vb = readWord(v, bPtr + n * WORD);
+    var sum = id.addCiphertexts({ u: ua, v: va }, { u: ub, v: vb }, q);
+    for (var j = 0; j < n; j++) writeWord(v, outPtr + j * WORD, sum.u[j]);
+    writeWord(v, outPtr + n * WORD, sum.v);
+    ctx.log.push(['he_add', n]);
+    return 0;
+  };
+  return out;
+}`;
+
+// ────────────────────────────────────────────────────────────────────────────
 // UTXO VALUE ABI — the seam that LINKS xmbl UTXOs to the Verkle state machine.
 //
 // An xmbl UTXO is a ledger record the state machine already commits to the SAME Verkle

@@ -15,7 +15,9 @@ import { compile } from '@xmbl/lng';
 import {
   Identity, mintGrant, mintZspToken, signAction, makeAuthorizer, RevocationSet, DurableNonceRegistry,
   cubicSigKeyGen, cubicSigSign, MAYOWasm,
+  cubicLweKeyGen, encryptBit, decryptBit,
 } from '@xmbl/identity';
+import { setup as zkSetup, blindedCurve, prove as zkProve } from '@xmbl/zero-knowledge';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -314,6 +316,170 @@ await check('crypto host call: the same import declared WITHOUT cryptoHost is de
   const host = new ContractHost({ runtime: runtime() });
   const { id } = host.deploy(cryptoContract(msg), []); // NO cryptoHost → no crypto init attached
   await assert.rejects(() => host.call(id, 'check_cubic'), /denied import: env\.xmbl_cubic_sig_verify/);
+});
+
+// ============================================================================
+// ZK HOST CALL (T6.1-d) — a contract asks the chain to VERIFY a coordinate/curve zero-knowledge
+// proof (@xmbl/zero-knowledge) and GATES a state write on the verdict. The proof + public points
+// are chain-staged (deterministic verdict); the guest supplies the (x, y) COORDINATE it asserts
+// from its own memory, so a verified coordinate commits state (the root moves) and a tampered one
+// does not (the root is unmoved) — the verdict binds to the contract's own bytes, not a host flag.
+// ============================================================================
+// A hand-encoded contract: bakes (x, y) at memory offset 0 / 32 and does
+//   check() { if (xmbl_zk_verify(0, 32)) xmbl_verkle_set(7, 1); return ok }
+function zkGatedContract(xWord, yWord) {
+  const uleb = (n) => { const b = []; do { let x = n & 0x7f; n >>>= 7; if (n) x |= 0x80; b.push(x); } while (n); return b; };
+  const vec = (items) => [...uleb(items.length), ...items.flat()];
+  const section = (id, body) => [id, ...uleb(body.length), ...body];
+  const s = (t) => [...uleb(t.length), ...[...t].map((c) => c.charCodeAt(0))];
+  const data = [...xWord, ...yWord];
+  const code = [
+    0x01, 0x01, 0x7f,
+    0x41, 0x00, 0x41, 0x20, 0x10, 0x00, 0x22, 0x00,   // ok = zk_verify(0,32); tee ok
+    0x04, 0x40, 0x41, 0x07, 0x41, 0x01, 0x10, 0x01, 0x1a, 0x0b, // if ok: verkle_set(7,1); drop; end
+    0x20, 0x00, 0x0b,                                 // return ok
+  ];
+  return Uint8Array.from([
+    ...HDR,
+    ...section(1, vec([[0x60, ...vec([0x7f, 0x7f]), ...vec([0x7f])], [0x60, ...vec([]), ...vec([0x7f])]])),
+    ...section(2, vec([
+      [...s('env'), ...s('xmbl_zk_verify'), 0x00, ...uleb(0)],
+      [...s('env'), ...s('xmbl_verkle_set'), 0x00, ...uleb(0)],
+    ])),
+    ...section(3, vec([uleb(1)])),
+    ...section(5, vec([[0x01, ...uleb(1), ...uleb(1)]])),
+    ...section(7, vec([[...s('memory'), 0x02, ...uleb(0)], [...s('check'), 0x00, ...uleb(2)]])),
+    ...section(10, vec([[...uleb(code.length), ...code]])),
+    ...section(11, vec([[0x00, 0x41, 0x00, 0x0b, ...vec([...data])]])),
+  ]);
+}
+const zkWord = (v) => { const b = new Uint8Array(32); let x = BigInt(v); for (let i = 0; i < 32; i++) { b[i] = Number(x & 0xffn); x >>= 8n; } return b; };
+function zkFixture() {
+  const ctx = zkSetup();
+  const publicPoints = [{ x: 11n, y: 101n }, { x: 12n, y: 205n }, { x: 13n, y: 313n }, { x: 14n, y: 419n }];
+  const secretPoints = [{ x: 21n, y: 55555n }, { x: 22n, y: 66666n }, { x: 23n, y: 77777n }];
+  const derivedX = 99n;
+  const { Pt, derivedY } = blindedCurve(ctx, { publicPoints, secretPoints, derivedX });
+  const proof = zkProve(ctx, { Pt, publicPoints, derivedX, derivedY });
+  return { staged: { opts: {}, proof, publicPoints }, derivedX, derivedY };
+}
+
+await check('zk host call: a VERIFIED coordinate commits gated state and MOVES the root', async () => {
+  const { staged, derivedX, derivedY } = zkFixture();
+  const host = new ContractHost({ runtime: new ComputeRuntime({ maxTime: 15000 }), state: new VerkleStateTree() });
+  const { id } = host.deploy(zkGatedContract(zkWord(derivedX), zkWord(derivedY)), [7], { zkHost: true });
+  const root0 = host.state.getRoot();
+  const r = await host.call(id, 'check', [], { zk: staged });
+  assert.strictEqual(r.result, 1, 'the verified coordinate returns 1');
+  assert.strictEqual(host.getSlot(id, 7), 1, 'a verified proof commits the gated write');
+  assert.notStrictEqual(host.state.getRoot(), root0, 'committing gated state moves the root');
+});
+
+await check('zk host call: a TAMPERED coordinate verifies to 0 and leaves the root UNMOVED', async () => {
+  const { staged, derivedX, derivedY } = zkFixture();
+  const host = new ContractHost({ runtime: new ComputeRuntime({ maxTime: 15000 }), state: new VerkleStateTree() });
+  const { id } = host.deploy(zkGatedContract(zkWord(derivedX), zkWord(derivedY + 1n)), [7], { zkHost: true });
+  const root0 = host.state.getRoot();
+  const r = await host.call(id, 'check', [], { zk: staged });
+  assert.strictEqual(r.result, 0, 'a coordinate off the secret curve returns 0');
+  assert.strictEqual(host.getSlot(id, 7), 0, 'a failed proof commits nothing');
+  assert.strictEqual(host.state.getRoot(), root0, 'a failed proof leaves the root unmoved');
+});
+
+await check('zk host call: a malformed staged proof refuses (0) without trapping', async () => {
+  const { derivedX, derivedY } = zkFixture();
+  const host = new ContractHost({ runtime: new ComputeRuntime({ maxTime: 15000 }), state: new VerkleStateTree() });
+  const { id } = host.deploy(zkGatedContract(zkWord(derivedX), zkWord(derivedY)), [7], { zkHost: true });
+  const r = await host.call(id, 'check', [], { zk: { opts: {}, proof: { rootP: 'deadbeef' }, publicPoints: [{ x: 1n, y: 1n }] } });
+  assert.strictEqual(r.result, 0, 'a malformed proof must refuse, not trap');
+  assert.strictEqual(host.getSlot(id, 7), 0, 'nothing committed on a malformed proof');
+});
+
+await check('zk host call: the same import declared WITHOUT zkHost is denied (deny-by-default holds)', async () => {
+  const { staged, derivedX, derivedY } = zkFixture();
+  const host = new ContractHost({ runtime: runtime() });
+  const { id } = host.deploy(zkGatedContract(zkWord(derivedX), zkWord(derivedY)), [7]); // NO zkHost
+  await assert.rejects(() => host.call(id, 'check', [], { zk: staged }), /denied import: env\.xmbl_zk_verify/);
+});
+
+// ============================================================================
+// HOMOMORPHIC-ENCRYPTION HOST CALL (T6.1-e) — a contract ADDS two post-quantum cubic-LWE
+// ciphertexts with NO secret key (env.xmbl_he_add), persists the encrypted aggregate, and only the
+// key holder opens it. Decryption is on NO allow surface (the secret-key boundary). The add is pure
+// modular arithmetic → deterministic across nodes.
+// ============================================================================
+// A hand-encoded contract: bakes ctA at 0, ctB at SPAN, computes he_add into OUT=2*SPAN, and stores
+// each of the (n+1) result words (low 32 bits) into slots 0..n. aggregate() returns the add status.
+const heWord = (v) => { const b = new Uint8Array(32); let x = BigInt(v); for (let i = 0; i < 32; i++) { b[i] = Number(x & 0xffn); x >>= 8n; } return b; };
+const heCtBytes = (ct, n) => { const out = new Uint8Array((n + 1) * 32); for (let i = 0; i < n; i++) out.set(heWord(ct.u[i]), i * 32); out.set(heWord(ct.v), n * 32); return out; };
+function heAggregateContract(ctaBytes, ctbBytes, n) {
+  const uleb = (x) => { const b = []; do { let y = x & 0x7f; x >>>= 7; if (x) y |= 0x80; b.push(y); } while (x); return b; };
+  const sleb = (x) => { let more = true; const b = []; while (more) { let y = x & 0x7f; x >>= 7; if ((x === 0 && !(y & 0x40)) || (x === -1 && (y & 0x40))) more = false; else y |= 0x80; b.push(y); } return b; };
+  const vec = (items) => [...uleb(items.length), ...items.flat()];
+  const section = (id, body) => [id, ...uleb(body.length), ...body];
+  const s = (t) => [...uleb(t.length), ...[...t].map((c) => c.charCodeAt(0))];
+  const COUNT = n + 1, SPAN = COUNT * 32, OUT = 2 * SPAN;
+  const data = [...ctaBytes, ...ctbBytes];
+  const code = [0x01, 0x01, 0x7f];
+  code.push(0x41, ...sleb(0), 0x41, ...sleb(SPAN), 0x41, ...sleb(OUT), 0x10, ...uleb(0), 0x21, ...uleb(0));
+  for (let i = 0; i < COUNT; i++) code.push(0x41, ...sleb(i), 0x41, ...sleb(OUT + i * 32), 0x28, 0x02, 0x00, 0x10, ...uleb(1), 0x1a);
+  code.push(0x20, ...uleb(0), 0x0b);
+  return Uint8Array.from([
+    ...HDR,
+    ...section(1, vec([[0x60, ...vec([0x7f, 0x7f, 0x7f]), ...vec([0x7f])], [0x60, ...vec([0x7f, 0x7f]), ...vec([0x7f])], [0x60, ...vec([]), ...vec([0x7f])]])),
+    ...section(2, vec([[...s('env'), ...s('xmbl_he_add'), 0x00, ...uleb(0)], [...s('env'), ...s('xmbl_verkle_set'), 0x00, ...uleb(1)]])),
+    ...section(3, vec([uleb(2)])),
+    ...section(5, vec([[0x01, ...uleb(1), ...uleb(1)]])),
+    ...section(7, vec([[...s('memory'), 0x02, ...uleb(0)], [...s('aggregate'), 0x00, ...uleb(2)]])),
+    ...section(10, vec([[...uleb(code.length), ...code]])),
+    ...section(11, vec([[0x00, 0x41, ...sleb(0), 0x0b, ...vec([...data])]])),
+  ]);
+}
+
+await check('he host call: a contract homomorphically adds ciphertexts it cannot read; the key holder opens the sum', async () => {
+  const { sk, pk } = cubicLweKeyGen({ n: 27 });
+  const n = pk.n;
+  const ctA = encryptBit(pk, 1), ctB = encryptBit(pk, 0);
+  const host = new ContractHost({ runtime: new ComputeRuntime({ maxTime: 15000 }), state: new VerkleStateTree() });
+  const { id } = host.deploy(heAggregateContract(heCtBytes(ctA, n), heCtBytes(ctB, n), n), Array.from({ length: n + 1 }, (_, i) => i), { heHost: true });
+  const root0 = host.state.getRoot();
+  const r = await host.call(id, 'aggregate', [], { he: { n, q: pk.q } });
+  assert.strictEqual(r.result, 0, 'xmbl_he_add returns ok');
+  const u = []; for (let i = 0; i < n; i++) u.push(BigInt(host.getSlot(id, i)));
+  const sum = { u, v: BigInt(host.getSlot(id, n)) };
+  assert.strictEqual(decryptBit(sk, sum), 1, 'decrypt(ENC(1) ⊞ ENC(0)) === 1, computed on-chain without the key');
+  assert.notStrictEqual(host.state.getRoot(), root0, 'persisting the encrypted aggregate moves the root');
+});
+
+await check('he host call: xmbl_he_add declared WITHOUT heHost is denied (deny-by-default holds)', async () => {
+  const { pk } = cubicLweKeyGen({ n: 27 });
+  const n = pk.n;
+  const ctA = encryptBit(pk, 1), ctB = encryptBit(pk, 0);
+  const host = new ContractHost({ runtime: runtime() });
+  const { id } = host.deploy(heAggregateContract(heCtBytes(ctA, n), heCtBytes(ctB, n), n), [0]);
+  await assert.rejects(() => host.call(id, 'aggregate', [], { he: { n, q: pk.q } }), /denied import: env\.xmbl_he_add/);
+});
+
+await check('he host call: a DECRYPT import is denied even WITH heHost (the secret-key boundary holds)', async () => {
+  const decryptAttempt = (() => {
+    const uleb = (x) => { const b = []; do { let y = x & 0x7f; x >>>= 7; if (x) y |= 0x80; b.push(y); } while (x); return b; };
+    const vec = (items) => [...uleb(items.length), ...items.flat()];
+    const section = (id, body) => [id, ...uleb(body.length), ...body];
+    const s = (t) => [...uleb(t.length), ...[...t].map((c) => c.charCodeAt(0))];
+    const code = [0x00, 0x41, 0x00, 0x41, 0x00, 0x10, ...uleb(0), 0x0b];
+    return Uint8Array.from([
+      ...HDR,
+      ...section(1, vec([[0x60, ...vec([0x7f, 0x7f]), ...vec([0x7f])], [0x60, ...vec([]), ...vec([0x7f])]])),
+      ...section(2, vec([[...s('env'), ...s('xmbl_lwe_decrypt'), 0x00, ...uleb(0)]])),
+      ...section(3, vec([uleb(1)])),
+      ...section(5, vec([[0x01, ...uleb(1), ...uleb(1)]])),
+      ...section(7, vec([[...s('memory'), 0x02, ...uleb(0)], [...s('steal'), 0x00, ...uleb(1)]])),
+      ...section(10, vec([[...uleb(code.length), ...code]])),
+    ]);
+  })();
+  const host = new ContractHost({ runtime: runtime() });
+  const { id } = host.deploy(decryptAttempt, [], { heHost: true });
+  await assert.rejects(() => host.call(id, 'steal', [], { he: { n: 27, q: 3329n } }), /denied import: env\.xmbl_lwe_decrypt/);
 });
 
 // ============================================================================

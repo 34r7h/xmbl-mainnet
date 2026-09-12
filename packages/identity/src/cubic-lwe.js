@@ -203,6 +203,36 @@ export function decryptBitDetail(sk, ciphertext) {
   return { bit, d, half, distToZero: ring(d), distToHalf: ring(d - half) };
 }
 
+// ── Homomorphic evaluation (no secret key) ──
+
+/**
+ * Homomorphically ADD two LWE ciphertexts: the component-wise modular sum
+ *   (u, v) = (u_a + u_b mod q, v_a + v_b mod q).
+ *
+ * This is the additive homomorphism the Regev/LWE construction ALREADY has — it is not a new
+ * scheme. Because decryption is linear (d = v − sᵀu), the sum ciphertext decrypts to the SUM of
+ * the plaintexts: ENC(m_a) ⊞ ENC(m_b) = ENC(m_a + m_b). Crucially it needs NO secret key, so it
+ * is the operation a CONTRACT may run on encrypted values it cannot read (see @xmbl/contracts'
+ * `heHost` → env.xmbl_he_add): a contract can aggregate sealed inputs and persist the encrypted
+ * aggregate, which only the key holder can open off-chain.
+ *
+ * MESSAGE SPACE / NOISE (honest bounds, not a bug): with the single-bit q/2 scaling of
+ * {@link encryptBit}, a bit sum is taken mod 2 (ENC(1) ⊞ ENC(1) decrypts to 0) — summing integers
+ * that do not wrap needs a wider-scaled plaintext encoding, which is the documented next extension
+ * (the same relationship the XCL slot ABI has to the byte-pointer ABI), not wired here. Noise grows
+ * additively on each ⊞, so the number of terms is bounded by the decryption budget (≈ q/4 − Σ error).
+ *
+ * @param {{u: bigint[], v: bigint}} a
+ * @param {{u: bigint[], v: bigint}} b
+ * @param {bigint} [q=3329n] modulus — MUST match the key the ciphertexts were produced under
+ * @returns {{u: bigint[], v: bigint}}
+ */
+export function addCiphertexts(a, b, q = DEFAULT_Q) {
+  if (!a || !b || !Array.isArray(a.u) || !Array.isArray(b.u)) throw new Error('addCiphertexts: malformed ciphertext');
+  if (a.u.length !== b.u.length) throw new Error('addCiphertexts: ciphertext dimension mismatch');
+  return { u: vecAdd(a.u, b.u, q), v: (a.v + b.v) % q };
+}
+
 // ── KEM (Key Encapsulation Mechanism) ──
 //
 // The KEM encrypts a 256-bit shared secret bit-by-bit (256 matrix-LWE ciphertexts). At the
