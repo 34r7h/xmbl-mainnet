@@ -32,7 +32,14 @@ select `packages/browser-extension/`.
   in-page executor (`src/contract-runtime.js`) and runs compiled WASM over a local Verkle stand-in.
   The content-addressed id and coordinates are **byte-identical to node `@xmbl/contracts`**, proven
   by `tests/contract-runtime.parity.test.mjs` (`npm test`).
-- **Wallet tab** — balance / send / node status. The node bridge is a **labeled stub**.
+- **Wallet tab** — balance / send / node status, served by a **real node bridge**: `src/background.js`
+  proxies the five wallet/node messages over loopback HTTP to a running **XMBL LocalDevnet** RPC
+  (`npm run devnet -w packages/simulator`), so balance is the net of applied deltas, a send lands a
+  real signed+verified tx, and status reports the real running/peers/height. With no devnet reachable
+  it reports a truthful **disconnected** state (balance 0, `connected:false`) and sends error — it
+  never fabricates a balance or txId. The devnet URL defaults to `http://127.0.0.1:8646`, overridable
+  via the `browser.storage.local` key `xmbl:devnetUrl`. Proven end-to-end against a real devnet RPC by
+  `tests/background-bridge.test.mjs` (`npm test`).
 
 ## Verify
 
@@ -43,8 +50,10 @@ select `packages/browser-extension/`.
 - `npm run verify:extension -w packages/browser-extension` — browser-surface: builds, then drives the
   REAL `dist/popup.js` in Playwright chromium through every workflow (create+compile all samples,
   deploy, find/search, call with committed-state changes, a reverting over-withdraw, and the Wallet
-  tab) asserting zero page errors. Only `chrome.storage` and the stub node bridge are shimmed
-  (`harness.html`, mirroring `src/background.js`); all popup/compile/execution code runs unmodified.
+  tab) asserting zero page errors. Only `chrome.storage` and the node bridge are shimmed in
+  `harness.html` (emulating the bridge's responses when connected to a fresh devnet, so the popup
+  workflow runs without spawning one); all popup/compile/execution code runs unmodified. The
+  bridge↔devnet path itself is proven against a real devnet RPC by `tests/background-bridge.test.mjs`.
 
 ## Boundary
 

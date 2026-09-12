@@ -7,8 +7,11 @@
 <body>
   <!-- TEST HARNESS ONLY (not shipped). Provides a faithful chrome.* so the REAL built popup.js runs
        in a normal tab: chrome.storage.local is an in-memory store with chrome's callback semantics,
-       and chrome.runtime.sendMessage emulates the stub background the extension ships with. All popup
-       UI + @xmbl/lng compile + contract-runtime execution run unmodified. -->
+       and chrome.runtime.sendMessage emulates the responses the shipped RPC bridge (src/background.js)
+       returns when CONNECTED to a freshly-started LocalDevnet (balance/peers/height 0, node toggles
+       on start/stop) — so the popup workflow runs hermetically without spawning a real devnet. The
+       bridge↔devnet path itself is proven against a REAL devnet RPC in tests/background-bridge.test.mjs.
+       All popup UI + @xmbl/lng compile + contract-runtime execution run unmodified. -->
   <script>
     window.__errors = [];
     window.addEventListener('error', (e) => window.__errors.push('error: ' + (e.message || e.error)));
