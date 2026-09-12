@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import {
   HOST_ABI_SOURCE, HOST_ABI_SOURCE_BYTES, XCL_WORD_MARSHAL_SOURCE, HOST_ABI_CRYPTO_INIT_SOURCE,
-  HOST_ABI_UTXO_SOURCE, HOST_ABI_COMPOSE_SOURCE, slotKey, byteKey, utxoKey, spendKey, callerTag,
+  HOST_ABI_UTXO_SOURCE, HOST_ABI_COMPOSE_SOURCE, HOST_ABI_COMPOSE_SOURCE_WORD,
+  slotKey, byteKey, utxoKey, spendKey, callerTag,
   XCL_WORD_BYTES,
 } from './abi.js';
 import { contractId, contractCoordinates } from './placement.js';
@@ -106,7 +107,22 @@ export class ContractHost {
   link(id, { peers, reads } = {}) {
     const c = this.contracts.get(id);
     if (!c) throw new Error(`ContractHost.link: unknown contract ${id}`);
-    if (peers) c.peers = peers.map((p) => ({ id: String(p.id), fn: String(p.fn) }));
+    if (peers) {
+      // Reject an ABI mismatch at WIRING time. A wordAbi sender carries a message amount as a
+      // 256-bit word; an i32 peer receives it as a single i32 param. Were the mismatch allowed to
+      // stand, it would surface only as an opaque WASM trap the first time the cascade fired — the
+      // class of silent signature error that has burned every EVM integrator. Both sides' records
+      // exist here, so compare them and fail closed with a message that names the culprit.
+      const mapped = peers.map((p) => ({ id: String(p.id), fn: String(p.fn) }));
+      for (let i = 0; i < mapped.length; i++) {
+        const peer = this.contracts.get(mapped[i].id);
+        if (!peer) throw new Error(`ContractHost.link: contract ${id} peer[${i}] is unknown contract ${mapped[i].id}`);
+        if (!!peer.wordAbi !== !!c.wordAbi) {
+          throw new Error(`ContractHost.link: ABI mismatch — contract ${id} (${c.wordAbi ? 'word' : 'i32'} ABI) cannot message peer[${i}] ${mapped[i].id} (${peer.wordAbi ? 'word' : 'i32'} ABI)`);
+        }
+      }
+      c.peers = mapped;
+    }
     if (reads) c.reads = reads.map(([pi, s]) => [pi | 0, s | 0]);
   }
 
@@ -315,7 +331,10 @@ export class ContractHost {
     const stateSource = c.byteState ? HOST_ABI_SOURCE_BYTES : HOST_ABI_SOURCE;
     const parts = [stateSource];
     if (c.utxoHost) parts.push(HOST_ABI_UTXO_SOURCE);
-    if (c.composeHost) parts.push(HOST_ABI_COMPOSE_SOURCE);
+    // A wordAbi (LNG-compiled) contract's values are 32-byte word POINTERS, so its composition
+    // primitives read pointers — the word compose source. A hand-encoded i32-ABI contract uses
+    // the plain-integer compose source. Same cascade machinery either way.
+    if (c.composeHost) parts.push(c.wordAbi ? HOST_ABI_COMPOSE_SOURCE_WORD : HOST_ABI_COMPOSE_SOURCE);
     const source = parts.length === 1
       ? parts[0]
       : `(ctx) => Object.assign({}, ${parts.map((p) => `(${p})(ctx)`).join(', ')})`;
@@ -346,7 +365,13 @@ export class ContractHost {
         // The target is NOT executed here — it runs as its own frame when the queue is drained.
         const peer = (c.peers || [])[w[1]];
         if (!peer) throw new Error(`ContractHost.call: contract ${id} sent to undefined peer index ${w[1]}`);
-        tx.queue.push({ from: id, to: peer.id, fn: peer.fn, arg: w[2] | 0 });
+        // A word-ABI send records its amount as a DECIMAL STRING (full 256-bit fidelity); an i32
+        // send records a plain number. Carry the full value through — the target frame's word
+        // marshal (if any) turns a BigInt arg into a 32-byte word pointer, so a `~u256` amount is
+        // delivered intact rather than truncated to i32.
+        const rawAmt = w[2];
+        const arg = (typeof rawAmt === 'string') ? BigInt(rawAmt) : (rawAmt | 0);
+        tx.queue.push({ from: id, to: peer.id, fn: peer.fn, arg });
       } else if (typeof w[0] === 'string' && w[0] === 'bytes') {
         const [, hk, hv] = w;
         tx.writes.push({ id, kind: 'bytes', hk, hv });

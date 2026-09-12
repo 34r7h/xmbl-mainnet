@@ -366,6 +366,64 @@ export const HOST_ABI_COMPOSE_SOURCE = `(ctx) => {
   };
 }`;
 
+// ────────────────────────────────────────────────────────────────────────────
+// WORD-ABI COMPOSITION — the `~u256` form of the composition ABI, for LNG-compiled
+// contracts. Mirrors the relationship between the v0 slot ABI (HOST_ABI_SOURCE, plain
+// i32) and the byte-pointer state ABI (HOST_ABI_SOURCE_BYTES, 32-byte words): an
+// LNG-compiled (wordAbi) contract's values are POINTERS to 32-byte little-endian words in
+// guest memory, so its composition primitives take pointers, not plain integers. The
+// cascade machinery in contract-host.js is UNCHANGED — only the argument encoding differs,
+// exactly as the T6.2c gate row predicted ("the ~u256/byte-key form … changes only this
+// file, not the cascade machinery").
+//
+//   xmbl_send(peer_ptr:i32, amount_ptr:i32) -> i32   ASYNCHRONOUS message. Reads the peer
+//     INDEX from the low 32 bits of the 32-byte word at peer_ptr and the FULL 256-bit amount
+//     from the word at amount_ptr. Records ['send', peerIdx, amountDecimalString]; the host
+//     resolves peerIdx → {id, fn} from this contract's peer table and enqueues a SEPARATE
+//     frame (never nested — reentrancy stays impossible by construction). Returns 0 ok / -1
+//     on out-of-range peer or a bad pointer. The full word value crosses the message boundary
+//     faithfully (decimal string → BigInt → the target's word marshal), so a `~u256` amount is
+//     NOT truncated to i32.
+//
+// xmbl_read (the SYNCHRONOUS word-valued cross-contract read) is the documented next extension
+// here: it needs a peer FIELD-key staging model (word contracts key state by field name, not by
+// numbered slot) and result-pointer marshalling, so it is built on top of this send path rather
+// than bundled into it.
+
+/** The import names the word-ABI composition ABI defines — the deny-by-default allow surface. */
+export const HOST_IMPORT_KEYS_COMPOSE_WORD = ['env.xmbl_send'];
+
+/**
+ * Word-ABI composition host-module factory, as source (eval'd inside the worker). Reads its
+ * arguments as 32-byte little-endian words from guest memory via `ctx.mem()` (same mechanism as
+ * HOST_ABI_SOURCE_BYTES). `ctx.data.peers` is this contract's peer table (only its length is
+ * consulted here). `ctx.writes` collects `['send', peerIdx, amountDecimalString]`.
+ * @type {string}
+ */
+export const HOST_ABI_COMPOSE_SOURCE_WORD = `(ctx) => {
+  var WORD = ${XCL_WORD_BYTES};
+  var peers = (ctx.data && ctx.data.peers) || [];
+  var view = function () { var m = ctx.mem && ctx.mem(); return m ? new Uint8Array(m.buffer) : null; };
+  var wordAt = function (v, ptr) { var x = 0n; for (var i = WORD - 1; i >= 0; i--) x = (x << 8n) | BigInt(v[ptr + i]); return x; };
+  return {
+    'env.xmbl_send': function (peerPtr, amountPtr) {
+      var v = view(); if (!v) return -1;
+      if (peerPtr < 0 || peerPtr + WORD > v.length) return -1;
+      if (amountPtr < 0 || amountPtr + WORD > v.length) return -1;
+      // Read the peer index as the FULL 256-bit word and range-check it — NEVER mask to the low
+      // limb. Masking would be FAIL-OPEN: a word with nonzero high bits (a buggy or adversarial
+      // peer-index computation) would silently land on peers[lowBits] instead of being refused.
+      var peerWord = wordAt(v, peerPtr);
+      if (peerWord < 0n || peerWord >= BigInt(peers.length)) return -1;
+      var peerIdx = Number(peerWord);
+      var amount = wordAt(v, amountPtr).toString();
+      ctx.writes.push(['send', peerIdx, amount]);
+      ctx.log.push(['send', peerIdx, amount]);
+      return 0;
+    },
+  };
+}`;
+
 /** Derive a stable i32 caller tag from a (hex) contract id — surfaced to a message target via xmbl_caller. */
 export function callerTag(id) { return parseInt(String(id).slice(0, 8), 16) | 0; }
 

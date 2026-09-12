@@ -70,7 +70,14 @@ function compile(src, opts = {}) {
   // env.xmbl_verkle_get/set at indices 0/1, so EVERY defined-function index shifts by
   // IMPORT_COUNT (imports occupy the low indices). We carry that shift through `fi` below.
   const hostState = !!(opts && opts.hostState);
-  const IMPORT_COUNT = hostState ? 2 : 0;
+  // compose (opt-in): emit the XCL word-ABI composition primitive env.xmbl_send so a contract can
+  // message another contract from `~contract` source. Imports occupy the LOW function indices, so
+  // the state imports (if any) come first and the compose import comes AFTER them — every defined
+  // function index is shifted by the TOTAL import count. xmbl_read (the synchronous word-valued
+  // read) is the next extension and will add a second compose import here.
+  const compose = !!(opts && opts.compose);
+  const IMPORT_COUNT = (hostState ? 2 : 0) + (compose ? 1 : 0);
+  const SEND_IDX = hostState ? 2 : 0;   // env.xmbl_send sits just above the state imports
 
   const bad = (t, w) => { if (t && (t in INT_WIDTHS) && INT_WIDTHS[t][0]) throw new Error(`WASM backend is unsigned-only: signed ~${t} ${w} unsupported (use the EVM backend)`); if (t === 'decimal') throw new Error(`WASM backend does not support ~decimal ${w} (use the EVM backend)`); };
   for (const f of c.fields) bad(f.type, `field \`${f.name}`);
@@ -135,7 +142,8 @@ function compile(src, opts = {}) {
     const ti = T(new Array(mth.params.length).fill(I32), [I32]);
     const built = compileMethod(mth, { slot, FIELD_BASE, lit, Z, ONE, ONES, H, EVENTS_ADDR,
       fields: c.fields.length,
-      hostState: hostState ? { vget: 0, vset: 1, keyPtr, keyLen } : null });
+      hostState: hostState ? { vget: 0, vset: 1, keyPtr, keyLen } : null,
+      compose: compose ? { sendIdx: SEND_IDX } : null });
     F(ti, built.locals, built.code);
     exports.push([...nm(finalName(mth)), 0x00, ...uleb(ENTRY0 + mi)]);
   });
@@ -145,10 +153,16 @@ function compile(src, opts = {}) {
   const T_get = hostState ? T([I32, I32, I32], [I32]) : 0;
   const T_set = hostState ? T([I32, I32, I32, I32], [I32]) : 0;
   const typeSec = section(1, vec(types));
-  const importSec = hostState ? section(2, vec([
-    [...nm('env'), ...nm('xmbl_verkle_get'), 0x00, ...uleb(T_get)],
-    [...nm('env'), ...nm('xmbl_verkle_set'), 0x00, ...uleb(T_set)],
-  ])) : [];
+  // Import entries in the SAME order the indices were assigned: state imports (0,1) then the
+  // compose send import — so SEND_IDX above matches this entry's position. xmbl_send is
+  // (peer_ptr:i32, amount_ptr:i32)->i32, the already-registered T_2 shape.
+  const importEntries = [];
+  if (hostState) {
+    importEntries.push([...nm('env'), ...nm('xmbl_verkle_get'), 0x00, ...uleb(T_get)]);
+    importEntries.push([...nm('env'), ...nm('xmbl_verkle_set'), 0x00, ...uleb(T_set)]);
+  }
+  if (compose) importEntries.push([...nm('env'), ...nm('xmbl_send'), 0x00, ...uleb(T_2)]);
+  const importSec = importEntries.length ? section(2, vec(importEntries)) : [];
   const funcSec = section(3, vec(defined.map(f => uleb(f.ti))));
   // Memory: 16 pages min (1 MiB), with a BOUNDED maximum. A contract that ships to the
   // storage-compute market must declare a hard maximum — an unbounded memory is refused by
@@ -443,8 +457,35 @@ function emitP(n, code, ctx, params, get) {
     // `~e` in value position (e.g. a require-guarded value-ternary's else branch): trap. `unreachable`
     // is stack-polymorphic, so it satisfies the branch's i32 result type without pushing a value.
     case 'error': code.push(O.unreachable); return;
+    // Host-stdlib call — the ONLY calls the WASM backend lowers are the `xmbl.*` host primitives
+    // (no general user-function calls on this backend). `xmbl.coord.send(peer, amount)` lowers to
+    // the env.xmbl_send import: both args are ~u256 word POINTERS (the backend's value model), the
+    // import reads the peer index and the full amount from those words, and returns an i32 status.
+    // The status is the call's value here (dropped in statement position); compose calls are
+    // statement-level effects, not word-producing expressions. Any other `xmbl.*` call (or any
+    // non-xmbl call) is a hard error — never silently miscompiled.
+    case 'call': {
+      const path = xmblCallPath(n.callee);
+      if (path && path.length === 2 && path[0] === 'coord' && path[1] === 'send') {
+        if (!ctx.compose) throw new Error('WASM backend: xmbl.coord.send requires compile(src, { compose: true })');
+        if (n.args.length !== 2) throw new Error('WASM backend: xmbl.coord.send(peer, amount) takes exactly 2 arguments');
+        emitP(n.args[0], code, ctx, params, get);   // peer index word pointer
+        emitP(n.args[1], code, ctx, params, get);   // amount word pointer
+        code.push(O.call, ...uleb(ctx.compose.sendIdx));
+        return;
+      }
+      throw new Error('WASM backend: unsupported call ' + (path ? 'xmbl.' + path.join('.') : n.callee && n.callee.kind));
+    }
     default: throw new Error('WASM backend: cannot compile expression ' + n.kind);
   }
+}
+// A call callee that is a member chain rooted at the `xmbl` stdlib ref → the member path
+// (e.g. `xmbl.coord.send` → ['coord','send']); anything else → null (not a host call).
+function xmblCallPath(callee) {
+  const parts = [];
+  let node = callee;
+  while (node && node.kind === 'member') { parts.unshift(node.name); node = node.obj; }
+  return (node && node.kind === 'ref' && node.name === 'xmbl') ? parts : null;
 }
 // shift count is an i64 (low limb of the operand value)
 function emitShiftCount(n, code, ctx, params, get) { emitP(n, code, ctx, params, get); code.push(O.i64load, ...m64(0)); }

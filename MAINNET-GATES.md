@@ -280,11 +280,19 @@ continue-on-error, and in the release workflow before any publish).
 - [ ] **T6.2 open remainders (HONEST scope of the "≥ Ethereum, fraction of resources" claim).** What
       T6.2 does NOT yet prove, and must not be claimed: *(a)* the UTXO proof contracts are hand-encoded
       and use **i64** amounts, not the `~u256` word width — LNG cannot yet EMIT `xmbl_utxo_*` calls from
-      `~contract` source (same gap as T6.1-d for crypto); *(b)* contract composition (T6.2c) is proven on
-      the **i32-slot subset** — `xmbl_read`/`xmbl_send` carry i32 values and messages one i32 argument; the
-      `~u256`/byte-key and multi-arg forms are the documented next extension (they change only `abi.js`, not
-      the cascade machinery). Also scoped: authorization is checked on the EXTERNAL entry only — internal
-      messages inherit it (like an EVM internal call), and per-message authorization is a future refinement;
+      `~contract` source (same gap as T6.1-d for crypto); *(b)* contract composition's **word-ABI SEND is
+      now EMITTED from `~contract` source** — `xmbl.coord.send(peer, amount)` lowers to the real
+      `env.xmbl_send` import (word-ABI compose source in `abi.js`, the `compose` opt in `compile-wasm.js`),
+      carrying a FULL 256-bit amount across the message boundary, proven end-to-end (an LNG sender's
+      message sets a peer LNG contract's `~u256` field to exactly `2^100+7`, NOT truncated — *contracts/
+      xcl/contract-compose-lng.test.mjs 3/3*, *lng/compile-wasm.test.mjs* compose unit). What REMAINS of
+      the `~u256` form: the synchronous word-valued **READ** (`xmbl_read` needs a peer FIELD-key staging
+      model + result-pointer marshalling, not numbered slots) and **multi-arg** messages — both change
+      only `abi.js`/the compiler, not the cascade machinery. The hand-encoded **i32-slot** form
+      (`xmbl_read`/`xmbl_send` over numbered slots, one i32 arg) remains proven separately
+      (*contract-compose.test.mjs 5/5*). Also scoped: authorization is checked on the EXTERNAL entry
+      only — internal messages inherit it (like an EVM internal call), and per-message authorization is a
+      future refinement;
       *(c)* multi-node
       reproduction is proven across independent real node SUBSYSTEMS (three `Ledger`+`StateMachine`
       pairs converge on one root), but NOT yet across the full networking/consensus stack under
