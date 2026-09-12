@@ -385,24 +385,36 @@ export const HOST_ABI_COMPOSE_SOURCE = `(ctx) => {
 //     faithfully (decimal string → BigInt → the target's word marshal), so a `~u256` amount is
 //     NOT truncated to i32.
 //
-// xmbl_read (the SYNCHRONOUS word-valued cross-contract read) is the documented next extension
-// here: it needs a peer FIELD-key staging model (word contracts key state by field name, not by
-// numbered slot) and result-pointer marshalling, so it is built on top of this send path rather
-// than bundled into it.
+//   xmbl_read(peer_ptr:i32, field_ptr:i32, val_out_ptr:i32) -> i32   SYNCHRONOUS word-valued
+//     cross-contract read. Reads NO peer code (reentrancy-free, like the i32 read). peer_ptr and
+//     field_ptr are 32-byte words: the peer INDEX and the peer's FIELD INDEX (its position in the
+//     peer's ordered public-field list). The host PRE-STAGES the declared (peer, field) words into
+//     ctx.data.foreign before the guest starts, keyed "peerIdx|fieldIdx"; this call writes the
+//     staged 32-byte word into val_out_ptr and returns 0. Unlike send (which returns a status the
+//     guest may ignore), read produces a VALUE the guest consumes, so every error condition TRAPS
+//     (fail-closed) rather than returning a status + a silent-zero word: an out-of-range pointer,
+//     an out-of-range peer index, or an UNDECLARED (peer, field) pair reverts the whole cascade. A
+//     word contract keys state by field NAME (byteKey), so the host resolves fieldIdx → the peer's
+//     field name → that peer's committed word when it stages — the reader names only indices, and
+//     link() range-checks fieldIdx against the peer's deployed field list (typo-proof, fail-closed).
 
 /** The import names the word-ABI composition ABI defines — the deny-by-default allow surface. */
-export const HOST_IMPORT_KEYS_COMPOSE_WORD = ['env.xmbl_send'];
+export const HOST_IMPORT_KEYS_COMPOSE_WORD = ['env.xmbl_read', 'env.xmbl_send'];
 
 /**
  * Word-ABI composition host-module factory, as source (eval'd inside the worker). Reads its
  * arguments as 32-byte little-endian words from guest memory via `ctx.mem()` (same mechanism as
  * HOST_ABI_SOURCE_BYTES). `ctx.data.peers` is this contract's peer table (only its length is
- * consulted here). `ctx.writes` collects `['send', peerIdx, amountDecimalString]`.
+ * consulted here). `ctx.data.foreign` is the pre-staged read-set `{ "peerIdx|fieldIdx": hex64LE }`
+ * (each value the peer's committed 32-byte little-endian word, 32 zero bytes if unwritten).
+ * `ctx.writes` collects `['send', peerIdx, amountDecimalString]`; reads mutate no state.
  * @type {string}
  */
 export const HOST_ABI_COMPOSE_SOURCE_WORD = `(ctx) => {
   var WORD = ${XCL_WORD_BYTES};
   var peers = (ctx.data && ctx.data.peers) || [];
+  var foreign = (ctx.data && ctx.data.foreign) || {};
+  var has = function (o, k) { return Object.prototype.hasOwnProperty.call(o, k); };
   var view = function () { var m = ctx.mem && ctx.mem(); return m ? new Uint8Array(m.buffer) : null; };
   var wordAt = function (v, ptr) { var x = 0n; for (var i = WORD - 1; i >= 0; i--) x = (x << 8n) | BigInt(v[ptr + i]); return x; };
   return {
@@ -419,6 +431,24 @@ export const HOST_ABI_COMPOSE_SOURCE_WORD = `(ctx) => {
       var amount = wordAt(v, amountPtr).toString();
       ctx.writes.push(['send', peerIdx, amount]);
       ctx.log.push(['send', peerIdx, amount]);
+      return 0;
+    },
+    'env.xmbl_read': function (peerPtr, fieldPtr, valOutPtr) {
+      var v = view();
+      // Every failure TRAPS (reverts the cascade) — a read yields a value the guest consumes, so a
+      // status + zero word would be FAIL-OPEN (the guest would read 0 and likely ignore the status).
+      if (!v) throw new Error('xcl compose: guest memory unavailable during xmbl_read');
+      if (peerPtr < 0 || peerPtr + WORD > v.length) throw new Error('xcl compose: xmbl_read peer pointer out of bounds');
+      if (fieldPtr < 0 || fieldPtr + WORD > v.length) throw new Error('xcl compose: xmbl_read field pointer out of bounds');
+      if (valOutPtr < 0 || valOutPtr + WORD > v.length) throw new Error('xcl compose: xmbl_read result pointer out of bounds');
+      var peerWord = wordAt(v, peerPtr);
+      if (peerWord < 0n || peerWord >= BigInt(peers.length)) throw new Error('xcl compose: xmbl_read peer index out of range');
+      var fieldWord = wordAt(v, fieldPtr);
+      var key = peerWord.toString() + '|' + fieldWord.toString();
+      if (!has(foreign, key)) throw new Error('xcl compose: undeclared foreign read (peer ' + peerWord.toString() + ' field ' + fieldWord.toString() + ')');
+      var hex = foreign[key];
+      for (var i = 0; i < WORD; i++) v[valOutPtr + i] = (parseInt(hex[i * 2], 16) << 4) | parseInt(hex[i * 2 + 1], 16);
+      ctx.log.push(['read', peerWord.toString(), fieldWord.toString()]);
       return 0;
     },
   };

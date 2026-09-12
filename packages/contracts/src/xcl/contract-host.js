@@ -67,6 +67,12 @@ export class ContractHost {
       // under byte keys. byteKeys grows as writes are observed, exactly like `slots`.
       byteState: !!deployOpts.byteState,
       byteKeys: new Set(),
+      // fields: the contract's ORDERED public field names (the `~state { ~public { … } }` block, in
+      // declaration order). Recorded at deploy so another contract can READ a field by its INDEX:
+      // link() range-checks a declared word-read's field index against this list and the host
+      // resolves that index → the field name → the peer's byte key when it stages the read-set. A
+      // peer that is the target of a word-read MUST declare this (fail-closed — see link()).
+      fields: Array.isArray(deployOpts.fields) ? deployOpts.fields.map(String) : null,
       // wordAbi: the contract uses the LNG word calling convention — `~u256` args arrive as
       // pointers to 32-byte little-endian word buffers and the return value is such a pointer.
       // When set, ContractHost hands the runtime the word marshal so plain-integer args are
@@ -123,7 +129,27 @@ export class ContractHost {
       }
       c.peers = mapped;
     }
-    if (reads) c.reads = reads.map(([pi, s]) => [pi | 0, s | 0]);
+    if (reads) {
+      const mappedReads = reads.map(([pi, s]) => [pi | 0, s | 0]);
+      // A wordAbi contract reads a peer's field by INDEX, so validate every declared read at WIRING
+      // time — the same fail-closed discipline as the ABI-mismatch check above. The alternative
+      // (resolving an out-of-range or typo'd field at staging) would stage a zero word silently:
+      // FAIL-OPEN in the exact shape of the peer-index mask. A word read therefore REQUIRES the peer
+      // to have declared its ordered `fields` at deploy, and the read's field index must be in range.
+      if (c.wordAbi) {
+        for (let i = 0; i < mappedReads.length; i++) {
+          const [pIdx, fIdx] = mappedReads[i];
+          const peerRef = c.peers[pIdx];
+          if (!peerRef) throw new Error(`ContractHost.link: contract ${id} read[${i}] names peer index ${pIdx} with no linked peer`);
+          const peer = this.contracts.get(peerRef.id);
+          if (!peer) throw new Error(`ContractHost.link: contract ${id} read[${i}] peer ${peerRef.id} is unknown`);
+          if (!peer.byteState) throw new Error(`ContractHost.link: contract ${id} read[${i}] peer ${peerRef.id} does not persist byte-keyed state (cannot be word-read)`);
+          if (!peer.fields) throw new Error(`ContractHost.link: contract ${id} read[${i}] peer ${peerRef.id} declared no field list at deploy (cannot resolve a field index — fail-closed)`);
+          if (fIdx < 0 || fIdx >= peer.fields.length) throw new Error(`ContractHost.link: contract ${id} read[${i}] field index ${fIdx} is out of range for peer ${peerRef.id} (${peer.fields.length} fields)`);
+        }
+      }
+      c.reads = mappedReads;
+    }
   }
 
   /**
@@ -316,11 +342,24 @@ export class ContractHost {
     if (c.composeHost) {
       peers = c.peers;
       foreign = {};
-      for (const [pIdx, slot] of c.reads) {
+      for (const [pIdx, idx] of c.reads) {
         const peer = c.peers[pIdx];
         if (!peer) continue;
-        const v = txGet(slotKey(peer.id, slot));
-        foreign[`${pIdx}|${slot}`] = (v === undefined || v === null) ? 0 : (v | 0);
+        if (c.wordAbi) {
+          // Word form: `idx` is the peer's FIELD index (validated in range by link()). Resolve it to
+          // the peer's field name, then stage that peer's committed 32-byte little-endian word as a
+          // 64-char hex string (32 zero bytes if the field was never written — the same value an
+          // unset `~u256 0` field holds). The ABI writes these bytes straight into the reader's word.
+          const peerContract = this.contracts.get(peer.id);
+          const name = peerContract.fields[idx];
+          const hk = Buffer.from(name, 'utf8').toString('hex');
+          const hv = txGet(byteKey(peer.id, hk));
+          foreign[`${pIdx}|${idx}`] = (hv === undefined || hv === null) ? '00'.repeat(XCL_WORD_BYTES) : hv;
+        } else {
+          // i32 form: `idx` is a numbered slot; stage the peer's committed i32 slot value.
+          const v = txGet(slotKey(peer.id, idx));
+          foreign[`${pIdx}|${idx}`] = (v === undefined || v === null) ? 0 : (v | 0);
+        }
       }
     }
 

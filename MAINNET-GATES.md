@@ -280,19 +280,32 @@ continue-on-error, and in the release workflow before any publish).
 - [ ] **T6.2 open remainders (HONEST scope of the "≥ Ethereum, fraction of resources" claim).** What
       T6.2 does NOT yet prove, and must not be claimed: *(a)* the UTXO proof contracts are hand-encoded
       and use **i64** amounts, not the `~u256` word width — LNG cannot yet EMIT `xmbl_utxo_*` calls from
-      `~contract` source (same gap as T6.1-d for crypto); *(b)* contract composition's **word-ABI SEND is
-      now EMITTED from `~contract` source** — `xmbl.coord.send(peer, amount)` lowers to the real
-      `env.xmbl_send` import (word-ABI compose source in `abi.js`, the `compose` opt in `compile-wasm.js`),
-      carrying a FULL 256-bit amount across the message boundary, proven end-to-end (an LNG sender's
-      message sets a peer LNG contract's `~u256` field to exactly `2^100+7`, NOT truncated — *contracts/
-      xcl/contract-compose-lng.test.mjs 3/3*, *lng/compile-wasm.test.mjs* compose unit). What REMAINS of
-      the `~u256` form: the synchronous word-valued **READ** (`xmbl_read` needs a peer FIELD-key staging
-      model + result-pointer marshalling, not numbered slots) and **multi-arg** messages — both change
-      only `abi.js`/the compiler, not the cascade machinery. The hand-encoded **i32-slot** form
-      (`xmbl_read`/`xmbl_send` over numbered slots, one i32 arg) remains proven separately
-      (*contract-compose.test.mjs 5/5*). Also scoped: authorization is checked on the EXTERNAL entry
-      only — internal messages inherit it (like an EVM internal call), and per-message authorization is a
-      future refinement;
+      `~contract` source (same gap as T6.1-d for crypto); *(b)* contract composition's **word-ABI SEND and
+      READ are now EMITTED from `~contract` source** — `xmbl.coord.send(peer, amount)` lowers to the real
+      `env.xmbl_send` import and `xmbl.coord.read(peer, field)` to `env.xmbl_read` (word-ABI compose source
+      in `abi.js`, the `compose` opt in `compile-wasm.js`), both carrying a FULL 256-bit value by 32-byte
+      word pointer, proven end-to-end: an LNG sender's message sets a peer's `~u256` field to exactly
+      `2^100+7` (NOT truncated), and an LNG reader mirrors a peer's committed `~u256` field back through
+      result-pointer marshalling, adding NO frame (synchronous, runs no peer code) — *contracts/xcl/
+      contract-compose-lng.test.mjs 10/10*, *lng/compile-wasm.test.mjs* compose unit (send + read). READ keys
+      the peer's state by FIELD NAME (the word-contract model) but the reader names only INDICES: the guest
+      passes a peer index and a field index, `link()` range-checks the field index against the peer's
+      deployed ordered `fields` list (a word-read REQUIRES the peer to declare `fields` and be `byteState`).
+      That `fields` list is **compiler-DERIVED, not operator-typed**: `@xmbl/lng` exports `contractFields(src)`,
+      which returns the contract's field names in the compiler's own slot order (the exact `c.fields` order
+      the WASM backend keys byte-state by), so a deploy declares `fields: contractFields(SRC)` and the list
+      is authoritative by construction. This closes the transposition class — a hand-typed `['b','a']` would
+      have made index 0 silently resolve to the wrong REAL field (a plausible, undetectable wrong value); a
+      derived list cannot be mis-ordered, and the only way to pass the wrong list is to pass a different
+      contract's source, which compiles to different bytes and a different content-addressed id. The host
+      resolves the index → field name → `byteKey` when it stages the read-set. An UNDECLARED (peer, field)
+      read TRAPS (reverts the cascade), never returns a silent-zero word. This half therefore also touched `link()` (footprint validation) and the staging
+      block in `call()` — NOT the cascade machinery, which is unchanged. What REMAINS of the `~u256` form:
+      **multi-arg** messages (the `{from,to,fn,arg}` queue shape → `args[]`, which READ did not need). The
+      hand-encoded **i32-slot** form (`xmbl_read`/`xmbl_send` over numbered slots, one i32 arg) remains
+      proven separately (*contract-compose.test.mjs 5/5*). Also scoped: authorization is checked on the
+      EXTERNAL entry only — internal messages inherit it (like an EVM internal call), and per-message
+      authorization is a future refinement;
       *(c)* multi-node
       reproduction is proven across independent real node SUBSYSTEMS (three `Ledger`+`StateMachine`
       pairs converge on one root), but NOT yet across the full networking/consensus stack under

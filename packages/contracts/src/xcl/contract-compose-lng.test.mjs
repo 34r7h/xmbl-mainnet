@@ -11,7 +11,7 @@
 //   2. the same works with compose as the ONLY import (send at index 0: compiled { compose });
 //   3. an out-of-range peer index makes xmbl_send return -1 and enqueues NO frame (fail-safe).
 import assert from 'node:assert';
-import { compile } from '@xmbl/lng';
+import { compile, contractFields } from '@xmbl/lng';
 import { ComputeRuntime } from '@xmbl/storage-compute';
 import { ContractHost } from './index.js';
 
@@ -111,6 +111,100 @@ await check('linking a word-ABI sender to an i32-ABI peer is rejected at wiring 
     /ABI mismatch/,
     'link() rejects a word sender wired to an i32 peer',
   );
+});
+
+// READER: reads peer 0's field 0 synchronously and mirrors it into its own `~u256` field. No
+// message is sent, so the read adds NO frame — it returns the peer's committed word in-line.
+const READER_SRC = "~contract `RD {\n  ~state { ~public { `mirror ~u256 0 } }\n  ~on `pull() { `mirror = `xmbl.coord.read(0, 0) }\n}";
+// HOLDER2: two public fields with setters, so a reader can read field 0 AND field 1.
+const HOLDER2_SRC = "~contract `H2 {\n  ~state { ~public { `a ~u256 0\n `b ~u256 0 } }\n  ~on `seta(`v ~u256) { `a = `v }\n  ~on `setb(`v ~u256) { `b = `v }\n}";
+// TWOREADS: two reads in ONE expression (the alias discriminator) — sums peer field 0 and field 1.
+const TWOREADS_SRC = "~contract `TW {\n  ~state { ~public { `mirror ~u256 0 } }\n  ~on `pull() { `mirror = `xmbl.coord.read(0, 0) + `xmbl.coord.read(0, 1) }\n}";
+
+await check('LNG `xmbl.coord.read` returns a peer LNG contract\'s FULL 256-bit committed field (no new frame)', async () => {
+  const host = newHost();
+  const receiver = compile(RECEIVER_SRC, { hostState: true });
+  const reader = compile(READER_SRC, { hostState: true, compose: true });
+  const { id: receiverId } = host.deploy(receiver, [], { byteState: true, wordAbi: true, fields: contractFields(RECEIVER_SRC) });
+  const { id: readerId } = host.deploy(reader, [], { byteState: true, wordAbi: true, composeHost: true, fields: contractFields(READER_SRC) });
+  host.link(readerId, { peers: [{ id: receiverId, fn: 'take' }], reads: [[0, 0]] });
+
+  await host.call(receiverId, 'take', [BIG], { caller: 0 });   // commit receiver.got = BIG
+  const out = await host.call(readerId, 'pull', [], { caller: 0 });
+
+  assert.strictEqual(out.frames, 1, `a synchronous read runs NO peer code — one frame (got ${out.frames})`);
+  assert.strictEqual(host.getBytes(readerId, 'mirror'), BIG, 'the reader mirrored the peer\'s EXACT 256-bit field (result-pointer marshalling, no truncation)');
+});
+
+await check('two reads in ONE expression land DISTINCT values (the result buffers do not alias)', async () => {
+  const host = newHost();
+  const holder = compile(HOLDER2_SRC, { hostState: true });
+  const tw = compile(TWOREADS_SRC, { hostState: true, compose: true });
+  const { id: holderId } = host.deploy(holder, [], { byteState: true, wordAbi: true, fields: contractFields(HOLDER2_SRC) });
+  const { id: twId } = host.deploy(tw, [], { byteState: true, wordAbi: true, composeHost: true, fields: contractFields(TWOREADS_SRC) });
+  host.link(twId, { peers: [{ id: holderId, fn: 'seta' }], reads: [[0, 0], [0, 1]] });
+
+  await host.call(holderId, 'seta', [BIG], { caller: 0 });   // a = BIG
+  await host.call(holderId, 'setb', [5n], { caller: 0 });    // b = 5  (distinct, so aliasing would give 2·a or 2·b)
+  const out = await host.call(twId, 'pull', [], { caller: 0 });
+
+  assert.strictEqual(out.frames, 1, 'both reads are synchronous — still one frame');
+  assert.strictEqual(host.getBytes(twId, 'mirror'), BIG + 5n, 'mirror == field0 + field1 (buffers distinct; no clobber)');
+});
+
+await check('the peer field list is DERIVED from source (declaration order), so index 0 reads `a`, not `b` (no transposition)', async () => {
+  // The two-reads test cannot catch a transposed field list: read(0,0)+read(0,1) is commutative, so
+  // swapping a/b leaves the sum unchanged. This pins the direction — index 0 must resolve to the
+  // FIRST declared field. contractFields is derived from source, so the operator cannot mis-order it.
+  assert.deepStrictEqual(contractFields(HOLDER2_SRC), ['a', 'b'], 'derived field list is exactly the declaration order');
+
+  const host = newHost();
+  const holder = compile(HOLDER2_SRC, { hostState: true });
+  const reader = compile(READER_SRC, { hostState: true, compose: true });   // reads peer field 0 into `mirror`
+  const { id: holderId } = host.deploy(holder, [], { byteState: true, wordAbi: true, fields: contractFields(HOLDER2_SRC) });
+  const { id: readerId } = host.deploy(reader, [], { byteState: true, wordAbi: true, composeHost: true, fields: contractFields(READER_SRC) });
+  host.link(readerId, { peers: [{ id: holderId, fn: 'seta' }], reads: [[0, 0]] });
+
+  await host.call(holderId, 'seta', [BIG], { caller: 0 });   // a (field 0) = BIG
+  await host.call(holderId, 'setb', [5n], { caller: 0 });    // b (field 1) = 5  — distinct, so a swap would surface
+  const out = await host.call(readerId, 'pull', [], { caller: 0 });
+
+  assert.strictEqual(out.frames, 1, 'synchronous read — one frame');
+  assert.strictEqual(host.getBytes(readerId, 'mirror'), BIG, 'index 0 resolved to `a` (BIG), NOT `b` (5) — the derived order is authoritative');
+});
+
+await check('an UNDECLARED foreign read TRAPS and reverts the whole call (fail-closed, not a silent zero)', async () => {
+  const host = newHost();
+  const receiver = compile(RECEIVER_SRC, { hostState: true });
+  const reader = compile(READER_SRC, { hostState: true, compose: true });
+  const { id: receiverId } = host.deploy(receiver, [], { byteState: true, wordAbi: true, fields: contractFields(RECEIVER_SRC) });
+  const { id: readerId } = host.deploy(reader, [], { byteState: true, wordAbi: true, composeHost: true, fields: contractFields(READER_SRC) });
+  host.link(readerId, { peers: [{ id: receiverId, fn: 'take' }], reads: [] });   // source reads (0,0) but NOTHING is declared
+
+  await host.call(receiverId, 'take', [BIG], { caller: 0 });
+  await assert.rejects(host.call(readerId, 'pull', [], { caller: 0 }), /undeclared foreign read|denied|revert|trap|unreachable/i,
+    'the undeclared read reverts the cascade');
+  assert.strictEqual(host.getBytes(readerId, 'mirror'), 0n, 'nothing was committed — the reader never mirrored anything');
+});
+
+await check('link() rejects a word-read with an out-of-range field index, and a peer with no declared fields', async () => {
+  const receiver = compile(RECEIVER_SRC, { hostState: true });
+  const reader = compile(READER_SRC, { hostState: true, compose: true });
+
+  // case A: peer with fields ['got'] (1 field) — index 5 is out of range.
+  const hostA = newHost();
+  const { id: rcvA } = hostA.deploy(receiver, [], { byteState: true, wordAbi: true, fields: contractFields(RECEIVER_SRC) });
+  const { id: rdA } = hostA.deploy(reader, [], { byteState: true, wordAbi: true, composeHost: true, fields: contractFields(READER_SRC) });
+  assert.throws(() => hostA.link(rdA, { peers: [{ id: rcvA, fn: 'take' }], reads: [[0, 5]] }),
+    /field index 5 is out of range/, 'out-of-range field index refused at wiring time');
+
+  // case B: peer deployed WITHOUT a field list — a word read cannot resolve a field index against
+  // it. A fresh host so the no-fields deploy is that content-addressed id's only record.
+  const hostB = newHost();
+  const { id: rcvB } = hostB.deploy(receiver, [], { byteState: true, wordAbi: true });   // NO fields
+  const { id: rdB } = hostB.deploy(reader, [], { byteState: true, wordAbi: true, composeHost: true, fields: contractFields(READER_SRC) });
+  assert.throws(() => hostB.link(rdB, { peers: [{ id: rcvB, fn: 'take' }], reads: [[0, 0]] }),
+    /declared no field list/, 'a read against a field-less peer is refused');
 });
 
 console.log(`\nXCL composition from LNG: ${pass} passed, ${fail} failed`);

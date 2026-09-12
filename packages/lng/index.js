@@ -14,5 +14,5 @@
 export { run, lex, parse, INT_WIDTHS, isTypeName, intRange, DEC_ONE } from './src/lng.js';
 export { check, checkDeterminism, assertDeterministic } from './src/typecheck.js';
 export { transpile } from './src/transpile-evm.js';
-export { compile } from './src/compile-wasm.js';
+export { compile, contractFields } from './src/compile-wasm.js';
 export { importSolidity } from './src/import-solidity.js';

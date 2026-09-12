@@ -163,25 +163,46 @@ ok('~decimal rejected', (() => { try { compile("~contract `D { ~state { ~public 
   while (p < u8.length) { const id = u8[p++]; const size = uleb(); const end = p + size; if (id === 5) { uleb(); memFlags = u8[p]; break; } p = end; }
   ok('emitted memory declares a bounded maximum (mainnet-safe)', memFlags !== null && (memFlags & 0x01) === 0x01);
 
-  // ---- compose: `xmbl.coord.send` lowers to the env.xmbl_send import (word-pointer args) ----
-  // Unit-level proof (no ContractHost): the compiler EMITS the import and passes both arguments as
-  // pointers to 32-byte little-endian words, so the full 256-bit amount crosses by reference. The
-  // cascade/delivery outcome is proven end-to-end in @xmbl/contracts' contract-compose-lng test.
+  // ---- compose: `xmbl.coord.send`/`read` lower to the env.xmbl_send/env.xmbl_read imports ----
+  // Unit-level proof (no ContractHost): the compiler EMITS both imports (in a FIXED order — read,
+  // then send) and passes word arguments by 32-byte little-endian POINTER, so a full 256-bit value
+  // crosses by reference. The cascade/delivery/fail-closed outcomes are proven end-to-end in
+  // @xmbl/contracts' contract-compose-lng test.
   const SENDER = "~contract `S { ~on `fire(`amount ~u256) { `xmbl.coord.send(0, `amount) } }";
   const smod = await WebAssembly.compile(Uint8Array.from(compile(SENDER, { compose: true })));
-  const simports = WebAssembly.Module.imports(smod);
-  ok('compose: module declares exactly the env.xmbl_send import',
-     simports.length === 1 && simports[0].module === 'env' && simports[0].name === 'xmbl_send');
+  const simports = WebAssembly.Module.imports(smod).map(i => i.module + '.' + i.name);
+  ok('compose: module declares exactly env.xmbl_read + env.xmbl_send, read first',
+     simports.length === 2 && simports[0] === 'env.xmbl_read' && simports[1] === 'env.xmbl_send');
   let seen = null; let sinst;
-  const rdWord = (ptr) => { const dv = new DataView(sinst.exports.memory.buffer); let v = 0n; for (let i = 3; i >= 0; i--) v = (v << 64n) | dv.getBigUint64(ptr + i * 8, true); return v; };
-  sinst = await WebAssembly.instantiate(smod, { env: { xmbl_send: (peerPtr, amountPtr) => { seen = { peer: rdWord(peerPtr), amount: rdWord(amountPtr) }; return 0; } } });
+  const rdWord = (inst, ptr) => { const dv = new DataView(inst.exports.memory.buffer); let v = 0n; for (let i = 3; i >= 0; i--) v = (v << 64n) | dv.getBigUint64(ptr + i * 8, true); return v; };
+  const wrWord = (inst, ptr, val) => { const dv = new DataView(inst.exports.memory.buffer); let v = val; for (let i = 0; i < 4; i++) { dv.setBigUint64(ptr + i * 8, v & ((1n << 64n) - 1n), true); v >>= 64n; } };
+  sinst = await WebAssembly.instantiate(smod, { env: {
+    xmbl_read: () => { throw new Error('sender should not read'); },
+    xmbl_send: (peerPtr, amountPtr) => { seen = { peer: rdWord(sinst, peerPtr), amount: rdWord(sinst, amountPtr) }; return 0; },
+  } });
   const AMT = (1n << 130n) + 9n;   // exceeds 2^128: a truncated payload could not equal it
   sinst.exports.__reset();
   const ap = sinst.exports.__alloc();
-  { const dv = new DataView(sinst.exports.memory.buffer); let v = AMT; for (let i = 0; i < 4; i++) { dv.setBigUint64(ap + i * 8, v & ((1n << 64n) - 1n), true); v >>= 64n; } }
+  wrWord(sinst, ap, AMT);
   sinst.exports.fire(ap);
   ok('compose: xmbl_send received peer index 0 and the full 256-bit amount by pointer',
      seen !== null && seen.peer === 0n && seen.amount === AMT);
+
+  // read: the backend allocates a result buffer, passes (peer_ptr, field_ptr, val_out_ptr), and the
+  // method's return value IS that buffer pointer — so a stub that writes a known word into val_out
+  // is observed, by reference, as the method result. Exceeds 2^128 to pin full-width marshalling.
+  const READER = "~contract `R { ~on `get() { return `xmbl.coord.read(0, 0) } }";
+  const rmod = await WebAssembly.compile(Uint8Array.from(compile(READER, { compose: true })));
+  const RVAL = (1n << 200n) + 123n;
+  let rinst; let readArgs = null;
+  rinst = await WebAssembly.instantiate(rmod, { env: {
+    xmbl_read: (peerPtr, fieldPtr, valOutPtr) => { readArgs = { peer: rdWord(rinst, peerPtr), field: rdWord(rinst, fieldPtr) }; wrWord(rinst, valOutPtr, RVAL); return 0; },
+    xmbl_send: () => { throw new Error('reader should not send'); },
+  } });
+  rinst.exports.__reset();
+  const retPtr = rinst.exports.get();
+  ok('compose: xmbl_read received peer 0 / field 0 and its returned word is the full 256-bit value',
+     readArgs !== null && readArgs.peer === 0n && readArgs.field === 0n && rdWord(rinst, retPtr) === RVAL);
 
   console.log(`\n${pass}/${pass + fail} passed`);
   process.exit(fail ? 1 : 0);

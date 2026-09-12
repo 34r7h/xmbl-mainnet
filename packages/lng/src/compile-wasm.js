@@ -70,14 +70,18 @@ function compile(src, opts = {}) {
   // env.xmbl_verkle_get/set at indices 0/1, so EVERY defined-function index shifts by
   // IMPORT_COUNT (imports occupy the low indices). We carry that shift through `fi` below.
   const hostState = !!(opts && opts.hostState);
-  // compose (opt-in): emit the XCL word-ABI composition primitive env.xmbl_send so a contract can
-  // message another contract from `~contract` source. Imports occupy the LOW function indices, so
-  // the state imports (if any) come first and the compose import comes AFTER them — every defined
-  // function index is shifted by the TOTAL import count. xmbl_read (the synchronous word-valued
-  // read) is the next extension and will add a second compose import here.
+  // compose (opt-in): emit the XCL word-ABI composition primitives so a contract can interact with
+  // another contract from `~contract` source — env.xmbl_read (synchronous cross-contract read) and
+  // env.xmbl_send (asynchronous message). Imports occupy the LOW function indices, so the state
+  // imports (if any) come first and the compose imports come AFTER them — every defined function
+  // index is shifted by the TOTAL import count. The two compose imports are pushed in a FIXED order
+  // (read, then send) and BOTH indices derive from the same base, so a swapped pair can never
+  // silently miscompile (a wrong index yields a valid module calling the wrong function).
   const compose = !!(opts && opts.compose);
-  const IMPORT_COUNT = (hostState ? 2 : 0) + (compose ? 1 : 0);
-  const SEND_IDX = hostState ? 2 : 0;   // env.xmbl_send sits just above the state imports
+  const COMPOSE_BASE = hostState ? 2 : 0;   // compose imports sit just above the state imports
+  const READ_IDX = COMPOSE_BASE;            // env.xmbl_read is first
+  const SEND_IDX = COMPOSE_BASE + 1;        // env.xmbl_send follows it
+  const IMPORT_COUNT = COMPOSE_BASE + (compose ? 2 : 0);
 
   const bad = (t, w) => { if (t && (t in INT_WIDTHS) && INT_WIDTHS[t][0]) throw new Error(`WASM backend is unsigned-only: signed ~${t} ${w} unsupported (use the EVM backend)`); if (t === 'decimal') throw new Error(`WASM backend does not support ~decimal ${w} (use the EVM backend)`); };
   for (const f of c.fields) bad(f.type, `field \`${f.name}`);
@@ -143,7 +147,7 @@ function compile(src, opts = {}) {
     const built = compileMethod(mth, { slot, FIELD_BASE, lit, Z, ONE, ONES, H, EVENTS_ADDR,
       fields: c.fields.length,
       hostState: hostState ? { vget: 0, vset: 1, keyPtr, keyLen } : null,
-      compose: compose ? { sendIdx: SEND_IDX } : null });
+      compose: compose ? { readIdx: READ_IDX, sendIdx: SEND_IDX } : null });
     F(ti, built.locals, built.code);
     exports.push([...nm(finalName(mth)), 0x00, ...uleb(ENTRY0 + mi)]);
   });
@@ -152,16 +156,23 @@ function compile(src, opts = {}) {
   // type section is untouched. get: (i32,i32,i32)->i32; set: (i32,i32,i32,i32)->i32.
   const T_get = hostState ? T([I32, I32, I32], [I32]) : 0;
   const T_set = hostState ? T([I32, I32, I32, I32], [I32]) : 0;
+  // xmbl_read is (peer_ptr, field_ptr, val_out_ptr)->i32. Registered unconditionally when compose
+  // is on (NOT gated on hostState) so the stateless-compose path has a live type index — T()
+  // deduplicates, so it collapses onto T_get's shape when hostState is also on.
+  const T_read = compose ? T([I32, I32, I32], [I32]) : 0;
   const typeSec = section(1, vec(types));
-  // Import entries in the SAME order the indices were assigned: state imports (0,1) then the
-  // compose send import — so SEND_IDX above matches this entry's position. xmbl_send is
-  // (peer_ptr:i32, amount_ptr:i32)->i32, the already-registered T_2 shape.
+  // Import entries in the SAME order the indices were assigned: state imports (0,1), then the
+  // compose imports read THEN send — so READ_IDX / SEND_IDX above match these entries' positions.
+  // xmbl_read is T_read (i32,i32,i32)->i32; xmbl_send is the already-registered T_2 shape.
   const importEntries = [];
   if (hostState) {
     importEntries.push([...nm('env'), ...nm('xmbl_verkle_get'), 0x00, ...uleb(T_get)]);
     importEntries.push([...nm('env'), ...nm('xmbl_verkle_set'), 0x00, ...uleb(T_set)]);
   }
-  if (compose) importEntries.push([...nm('env'), ...nm('xmbl_send'), 0x00, ...uleb(T_2)]);
+  if (compose) {
+    importEntries.push([...nm('env'), ...nm('xmbl_read'), 0x00, ...uleb(T_read)]);
+    importEntries.push([...nm('env'), ...nm('xmbl_send'), 0x00, ...uleb(T_2)]);
+  }
   const importSec = importEntries.length ? section(2, vec(importEntries)) : [];
   const funcSec = section(3, vec(defined.map(f => uleb(f.ti))));
   // Memory: 16 pages min (1 MiB), with a BOUNDED maximum. A contract that ships to the
@@ -322,7 +333,13 @@ function compileMethod(m, ctx) {
   const declare = (name) => { if (params.has(name)) return params.get(name); if (!idx.has(name)) { idx.set(name, next++); localTypes.push(I32); } return idx.get(name); };
   collectLocals(m.body.body, ctx, params, declare);
   const vt = next++; localTypes.push(I32); // scratch for field writes
-  ctx = Object.assign({}, ctx, { vt });
+  // Scratch for an xmbl_read result pointer — allocated ONLY when compose is on, so the default
+  // path's local section stays byte-identical. A read leaves its freshly-__alloc'd word buffer in
+  // this local just long enough to pass it as the val_out arg and then re-push it as the
+  // expression value; because each read fully consumes-and-reloads the local before returning the
+  // pointer, two reads in ONE expression never alias (their buffers differ — __alloc bumps).
+  const rt = ctx.compose ? next++ : -1; if (ctx.compose) localTypes.push(I32);
+  ctx = Object.assign({}, ctx, { vt, rt });
   const code = []; let ret = false;
   const get = (name) => params.has(name) ? params.get(name) : idx.get(name);
   // hostState prologue: load every committed field from Verkle into its memory word BEFORE
@@ -474,6 +491,22 @@ function emitP(n, code, ctx, params, get) {
         code.push(O.call, ...uleb(ctx.compose.sendIdx));
         return;
       }
+      // `xmbl.coord.read(peer, field)` — SYNCHRONOUS cross-contract read, a word-producing
+      // expression. Both args are word pointers (peer index, field index). The host writes the
+      // peer's committed field word into a result buffer we allocate and leaves that buffer
+      // pointer as the expression value. Any error traps in the host (fail-closed), so the i32
+      // status is always 0 and is dropped.
+      if (path && path.length === 2 && path[0] === 'coord' && path[1] === 'read') {
+        if (!ctx.compose) throw new Error('WASM backend: xmbl.coord.read requires compile(src, { compose: true })');
+        if (n.args.length !== 2) throw new Error('WASM backend: xmbl.coord.read(peer, field) takes exactly 2 arguments');
+        emitP(n.args[0], code, ctx, params, get);               // peer index word pointer
+        emitP(n.args[1], code, ctx, params, get);               // field index word pointer
+        code.push(O.call, ...uleb(ctx.H.alloc), O.lset, ...uleb(ctx.rt)); // rt = fresh result buffer
+        code.push(O.lget, ...uleb(ctx.rt));                     // val_out arg
+        code.push(O.call, ...uleb(ctx.compose.readIdx), O.drop); // read writes into rt, status dropped
+        code.push(O.lget, ...uleb(ctx.rt));                     // expression value = the result word pointer
+        return;
+      }
       throw new Error('WASM backend: unsupported call ' + (path ? 'xmbl.' + path.join('.') : n.callee && n.callee.kind));
     }
     default: throw new Error('WASM backend: cannot compile expression ' + n.kind);
@@ -491,4 +524,19 @@ function xmblCallPath(callee) {
 function emitShiftCount(n, code, ctx, params, get) { emitP(n, code, ctx, params, get); code.push(O.i64load, ...m64(0)); }
 function blockValue(b0) { const b = asBlock(b0); const last = b.body[b.body.length - 1]; if (last && last.kind === 'exprstmt') return last.expr; if (last && last.kind === 'error') return last; /* a revert branch: emitP traps */ throw new Error('WASM backend: value-ternary branch must end in an expression'); }
 
-export { compile };
+// contractFields(src) — the peer's ordered field names, DERIVED from source rather than
+// re-typed by the operator. A word-read names a peer field by INDEX; the host resolves that
+// index against the peer's deploy-declared `fields` list to a byte key. If that list were
+// hand-typed it could be transposed (['b','a']) and index 0 would silently resolve to the
+// wrong real field — a plausible, undetectable wrong value. Deriving it here makes the list
+// authoritative by construction: it is EXACTLY the compiler's own field slot order (line 90,
+// `c.fields.forEach((f,i) => slot.set(f.name,i))`), so a read index means the same field the
+// peer commits under. The only way to get it wrong is to pass a different contract's source —
+// which compiles to different bytes and therefore a different content-addressed id.
+function contractFields(src) {
+  const c = parse(lex(src)).body.find(n => n.kind === 'contract');
+  if (!c) throw new Error('contractFields: no ~contract found in source');
+  return c.fields.map(f => f.name);
+}
+
+export { compile, contractFields };
