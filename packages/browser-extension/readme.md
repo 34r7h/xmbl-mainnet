@@ -1,6 +1,41 @@
-# XDA - XMBL Desktop App
+# XBE — XMBL Browser Extension
 
-XMBL's desktop app module.
+A Chromium MV3 extension: the user's XMBL **wallet** and an in-page **contract client**
+(create / deploy / find / call contracts), Vue 3 + webpack, reskinned in the miniapp's
+impeccable.style.
 
+## Build before loading (required)
 
-This browser extension must be a full featured client / node for interacting with XMBL systems. Same as the electron app, is a user's wallet, as well. Vue 3
+`dist/` is **gitignored** and `manifest.json` loads `dist/background.js`, `dist/content.js` and
+`dist/popup.js`. A fresh checkout has no `dist/`, so you **must build first** — loading the unpacked
+extension without building gives a broken extension (missing service worker / popup / content
+script):
+
+```
+npm install          # from the repo root (workspaces)
+npm run build -w packages/browser-extension
+```
+
+Then in Chrome: `chrome://extensions` → enable Developer mode → **Load unpacked** →
+select `packages/browser-extension/`.
+
+## What works
+
+- **Contracts tab** — creates, deploys (to a `browser.storage.local` registry), finds and calls
+  contracts entirely in-page. It inlines the REAL `@xmbl/lng` compiler and the miniapp's verified
+  in-page executor (`src/contract-runtime.js`) and runs compiled WASM over a local Verkle stand-in.
+  The content-addressed id and coordinates are **byte-identical to node `@xmbl/contracts`**, proven
+  by `__tests__/contract-runtime.parity.test.mjs` (`npm test`).
+- **Wallet tab** — balance / send / node status. The node bridge is a **labeled stub**.
+
+## Boundary
+
+In-page execution is **not** the production path: no worker isolation, no CPU metering, no Verkle
+commitment, no delegation gate — stated on screen. The full gated path is the headless
+`reproductions/agentic-contract-e2e.mjs` in `@xmbl/contracts`.
+
+## Build
+
+`npm run build -w packages/browser-extension` — webpack bundles `src/` into `dist/`. No babel:
+the extension targets modern Chromium and `@xmbl/lng` is BigInt-heavy (`@babel/preset-env`
+down-levels its BigInt literals and breaks at load); Vue SFCs are compiled by `vue-loader`.
