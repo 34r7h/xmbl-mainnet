@@ -237,7 +237,13 @@ continue-on-error, and in the release workflow before any publish).
       `StateMachine._stateChangesFor`, not a fabricated key);
       *(6)* the spend is provable against the committed Verkle root via `generateProof`/`verifyProof`,
       and a TAMPERED value is rejected;
-      *(7)* the committed UTXO-bearing set reproduces the same root under any insertion order.
+      *(7)* the committed UTXO-bearing set reproduces the same root under any insertion order;
+      *(8)* the `fee` term is load-bearing in BOTH directions — a fee-withholding transfer conserves
+      ONLY at the exact fee (refused at fee±1), and a fee charged on a full-value output is refused
+      (fee is on the OUTPUT side, cannot mint); *(9)* multi-OUTPUT conservation — a split creates two
+      outputs summing to the input; *(10)* multi-INPUT — `xmbl_input_count` drives a consolidate loop
+      that spends EVERY presented input into one conserved output; *(11)* a partial spend is safe — with
+      two inputs staged, spending only input 0 leaves the other unspent and still spendable in a later call.
       **REPRODUCTION ACROSS A SMALL SET OF TEST NODES** (the mandate's "spin up test nodes"):
       *utxo-multinode.test.mjs* boots THREE independent nodes built from the real node subsystems
       (a genuine `Ledger` + `StateMachine` pair each, as `@xmbl/core` composes), feeds each the
@@ -247,7 +253,7 @@ continue-on-error, and in the release workflow before any publish).
       node leaves all three STILL at one identical root, each committing the same spend-marker and
       new UTXO record. — *xcl/abi.js (`HOST_ABI_UTXO_SOURCE`, `utxoKey`, `spendKey`); xcl/contract-host.js
       (`utxoHost` flag, input staging, conservation enforcement); xcl/utxo-fixtures.mjs;
-      contract-host.test.mjs (28/28); utxo-multinode.test.mjs (3/3)*
+      contract-host.test.mjs (33/33); utxo-multinode.test.mjs (3/3)*
 - [ ] **T6.2 open remainders (HONEST scope of the "≥ Ethereum, fraction of resources" claim).** What
       T6.2 does NOT yet prove, and must not be claimed: *(a)* the UTXO proof contracts are hand-encoded
       and use **i64** amounts, not the `~u256` word width — LNG cannot yet EMIT `xmbl_utxo_*` calls from

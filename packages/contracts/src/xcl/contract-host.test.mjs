@@ -422,7 +422,7 @@ await check('gated seam: a durable nonce store rejects a replay action-replayed 
 // TRANSFER/MINT are the hand-encoded UTXO contracts (shared with the cross-node
 // reproduction test via utxo-fixtures.mjs, so a single bytecode drives both).
 // ────────────────────────────────────────────────────────────────────────────
-const { TRANSFER, MINT, RECIP } = await import('./utxo-fixtures.mjs');
+const { TRANSFER, TRANSFER_FEE, SPLIT, CONSOLIDATE, MINT, RECIP, FEE, PART } = await import('./utxo-fixtures.mjs');
 
 const seedUtxo = async (state, id, amount, from = 'genesis', to = 'alice') =>
   state.insert(utxoKey(id), { from, to, amount: String(amount) });
@@ -519,6 +519,83 @@ await check('utxo: the committed set reproduces the same root under any insertio
   const replay = new VerkleStateTree();
   for (const [k, v] of [...entries].reverse()) await replay.insert(k, v);
   assert.strictEqual(replay.getRoot(), state.getRoot(), 'the UTXO-bearing state root is a function of the SET, not order');
+});
+
+// ── The `fee` term of the conservation check is load-bearing, in BOTH directions.
+await check('utxo: a fee-bearing transfer conserves ONLY when opts.fee equals the withheld amount', async () => {
+  // TRANSFER_FEE spends 100 and creates 90; the missing 10 is the fee. sumIn(100) === sumOut(90)+fee
+  // holds iff fee === 10, so the same call+bytecode is accepted at fee=10 and refused at 9 and 11 —
+  // proving the fee term actually discriminates (a wrong sign or a dropped term would not).
+  const mk = async () => { const state = new VerkleStateTree(); await seedUtxo(state, 'U1', 100); const host = new ContractHost({ runtime: runtime(), state }); const { id } = host.deploy(TRANSFER_FEE, [], { utxoHost: true }); return { state, host, id }; };
+  const under = await mk();
+  await assert.rejects(() => under.host.call(under.id, 'transfer', [], { inputs: ['U1'], fee: FEE - 1 }), /value not conserved/, 'fee too small: in=100 out=90 fee=9 → refused');
+  assert.strictEqual(under.state.get(spendKey('U1')), undefined, 'the refused call spent nothing');
+  const over = await mk();
+  await assert.rejects(() => over.host.call(over.id, 'transfer', [], { inputs: ['U1'], fee: FEE + 1 }), /value not conserved/, 'fee too large: in=100 out=90 fee=11 → refused');
+  const exact = await mk();
+  const r = await exact.host.call(exact.id, 'transfer', [], { inputs: ['U1'], fee: FEE });
+  assert.strictEqual(r.utxo.created[0].amount, String(100 - FEE), 'the output is input − fee');
+  assert.notStrictEqual(exact.state.get(spendKey('U1')), undefined, 'the exact-fee call committed the spend');
+});
+
+await check('utxo: a fee charged on a full-value output (nothing withheld) is refused — fee cannot mint', async () => {
+  // TRANSFER creates the WHOLE 100; charging any fee makes sumOut+fee exceed sumIn, so it is refused.
+  // This is the reverse of the above: it proves the fee is added to the OUTPUT side, not the input side.
+  const state = new VerkleStateTree();
+  await seedUtxo(state, 'U1', 100);
+  const host = new ContractHost({ runtime: runtime(), state });
+  const { id } = host.deploy(TRANSFER, [], { utxoHost: true });
+  const root0 = state.getRoot();
+  await assert.rejects(() => host.call(id, 'transfer', [], { inputs: ['U1'], fee: FEE }), /value not conserved/);
+  assert.strictEqual(state.getRoot(), root0, 'a fee that would have to be minted moves nothing');
+});
+
+// ── Multi-OUTPUT conservation: one input split into two outputs that sum to it (a real change tx).
+await check('utxo: a split creates TWO outputs summing to the input (multi-output conservation)', async () => {
+  const state = new VerkleStateTree();
+  await seedUtxo(state, 'U1', 100);
+  const host = new ContractHost({ runtime: runtime(), state });
+  const { id } = host.deploy(SPLIT, [], { utxoHost: true });
+  const r = await host.call(id, 'transfer', [], { inputs: ['U1'] });
+  assert.strictEqual(r.utxo.created.length, 2, 'two outputs were created');
+  const amounts = r.utxo.created.map((o) => Number(o.amount)).sort((a, b) => a - b);
+  assert.deepStrictEqual(amounts, [PART, 100 - PART], 'the two outputs are PART and (input − PART)');
+  assert.strictEqual(amounts[0] + amounts[1], 100, 'and they sum to the spent input — conserved');
+  assert.notStrictEqual(r.utxo.created[0].id, r.utxo.created[1].id, 'the two outputs are distinct content-addressed UTXOs');
+  for (const o of r.utxo.created) assert.strictEqual(state.get(utxoKey(o.id)).amount, o.amount, 'each output is committed to Verkle');
+});
+
+// ── Multi-INPUT: consolidate every presented input into one output; xmbl_input_count drives the loop.
+await check('utxo: consolidate spends ALL presented inputs (input_count-driven) into one conserved output', async () => {
+  const state = new VerkleStateTree();
+  const inputs = ['A1', 'B2', 'C3', 'D4'];
+  const amts = [11, 22, 33, 44];
+  for (let i = 0; i < inputs.length; i++) await seedUtxo(state, inputs[i], amts[i]);
+  const host = new ContractHost({ runtime: runtime(), state });
+  const { id } = host.deploy(CONSOLIDATE, [], { utxoHost: true });
+  const r = await host.call(id, 'transfer', [], { inputs });
+  assert.deepStrictEqual([...r.utxo.spent].sort(), [...inputs].sort(), 'every presented input was spent (input_count enumerated them all)');
+  assert.strictEqual(r.utxo.created.length, 1, 'consolidated into a single output');
+  assert.strictEqual(r.utxo.created[0].amount, String(amts.reduce((a, b) => a + b, 0)), 'the output is the SUM of all inputs — conserved');
+  for (const uid of inputs) assert.notStrictEqual(state.get(spendKey(uid)), undefined, `input ${uid} carries a spend-marker`);
+});
+
+// ── A partial spend is safe: an input the contract did NOT spend stays spendable in a later call.
+await check('utxo: with two inputs staged, TRANSFER spends only input 0 and the other stays spendable', async () => {
+  const state = new VerkleStateTree();
+  await seedUtxo(state, 'U1', 100);
+  await seedUtxo(state, 'U2', 250);
+  const host = new ContractHost({ runtime: runtime(), state });
+  const { id } = host.deploy(TRANSFER, [], { utxoHost: true });
+  // inputIds is sorted, so input 0 is 'U1'; TRANSFER enumerates and spends only input 0.
+  const r1 = await host.call(id, 'transfer', [], { inputs: ['U2', 'U1'] });
+  assert.deepStrictEqual(r1.utxo.spent, ['U1'], 'only the first (sorted) input was spent');
+  assert.strictEqual(r1.utxo.created[0].amount, '100', 'the output equals the spent input, not the sum — the other input was NOT burned');
+  assert.strictEqual(state.get(spendKey('U2')), undefined, 'the unspent input carries no spend-marker');
+  // U2 is therefore still a valid, unspent input for a later call.
+  const r2 = await host.call(id, 'transfer', [], { inputs: ['U2'] });
+  assert.deepStrictEqual(r2.utxo.spent, ['U2'], 'the previously-unspent input spends cleanly afterward');
+  assert.strictEqual(r2.utxo.created[0].amount, '250', 'and for its own full amount');
 });
 
 console.log(`\nXCL conformance: ${pass} passed, ${fail} failed`);
