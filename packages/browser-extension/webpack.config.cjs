@@ -19,16 +19,10 @@ module.exports = {
         test: /\.vue$/,
         loader: 'vue-loader'
       },
-      {
-        test: /\.js$/,
-        exclude: /node_modules/,
-        use: {
-          loader: 'babel-loader',
-          options: {
-            presets: ['@babel/preset-env']
-          }
-        }
-      },
+      // No babel-loader: the extension targets Chromium MV3 (modern JS + BigInt), Vue SFCs are
+      // compiled by vue-loader, and @xmbl/lng is BigInt-heavy — running it through
+      // @babel/preset-env down-levels its BigInt literals and breaks at load
+      // ("Cannot convert a BigInt value to a number"). Webpack 5 parses the modern ESM natively.
       {
         test: /\.css$/,
         use: ['style-loader', 'css-loader']

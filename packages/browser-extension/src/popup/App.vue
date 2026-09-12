@@ -1,217 +1,187 @@
 <template>
-  <div class="popup-container">
-    <header>
-      <h1>XMBL Wallet</h1>
+  <div id="shell">
+    <header class="head">
+      <h1 class="title">XMBL <b>Wallet</b></h1>
+      <p class="sub">A wallet & contract client for xmbl — built on the same compiler and content-addressed identity a node runs.</p>
     </header>
-    
-    <section class="balance">
-      <h2>Balance</h2>
-      <p class="amount">{{ balance }} XMBL</p>
-    </section>
-    
-    <section class="send">
-      <h2>Send</h2>
-      <input v-model="recipient" placeholder="Recipient address" />
-      <input v-model="amount" type="number" placeholder="Amount" step="0.000001" />
-      <button @click="sendTransaction" class="send-btn">Send</button>
-    </section>
-    
-    <section class="node-status">
-      <h2>Node Status</h2>
-      <p>Status: {{ nodeStatus.running ? 'Running' : 'Stopped' }}</p>
-      <p>Peers: {{ nodeStatus.peers }}</p>
-      <p>Height: {{ nodeStatus.height }}</p>
-      <button @click="toggleNode" class="node-btn">
-        {{ nodeStatus.running ? 'Stop' : 'Start' }} Node
-      </button>
-    </section>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab" role="tab" :aria-selected="tab === 'contracts'" :class="{ on: tab === 'contracts' }" @click="tab = 'contracts'">Contracts</button>
+      <button class="tab" role="tab" :aria-selected="tab === 'wallet'" :class="{ on: tab === 'wallet' }" @click="tab = 'wallet'">Wallet</button>
+    </nav>
+
+    <main class="body">
+      <Contracts v-show="tab === 'contracts'" />
+      <Wallet v-show="tab === 'wallet'" />
+    </main>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
-import browser from 'webextension-polyfill';
+import { ref } from 'vue'
+import Contracts from './Contracts.vue'
+import Wallet from './Wallet.vue'
 
-const balance = ref(0);
-const recipient = ref('');
-const amount = ref(0);
-const nodeStatus = ref({ running: false, peers: 0, height: 0 });
-
-async function loadBalance() {
-  try {
-    const response = await browser.runtime.sendMessage({ 
-      type: 'getBalance', 
-      address: 'current' 
-    });
-    balance.value = response.balance || 0;
-  } catch (error) {
-    console.error('Error loading balance:', error);
-  }
-}
-
-async function sendTransaction() {
-  if (!recipient.value || !amount.value) {
-    alert('Please enter recipient and amount');
-    return;
-  }
-  
-  try {
-    const tx = {
-      to: recipient.value,
-      amount: parseFloat(amount.value)
-    };
-    const response = await browser.runtime.sendMessage({ 
-      type: 'sendTransaction', 
-      tx 
-    });
-    console.log('Transaction sent:', response.txId);
-    alert(`Transaction sent: ${response.txId}`);
-    
-    // Reset form
-    recipient.value = '';
-    amount.value = 0;
-    
-    // Reload balance
-    await loadBalance();
-  } catch (error) {
-    console.error('Error sending transaction:', error);
-    alert('Error sending transaction: ' + error.message);
-  }
-}
-
-async function loadNodeStatus() {
-  try {
-    const status = await browser.runtime.sendMessage({ type: 'getNodeStatus' });
-    nodeStatus.value = status;
-  } catch (error) {
-    console.error('Error loading node status:', error);
-  }
-}
-
-async function toggleNode() {
-  try {
-    const action = nodeStatus.value.running ? 'stopNode' : 'startNode';
-    await browser.runtime.sendMessage({ type: action });
-    await loadNodeStatus();
-  } catch (error) {
-    console.error('Error toggling node:', error);
-    alert('Error toggling node: ' + error.message);
-  }
-}
-
-onMounted(async () => {
-  await loadBalance();
-  await loadNodeStatus();
-  // Refresh status periodically
-  setInterval(loadNodeStatus, 5000);
-});
+// Contracts is the real, proven surface (in-page @xmbl/lng compile + node-parity id), so it leads.
+const tab = ref('contracts')
 </script>
 
-<style scoped>
-.popup-container {
-  width: 400px;
-  padding: 20px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-}
+<!-- Global (unscoped): tokens + shared primitives, visible to every child component. -->
+<style>
+  #shell {
+    --font: "Albert Sans", "Avenir Next", "Helvetica Neue", Arial, system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
 
-header h1 {
-  margin: 0 0 20px 0;
-  font-size: 24px;
-  color: #333;
-}
+    --paper: oklch(97.8% 0 0);
+    --paper-raised: oklch(99.5% 0 0);
+    --paper-deep: oklch(95% 0 0);
+    --ink: oklch(13% 0 0);
+    --text: oklch(22% 0 0);
+    --muted: oklch(46% 0 0);
+    --faint: oklch(58% 0 0);
+    --rule: oklch(13% 0 0 / .08);
+    --rule-2: oklch(13% 0 0 / .14);
 
-.balance {
-  margin: 20px 0;
-  padding: 15px;
-  background: #f5f5f5;
-  border-radius: 8px;
-}
+    --kinpaku: oklch(84% .19 80.46);
+    --kinpaku-rich: oklch(77% .13 82);
+    --kinpaku-deep: oklch(61% .085 78);
+    --on-gold: oklch(14% .018 95);
+    --accent-soft: oklch(77% .13 82 / .24);
+    --accent-dim: oklch(77% .13 82 / .14);
 
-.balance h2 {
-  margin: 0 0 10px 0;
-  font-size: 16px;
-  color: #666;
-}
+    --patina: oklch(70% .12 188);
+    --patina-ink: oklch(41% .11 190);
 
-.amount {
-  font-size: 32px;
-  font-weight: bold;
-  color: #42b983;
-  margin: 0;
-}
+    --inst: oklch(24% 0 0);
+    --inst-deep: oklch(17% 0 0);
+    --inst-raised: oklch(31% 0 0);
+    --inst-text: oklch(93% 0 0);
+    --inst-muted: oklch(68% 0 0);
+    --inst-rule: oklch(100% 0 0 / .12);
 
-.send {
-  margin: 20px 0;
-}
+    --good: var(--patina);
+    --good-ink: var(--patina-ink);
+    --bad: oklch(64% .17 25);
+    --bad-ink: oklch(52% .18 27);
+    --bad-dim: oklch(64% .17 25 / .14);
 
-.send h2 {
-  margin: 0 0 10px 0;
-  font-size: 16px;
-  color: #333;
-}
+    --r-sm: 3px;
+    --r-md: 8px;
+    --r-pill: 999px;
 
-.send input {
-  width: 100%;
-  margin: 5px 0;
-  padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  box-sizing: border-box;
-  font-size: 14px;
-}
+    --cap-lift: inset 0 1px 0 oklch(100% 0 0 / .9), 0 1px 0 oklch(13% 0 0 / .14), 0 2px 3px oklch(13% 0 0 / .08);
+    --cap-press: inset 0 1px 2px oklch(13% 0 0 / .16);
+    --track-recess: inset 0 1px 3px oklch(13% 0 0 / .14), inset 0 -1px 0 oklch(100% 0 0 / .7);
 
-.send-btn {
-  width: 100%;
-  padding: 12px;
-  margin-top: 10px;
-  background: #42b983;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 16px;
-  font-weight: bold;
-}
+    --ease: cubic-bezier(.2, .8, .2, 1);
+    --quick: .12s;
 
-.send-btn:hover {
-  background: #35a372;
-}
+    width: 460px;
+    box-sizing: border-box;
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--paper);
+    -webkit-font-smoothing: antialiased;
+  }
 
-.node-status {
-  margin: 20px 0;
-  padding: 15px;
-  background: #f5f5f5;
-  border-radius: 8px;
-}
+  @media (prefers-color-scheme: dark) {
+    #shell {
+      --paper: oklch(19% 0 0);
+      --paper-raised: oklch(23% 0 0);
+      --paper-deep: oklch(15% 0 0);
+      --ink: oklch(97% 0 0);
+      --text: oklch(90% 0 0);
+      --muted: oklch(68% 0 0);
+      --faint: oklch(58% 0 0);
+      --rule: oklch(100% 0 0 / .1);
+      --rule-2: oklch(100% 0 0 / .16);
+      --on-gold: oklch(14% .018 95);
+      --patina-ink: oklch(72% .11 188);
+      --cap-lift: inset 0 1px 0 oklch(100% 0 0 / .08), 0 1px 2px oklch(0% 0 0 / .4);
+      --track-recess: inset 0 1px 3px oklch(0% 0 0 / .4), inset 0 -1px 0 oklch(100% 0 0 / .04);
+    }
+  }
 
-.node-status h2 {
-  margin: 0 0 10px 0;
-  font-size: 16px;
-  color: #333;
-}
+  html, body { margin: 0; padding: 0; background: var(--paper); }
+  #shell * { box-sizing: border-box; }
 
-.node-status p {
-  margin: 5px 0;
-  font-size: 14px;
-  color: #666;
-}
+  .head { padding: 16px 18px 12px; border-bottom: 1px solid var(--rule); }
+  .title { margin: 0; font-size: 1.25rem; font-weight: 400; letter-spacing: .01em; color: var(--ink); }
+  .title b { font-weight: 700; }
+  .sub { margin: 5px 0 0; font-size: .8125rem; line-height: 1.45; color: var(--muted); }
 
-.node-btn {
-  width: 100%;
-  padding: 10px;
-  margin-top: 10px;
-  background: #3498db;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-}
+  .tabs { display: flex; gap: 2px; padding: 10px 18px 0; border-bottom: 1px solid var(--rule); }
+  .tab {
+    appearance: none; border: 0; background: transparent; cursor: pointer;
+    font: inherit; font-weight: 600; font-size: .8125rem; color: var(--muted);
+    padding: 8px 14px 10px; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color var(--quick) var(--ease), border-color var(--quick) var(--ease);
+  }
+  .tab:hover { color: var(--ink); }
+  .tab.on { color: var(--ink); border-bottom-color: var(--kinpaku); }
 
-.node-btn:hover {
-  background: #2980b9;
-}
+  .body { padding: 16px 18px 20px; max-height: 520px; overflow-y: auto; }
+
+  /* eyebrows / section labels */
+  .eyebrow {
+    font-family: var(--mono); font-size: .625rem; font-weight: 600; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--patina-ink);
+  }
+  .sec { margin-top: 18px; }
+  .sec:first-child { margin-top: 0; }
+  .sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .hint { font-size: .75rem; color: var(--faint); }
+
+  /* buttons — physical cap-lift; primary is the gold LED, spent sparingly */
+  .btn {
+    appearance: none; font: inherit; font-weight: 600; font-size: .8125rem; cursor: pointer;
+    color: var(--ink); background: var(--paper-raised); border: 1px solid var(--rule-2);
+    border-radius: var(--r-sm); padding: 8px 13px; box-shadow: var(--cap-lift);
+    transition: background var(--quick) var(--ease), box-shadow var(--quick) var(--ease), color var(--quick) var(--ease);
+  }
+  .btn:hover { background: var(--paper); }
+  .btn:active { box-shadow: var(--cap-press); }
+  .btn:disabled { opacity: .5; cursor: default; box-shadow: none; }
+  .btn.primary { color: var(--on-gold); background: var(--kinpaku); border-color: var(--kinpaku-deep); }
+  .btn.primary:hover { background: var(--kinpaku-rich); }
+  .btn.sm { padding: 5px 9px; font-size: .75rem; }
+  .btn.ghost { background: transparent; box-shadow: none; border-color: var(--rule-2); }
+  .btn.danger { color: var(--bad-ink); border-color: var(--bad-dim); background: transparent; box-shadow: none; }
+  .btn.danger:hover { background: var(--bad-dim); }
+
+  /* inputs — genuine form fields, track-recessed (a 1-2 field form is not an input wall) */
+  .in, .sel, textarea.code {
+    font: inherit; font-size: .8125rem; color: var(--ink); background: var(--paper-raised);
+    border: 1px solid var(--rule-2); border-radius: var(--r-sm); padding: 8px 10px;
+    box-shadow: var(--track-recess); width: 100%; box-sizing: border-box;
+    transition: border-color var(--quick) var(--ease), box-shadow var(--quick) var(--ease);
+  }
+  .in:focus, .sel:focus, textarea.code:focus {
+    outline: none; border-color: var(--kinpaku-deep); box-shadow: var(--track-recess), 0 0 0 3px var(--accent-soft);
+  }
+  .sel { cursor: pointer; }
+  textarea.code { font-family: var(--mono); font-size: .75rem; line-height: 1.55; min-height: 132px; resize: vertical; white-space: pre; }
+
+  .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 9px; }
+  .field label { font-size: .75rem; color: var(--muted); }
+
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row.wrap { flex-wrap: wrap; }
+  .spread { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+
+  /* status line — replaces every blocking alert() */
+  .status { margin-top: 10px; font-size: .8125rem; border-radius: var(--r-sm); padding: 8px 11px; border: 1px solid var(--rule-2); }
+  .status.ok { color: var(--good-ink); border-color: oklch(70% .12 188 / .3); background: oklch(70% .12 188 / .1); }
+  .status.bad { color: var(--bad-ink); border-color: var(--bad-dim); background: var(--bad-dim); }
+  .status.info { color: var(--muted); background: var(--paper-deep); }
+
+  .note { font-size: .75rem; line-height: 1.5; color: var(--faint); margin: 10px 0 0; }
+  .mono { font-family: var(--mono); }
+  .code-block {
+    font-family: var(--mono); font-size: .6875rem; line-height: 1.5; color: var(--inst-text);
+    background: var(--inst-deep); border-radius: var(--r-md); padding: 11px; margin: 8px 0 0;
+    overflow-x: auto; white-space: pre; word-break: normal;
+  }
 </style>
-
-
-

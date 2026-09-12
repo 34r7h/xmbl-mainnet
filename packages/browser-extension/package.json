@@ -5,7 +5,8 @@
   "description": "XMBL Browser Extension",
   "scripts": {
     "build": "webpack",
-    "watch": "webpack --watch"
+    "watch": "webpack --watch",
+    "test": "node __tests__/contract-runtime.parity.test.mjs"
   },
   "dependencies": {
     "vue": "^3.5.24",
