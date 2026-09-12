@@ -28,6 +28,16 @@ select `packages/browser-extension/`.
   by `__tests__/contract-runtime.parity.test.mjs` (`npm test`).
 - **Wallet tab** — balance / send / node status. The node bridge is a **labeled stub**.
 
+## Verify
+
+- `npm test -w packages/browser-extension` — node parity: the in-page `contractIdOf`/coordinates are
+  byte-identical to node `@xmbl/contracts`, plus real execution and a trapping revert.
+- `npm run verify:extension -w packages/browser-extension` — browser-surface: builds, then drives the
+  REAL `dist/popup.js` in Playwright chromium through every workflow (create+compile all samples,
+  deploy, find/search, call with committed-state changes, a reverting over-withdraw, and the Wallet
+  tab) asserting zero page errors. Only `chrome.storage` and the stub node bridge are shimmed
+  (`_harness.html`, mirroring `src/background.js`); all popup/compile/execution code runs unmodified.
+
 ## Boundary
 
 In-page execution is **not** the production path: no worker isolation, no CPU metering, no Verkle

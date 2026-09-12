@@ -6,7 +6,8 @@
   "scripts": {
     "build": "webpack",
     "watch": "webpack --watch",
-    "test": "node __tests__/contract-runtime.parity.test.mjs"
+    "test": "node __tests__/contract-runtime.parity.test.mjs",
+    "verify:extension": "npm run build && node verify-extension.mjs"
   },
   "dependencies": {
     "vue": "^3.5.24",
