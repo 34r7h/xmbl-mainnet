@@ -56,6 +56,22 @@ const VAULT_SRC =
   "  ~on `withdraw(`amt ~u256) { `bal = 0 }\n" +
   "}";
 
+// A gated COMPOSE pair for the multi-contract (truly agentic) case: FORWARDER.relay sets its own
+// field and SENDS to a peer; RECEIVER.take stores what it receives. Both are gated. Only the ENTRY
+// call (FORWARDER.relay) is authorized; the internal message to RECEIVER runs in a later frame that
+// presents NO authorization of its own — reproducing contract-host.js's claim that "gating
+// authorizes the EXTERNAL entry call; internal messages the cascade emits inherit that authorization."
+const FORWARDER_SRC =
+  "~contract `F {\n" +
+  "  ~state { ~public { `sent ~u256 0 } }\n" +
+  "  ~on `relay(`v ~u256) { `sent = `v\n `xmbl.coord.send(0, `v) }\n" +
+  "}";
+const RECEIVER_SRC =
+  "~contract `R {\n" +
+  "  ~state { ~public { `got ~u256 0 } }\n" +
+  "  ~on `take(`v ~u256) { `got = `v }\n" +
+  "}";
+
 async function main() {
   console.log('=== REPRODUCTION: host & use an XMBL agentic contract end-to-end ===\n');
 
@@ -167,6 +183,42 @@ async function main() {
     'a tampered `owner` value fails the proof');
   console.log(`\n  ✔ field \`owner\` is Verkle-provable against root ${state.getRoot().slice(0, 14)}… (tampered value rejected)\n`);
 
+  // ── PART 1b — GATED MULTI-CONTRACT CASCADE: internal messages inherit the entry authorization ──
+  console.log('── PART 1b — gated compose cascade: one authorized entry call drives a gated peer ──\n');
+  const cState = new VerkleStateTree();
+  const cHost = new ContractHost({ runtime: runtime(), state: cState });
+  const fwd = compile(FORWARDER_SRC, { hostState: true, compose: true });
+  const rcv = compile(RECEIVER_SRC, { hostState: true, compose: true });
+  const { id: fwdId } = cHost.deploy(fwd, [], { byteState: true, wordAbi: true, composeHost: true, gated: true, fields: contractFields(FORWARDER_SRC) });
+  const { id: rcvId } = cHost.deploy(rcv, [], { byteState: true, wordAbi: true, composeHost: true, gated: true, fields: contractFields(RECEIVER_SRC) });
+  cHost.link(fwdId, { peers: [{ id: rcvId, fn: 'take' }] });
+
+  const cRoot = await Identity.create();
+  const cCoord = await Identity.create();
+  const cAgent = await Identity.create();
+  const cAud = `contract:${fwdId}`;
+  const cGrant = await mintGrant(cRoot, { coordinatorPub: cCoord.publicKey, scope: ['relay'], exp: 4000000000, tee: null });
+  const cToken = await mintZspToken(cCoord, { grant: cGrant, agentPub: cAgent.publicKey, aud: cAud, scope: ['relay'], ttlSeconds: 3600 });
+  cHost.authorizer = makeAuthorizer({ rootAddress: cRoot.address, aud: cAud });
+
+  // RECEIVER is gated: a DIRECT external call with no authorization is refused before it runs.
+  const cRootBefore = cState.getRoot();
+  await assert.rejects(() => cHost.call(rcvId, 'take', [42], {}), /no-authorization-presented/,
+    'the receiver is itself gated — a direct unauthorized call is refused');
+  assert.strictEqual(cState.getRoot(), cRootBefore, 'the refused direct call to the gated receiver moved nothing');
+
+  // Authorize ONLY the entry call to FORWARDER.relay. The internal message to the gated RECEIVER
+  // runs in frame 2 with NO presentation of its own — it inherits the entry authorization.
+  const { sig: cSig, nonce: cNonce } = await signAction(cAgent, { token: cToken, action: 'relay', args: [42] });
+  const cr = await cHost.call(fwdId, 'relay', [42], { auth: { grant: cGrant, token: cToken, actionSig: cSig, nonce: cNonce } });
+  assert.strictEqual(cr.frames, 2, 'the cascade ran two frames (entry + internal message)');
+  assert.strictEqual(cHost.getBytes(fwdId, 'sent'), 42n, 'the entry frame (FORWARDER.relay) committed its field');
+  assert.strictEqual(cHost.getBytes(rcvId, 'got'), 42n, 'the gated RECEIVER ran via the internal message, inheriting authorization');
+  assert.notStrictEqual(cState.getRoot(), cRootBefore, 'the authorized cascade moved the Verkle root');
+  console.log('  ✔ direct unauthorized call to the gated RECEIVER → refused, root unmoved');
+  console.log(`  ✔ one authorized FORWARDER.relay(42) drove a 2-frame cascade: FORWARDER.sent=42, RECEIVER.got=42`);
+  console.log('  ✔ the internal message to the gated RECEIVER ran WITHOUT its own presentation (inherited authorization)\n');
+
   // ══════════════════════════════════════════════════════════════════════════════════════════
   // PART 2 — a GATED UTXO contract: agent-authorized spend, committed to the SAME Verkle tree.
   // ══════════════════════════════════════════════════════════════════════════════════════════
@@ -250,6 +302,28 @@ async function main() {
   // DETERMINISM — the state transition is a pure function of the call, reproducible across nodes.
   // ══════════════════════════════════════════════════════════════════════════════════════════
   console.log('── DETERMINISM — same call → same root on independent nodes; root is set-, not order-, dependent ──\n');
+
+  // The FIELD surface is deterministic too: two independent nodes running the same authorized
+  // sequence (under different identities) commit the same field words and converge to one root.
+  const vaultNode = async () => {
+    const s = new VerkleStateTree();
+    const h = new ContractHost({ runtime: runtime(), state: s });
+    const { id } = h.deploy(vaultBytes, [], { byteState: true, wordAbi: true, gated: true, fields });
+    const r = await Identity.create(); const c = await Identity.create(); const a = await Identity.create();
+    const au = `contract:${id}`;
+    const g = await mintGrant(r, { coordinatorPub: c.publicKey, scope: entrypoints, exp: 4000000000, tee: null });
+    const t = await mintZspToken(c, { grant: g, agentPub: a.publicKey, aud: au, scope: entrypoints, ttlSeconds: 3600 });
+    h.authorizer = makeAuthorizer({ rootAddress: r.address, aud: au });
+    for (const fn of entrypoints) {
+      const { sig, nonce } = await signAction(a, { token: t, action: fn, args: calls[fn].args });
+      await h.call(id, fn, calls[fn].args, { auth: { grant: g, token: t, actionSig: sig, nonce } });
+    }
+    return s.getRoot();
+  };
+  const [vA, vB] = [await vaultNode(), await vaultNode()];
+  assert.strictEqual(vA, vB, 'two independent nodes → identical vault root after the same authorized sequence');
+  console.log(`  ✔ field vault: two independent nodes converge to one root: ${vA.slice(0, 18)}…`);
+
   const oneNode = async () => {
     const s = new VerkleStateTree();
     await s.insert(utxoKey('U1'), { from: 'genesis', to: 'alice', amount: '100' });

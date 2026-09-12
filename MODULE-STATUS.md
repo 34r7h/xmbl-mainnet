@@ -38,7 +38,7 @@ Legend: ✓ done · ◐ partial · ✗ not yet · n/a not applicable · ⛔ bloc
 | `packages/zero-knowledge` | ✓ | ✓ (1, gate) | ✗ | FRI experimental/unaudited ⛔; must not gate consensus/ledger/sealing |
 | `packages/networking` | ◐ | ✓ (1, gate) | ✗ | **Node-only by construction** — discovery/gossip under NAT is ⛔ integration/audit |
 | `packages/lng` | ✓ | ✓ (8, gate) | ✗ | LNG→WASM compiler + XCL compose backend; EVM backend output asserted but not deployed |
-| `packages/contracts` | ✓ | ✓ (5, gate) | ✓ | XCL agentic-contract runtime (ContractHost); `reproductions/agentic-contract-e2e.mjs` hosts a gated contract, drives EVERY entrypoint (machine-checked vs WASM exports) through the real root→coordinator→agent chain, and proves state updating at every surface (fields, Verkle root, UTXO ledger) with fail-closed refusals leaving the root unmoved, Verkle-provable changes, conservation, and cross-node determinism; `reproductions/contracts-reentrancy.mjs` covers reentrancy-by-construction |
+| `packages/contracts` | ✓ | ✓ (5, gate) | ✓ | XCL agentic-contract runtime (ContractHost); `reproductions/agentic-contract-e2e.mjs` hosts a gated contract, drives EVERY entrypoint (machine-checked vs WASM exports) through the real root→coordinator→agent chain, and proves state updating at every surface (fields, Verkle root, UTXO ledger) with fail-closed refusals leaving the root unmoved, Verkle-provable changes, conservation, and cross-node determinism; `reproductions/contracts-reentrancy.mjs` covers reentrancy-by-construction. **Executes guest bytecode via `storage-compute`, whose worker isolation is a ⛔ external-audit gate** — contracts' own logic is clean/reproduced but transitively rests on that audit |
 
 ## Tooling / client packages
 
