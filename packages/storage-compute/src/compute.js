@@ -31,6 +31,7 @@ const WASM_PAGE_BYTES = 64 * 1024;
 // explicitly here; there is no implicit host access.
 const WORKER_SOURCE = `
 const { parentPort, workerData } = require('node:worker_threads');
+const { performance } = require('node:perf_hooks');
 const WASM_PAGE_BYTES = ${WASM_PAGE_BYTES};
 
 // Read the module's own memory-section limits (WASM binary section id 5), in pages.
@@ -127,6 +128,7 @@ function readMemoryLimits(bytes) {
     // provides that exact "module.name" key, else by an allow-listed inert stub, else denied.
     const allowedSet = new Set(allowed || []);
     const importObject = {};
+    let providedMemory = null; // a host-created memory handed to a guest that imports one
     for (const imp of WebAssembly.Module.imports(module)) {
       const key = imp.module + '.' + imp.name;
       const hostFn = hostImports[key];
@@ -138,6 +140,7 @@ function readMemoryLimits(bytes) {
       if (!allowedSet.has(key)) { parentPort.postMessage({ ok: false, error: 'denied import: ' + key }); return; }
       if (imp.kind === 'memory') {
         importObject[imp.module][imp.name] = new WebAssembly.Memory({ initial: 1, maximum: maxPages });
+        providedMemory = importObject[imp.module][imp.name]; // remember it so metering can read its peak
       } else if (imp.kind === 'global') {
         importObject[imp.module][imp.name] = new WebAssembly.Global({ value: 'i32', mutable: false }, 0);
       } else {
@@ -164,9 +167,18 @@ function readMemoryLimits(bytes) {
     // decodes the raw return (e.g. a returned word pointer to a BigInt). Both are pass-through
     // when the caller supplied no marshal, so the raw compute-market path is unchanged.
     const callArgs = marshal.$args ? marshal.$args(args || []) : (args || []);
+    // METER the guest's execution: wall-clock across the call (single-threaded, no host IO, so
+    // this IS the guest's CPU time) and the linear memory it ended on. WASM memory only ever
+    // grows within a run (there is no shrink), so the byte length after the call is the run's
+    // PEAK. This is the measured basis MarketPricing prices against — not an assumed figure.
+    const t0 = performance.now();
     const rawResult = fn(...callArgs);
+    const cpuMs = performance.now() - t0;
     const result = marshal.$result ? marshal.$result(rawResult) : rawResult;
-    parentPort.postMessage({ ok: true, result, writes: ctx.writes, log: ctx.log });
+    const runMem = (instance.exports && instance.exports.memory) || providedMemory || null;
+    const peakMemBytes = runMem ? runMem.buffer.byteLength : 0;
+    parentPort.postMessage({ ok: true, result, writes: ctx.writes, log: ctx.log,
+      metrics: { cpuMs, peakMemBytes, peakMemPages: Math.ceil(peakMemBytes / WASM_PAGE_BYTES) } });
   } catch (err) {
     parentPort.postMessage({ ok: false, error: String((err && err.message) || err) });
   }
@@ -211,7 +223,11 @@ export class ComputeRuntime {
    *   factory AWAITED before instantiation (so a binding may depend on async one-time setup,
    *   e.g. loading a crypto verifier's WASM); `declared` is the guest's declared import keys.
    *   Its bindings merge into the host imports and obey the same deny-by-default lookup.
-   * @returns {Promise<number|bigint|{result:any, writes:any[], log:any[]}>}
+   * @param {boolean} [opts.meter=false] on the RAW path (no host), return `{ result, metrics }`
+   *   instead of the bare result, where `metrics` is the MEASURED `{ cpuMs, peakMemBytes,
+   *   peakMemPages }` of the guest's execution. The host path always includes `metrics`.
+   * @returns {Promise<number|bigint|{result:any, writes?:any[], log?:any[], metrics:object}>}
+   *   metrics = `{ cpuMs, peakMemBytes, peakMemPages }` — the measured basis MarketPricing prices.
    */
   async execute(wasmCode, functionName, args = [], opts = {}) {
     const maxPages = Math.max(1, Math.ceil(this.maxMemory / WASM_PAGE_BYTES));
@@ -257,8 +273,14 @@ export class ComputeRuntime {
         this.maxTime,
       );
       worker.once('message', (m) => {
-        if (m && m.ok) finish(resolve, host ? { result: m.result, writes: m.writes || [], log: m.log || [] } : m.result);
-        else finish(reject, new Error((m && m.error) || 'WASM execution failed'));
+        if (m && m.ok) {
+          const metrics = m.metrics || { cpuMs: 0, peakMemBytes: 0, peakMemPages: 0 };
+          // Host path already returns an object — attach metrics (non-breaking). Raw path stays a
+          // BARE return by default (back-compat), and returns { result, metrics } only when the
+          // caller opts in with { meter: true } — e.g. a compute node that must PRICE the job.
+          if (host) finish(resolve, { result: m.result, writes: m.writes || [], log: m.log || [], metrics });
+          else finish(resolve, opts.meter ? { result: m.result, metrics } : m.result);
+        } else finish(reject, new Error((m && m.error) || 'WASM execution failed'));
       });
       worker.once('error', (e) => finish(reject, new Error('WASM execution failed: ' + e.message)));
       worker.once('exit', (code) => {

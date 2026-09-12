@@ -1,4 +1,5 @@
 import { ComputeRuntime } from './compute.js';
+import { MarketPricing } from './pricing.js';
 
 /**
  * Compute role (E3): accepts + executes compute jobs under this node's own
@@ -23,6 +24,9 @@ export class ComputeNode {
     // smart contracting". It is INJECTED, not imported, so there is no dependency cycle:
     // storage-compute never reaches up to @xmbl/contracts; the caller wires the two together.
     this.contractHost = options.contractHost || null;
+    // Market pricing driven by MEASURED resource use (finding C1): a completed job is priced
+    // from the cpuMs/peakMem the runtime actually measured, not an assumed figure.
+    this.pricing = options.pricing || new MarketPricing();
     // Cumulative count of jobs that completed WITHIN caps (metrics: compute_jobs_run).
     // A refused (over-cap or failed) job is never counted.
     this.computeJobsRun = 0;
@@ -64,11 +68,13 @@ export class ComputeNode {
         throw new Error('runJob requires wasmCode and functionName');
       }
       const code = typeof wasmCode === 'string' ? Buffer.from(wasmCode, 'base64') : wasmCode;
-      // Raw compute-market path: NO host, NO opts forwarded. An untrusted market job never
-      // gets a state-bearing host binding — that is strictly the contract path below.
-      const result = await this.runtime.execute(code, functionName, args);
+      // Raw compute-market path: NO host binding (an untrusted market job never gets a
+      // state-bearing host — that is strictly the contract path below), but METERED so the job
+      // is priced on measured resource use. The runtime returns { result, metrics } here.
+      const { result, metrics } = await this.runtime.execute(code, functionName, args, { meter: true });
       this.computeJobsRun += 1;
-      return { jobId, ok: true, result };
+      const price = this.pricing.calculateComputePrice(metrics.cpuMs, metrics.peakMemBytes / (1024 * 1024));
+      return { jobId, ok: true, result, metrics, price };
     } catch (error) {
       // Over-cap (memory/time limit exceeded) or any other execution failure
       // is a clean refusal, never a thrown error and never counted.

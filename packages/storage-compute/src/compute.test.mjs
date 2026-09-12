@@ -16,6 +16,13 @@ const check = async (n, f) => {
 };
 const B = (...b) => Uint8Array.from(b);
 const HDR = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+// Minimal WASM encoders for the two metering fixtures below, which are large enough (a growable
+// memory, a big loop constant) that hand-typed byte arrays would be error-prone.
+const uleb = (n) => { const o = []; let v = n >>> 0; do { let b = v & 0x7f; v >>>= 7; if (v) b |= 0x80; o.push(b); } while (v); return o; };
+const sleb = (n) => { const o = []; let more = true; while (more) { let b = n & 0x7f; n >>= 7; if ((n === 0 && (b & 0x40) === 0) || (n === -1 && (b & 0x40))) more = false; else b |= 0x80; o.push(b); } return o; };
+const sect = (id, p) => [id, ...uleb(p.length), ...p];
+const vec = (items) => [...uleb(items.length), ...items.flat()];
+const wname = (s) => [...uleb(s.length), ...[...s].map((c) => c.charCodeAt(0))];
 
 // add(i32,i32)->i32 { local.get 0; local.get 1; i32.add }  export "add"
 const ADD = B(
@@ -61,6 +68,43 @@ const MEM_OVERSIZED = B(...HDR, 0x05, 0x05, 0x01, 0x01, 0x01, 0xe8, 0x07);
 
 // memory section: flags 0x03 (shared + max), min 1, max 2 → shared memory, rejected
 const MEM_SHARED = B(...HDR, 0x05, 0x04, 0x01, 0x03, 0x01, 0x02);
+
+// grow()->() { memory.grow(8); drop }  — declares an exported, bounded (max 10) memory and grows
+// it from 1 to 9 pages. Metering must read the run's PEAK memory (9 pages) off this, not an assumption.
+const GROW = B(
+  ...HDR,
+  ...sect(1, vec([[0x60, 0x00, 0x00]])),                 // t0 ()->()
+  ...sect(3, vec([[0x00]])),                              // func0 : t0
+  ...sect(5, vec([[0x01, 0x01, 0x0a]])),                  // memory: flags1 (bounded), min 1, max 10
+  ...sect(7, vec([[...wname('memory'), 0x02, 0x00], [...wname('grow'), 0x00, 0x00]])),
+  ...sect(10, vec([(() => {
+    const body = [0x41, ...sleb(8), 0x40, 0x00, 0x1a, 0x0b]; // i32.const 8; memory.grow 0; drop; end
+    const entry = [0x00, ...body];                          // 0 locals
+    return [...uleb(entry.length), ...entry];
+  })()])),
+);
+
+// busy()->i32 { let i = 50_000_000; while (i) i -= 1; return i }  — a finite heavy loop. Metering
+// must measure MORE cpuMs on this than on a trivial add: real work, not a fixed cost.
+const BUSY = B(
+  ...HDR,
+  ...sect(1, vec([[0x60, 0x00, 0x01, 0x7f]])),            // t0 ()->i32
+  ...sect(3, vec([[0x00]])),                              // func0 : t0
+  ...sect(7, vec([[...wname('busy'), 0x00, 0x00]])),
+  ...sect(10, vec([(() => {
+    const body = [
+      0x41, ...sleb(50_000_000), 0x21, 0x00,              // i = 50_000_000
+      0x03, 0x40,                                          // loop
+      0x20, 0x00, 0x41, 0x01, 0x6b, 0x21, 0x00,           //   i = i - 1
+      0x20, 0x00, 0x0d, 0x00,                              //   br_if 0 (continue while i != 0)
+      0x0b,                                                // end loop
+      0x20, 0x00,                                          // push i (0) → return value
+      0x0b,                                                // end func
+    ];
+    const entry = [0x01, 0x01, 0x7f, ...body];             // locals: 1 × i32
+    return [...uleb(entry.length), ...entry];
+  })()])),
+);
 
 await check('normal guest computes and returns (5 + 7 = 12)', async () => {
   const rt = new ComputeRuntime({ maxTime: 4000 });
@@ -130,6 +174,53 @@ await check('host hook: a host that does NOT provide a declared import → denie
   const rt = new ComputeRuntime({ maxTime: 2000 }); // empty allow-list, empty host
   const host = { source: '(ctx) => ({})' }; // provides nothing
   await assert.rejects(() => rt.execute(EMIT, 'run', [1], { host }), /denied import: env\.emit/);
+});
+
+// ============================================================================
+// RESOURCE METERING (finding C1) — the runtime MEASURES the CPU time and peak memory a guest
+// actually used, surfaces them from execute(), and a compute node PRICES the job from those
+// measured figures via MarketPricing. Before this the price had no measured basis at all; the
+// "fraction of the resources" claim can only ever rest on a real measurement, which is what
+// these prove as OUTCOMES (a bigger guest measures bigger, and the price is exactly the model
+// applied to the measurement) — NOT a comparison to Ethereum, which is a separate benchmark.
+// ============================================================================
+await check('metrics: the raw path stays bare by default, and returns measured { result, metrics } when metered', async () => {
+  const rt = new ComputeRuntime({ maxTime: 4000 });
+  const bare = await rt.execute(ADD, 'add', [5, 7]);
+  assert.strictEqual(bare, 12, 'without { meter } the raw path returns the bare result (back-compat)');
+  const { result, metrics } = await rt.execute(ADD, 'add', [5, 7], { meter: true });
+  assert.strictEqual(result, 12, 'metered run computes the same result');
+  assert.ok(Number.isFinite(metrics.cpuMs) && metrics.cpuMs >= 0, 'cpuMs is a real, finite, non-negative measurement');
+  assert.strictEqual(typeof metrics.peakMemBytes, 'number', 'peak memory is reported');
+});
+
+await check('metrics: a memory-growing guest measures a LARGER peak than a guest with no memory', async () => {
+  const rt = new ComputeRuntime({ maxMemory: 64 * 1024 * 16, maxTime: 4000 }); // 16-page cap: room to grow to 9
+  const none = (await rt.execute(ADD, 'add', [1, 1], { meter: true })).metrics;   // ADD imports/declares no memory
+  const grown = (await rt.execute(GROW, 'grow', [], { meter: true })).metrics;     // grows 1 → 9 pages
+  assert.strictEqual(none.peakMemBytes, 0, 'a guest with no linear memory measures 0 peak bytes');
+  assert.strictEqual(grown.peakMemPages, 9, 'the grown guest peaked at exactly 1 + 8 = 9 pages');
+  assert.ok(grown.peakMemBytes > none.peakMemBytes, 'peak memory reflects what the guest actually allocated');
+});
+
+await check('metrics: a heavy compute guest measures MORE cpuMs than a trivial one', async () => {
+  const rt = new ComputeRuntime({ maxTime: 4000 });
+  const light = (await rt.execute(ADD, 'add', [1, 1], { meter: true })).metrics;
+  const heavy = (await rt.execute(BUSY, 'busy', [], { meter: true })).metrics;
+  assert.ok(heavy.cpuMs > light.cpuMs, `a 50M-iteration loop (${heavy.cpuMs}ms) must measure more CPU than one add (${light.cpuMs}ms)`);
+});
+
+await check('metrics: a compute node PRICES a completed job from its measured metrics (not an assumed cost)', async () => {
+  const { ComputeNode } = await import('./compute-node.js');
+  const { MarketPricing } = await import('./pricing.js');
+  const node = new ComputeNode({ runtime: new ComputeRuntime({ maxTime: 4000 }) });
+  const out = await node.runJob({ jobId: 'j1', wasmCode: GROW, functionName: 'grow' });
+  assert.strictEqual(out.ok, true, 'the job ran within caps');
+  assert.strictEqual(out.metrics.peakMemPages, 9, 'the node carries the job’s measured peak memory');
+  assert.strictEqual(typeof out.price, 'number', 'the completed job is priced');
+  const expected = new MarketPricing().calculateComputePrice(out.metrics.cpuMs, out.metrics.peakMemBytes / (1024 * 1024));
+  assert.strictEqual(out.price, expected, 'the price is exactly MarketPricing applied to the MEASURED cpuMs + peak memory');
+  assert.ok(out.price > 0, 'a job that used real memory and time has a strictly positive measured price');
 });
 
 console.log(`\ncompute isolation: ${pass} passed, ${fail} failed`);
