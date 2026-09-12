@@ -424,9 +424,13 @@ continue-on-error, and in the release workflow before any publish).
 
 - [ ] ⛔ AUDIT — one external security review of the protocol as a whole before mainnet.
 - [ ] Reproducible builds for the WASM artifacts (`mayo.wasm`) pinned to source commits.
-- [ ] The eight Rust crates are primitive stubs (11 unit tests); they must reach parity with the
-      JS reference or be labeled non-production in their crate docs before crates.io consumers
-      rely on them.
+- [x] The eight Rust crates are primitive stubs (11 unit tests); they had to reach parity with the
+      JS reference **or** be labeled non-production in their crate docs before crates.io consumers
+      rely on them. Closed via the label branch: every crate's `src/lib.rs` carries a crate-level
+      (`//!`) "⚠ NON-PRODUCTION (pre-mainnet stub)" notice (rendered at the top of the docs.rs page,
+      where a consumer looks), and a regression guard FAILS if any label is removed — it also
+      discovers the crate set from the filesystem, so a ninth crate added without a label fails too.
+      Parity itself remains future work; the label is the honest, enforced interim. — *crates/crate-status.test.mjs (9/9), in `test:protocol`*
 - [ ] Version `0.x` communicates pre-mainnet. Do **not** cut `1.0.0` until every ⛔ AUDIT gate
       above is closed.
 

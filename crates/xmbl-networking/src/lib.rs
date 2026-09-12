@@ -1,3 +1,7 @@
+//! ⚠ NON-PRODUCTION (pre-mainnet stub) — this crate has NOT reached parity with its JS reference
+//! in `packages/`; crates.io consumers must not rely on it. Tracked in MAINNET-GATES.md
+//! (Cross-cutting: "eight Rust crates"). Version `0.x` until parity or an external audit.
+//!
 //! XMBL peer-to-peer networking layer.
 //!
 //! Node discovery, gossip (floodsub), routing, and NAT traversal (circuit-relay v2 + dcutr).

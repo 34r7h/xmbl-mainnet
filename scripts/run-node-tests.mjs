@@ -19,7 +19,7 @@ function findTests(dir) {
   let entries;
   try { entries = readdirSync(dir); } catch { return out; }
   for (const name of entries) {
-    if (name === 'node_modules' || name === '.git') continue;
+    if (name === 'node_modules' || name === '.git' || name === 'target') continue;
     const p = join(dir, name);
     const st = statSync(p);
     if (st.isDirectory()) out.push(...findTests(p));

@@ -1,3 +1,7 @@
+//! ⚠ NON-PRODUCTION (pre-mainnet stub) — this crate has NOT reached parity with its JS reference
+//! in `packages/`; crates.io consumers must not rely on it. Tracked in MAINNET-GATES.md
+//! (Cross-cutting: "eight Rust crates"). Version `0.x` until parity or an external audit.
+//!
 //! XMBL Cubic Ledger Technology.
 //!
 //! Not a linear chain of blocks. Transactions are hashed into blocks; membership is a
