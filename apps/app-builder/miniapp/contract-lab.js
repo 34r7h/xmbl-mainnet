@@ -16,14 +16,14 @@
 //             in-page key→word map standing in for the Verkle tree; every entrypoint call
 //             stages the whole read-set, runs the guest, and folds its write-set back — the
 //             exact staging ContractHost._runFrame does, minus the parts that cannot exist in
-//             a browser (see the honesty banner rendered in the Test stage).
+//             a browser (the Test stage renders that boundary on screen).
 //   DEPLOY  — compute the content-addressed contract id (`xc1_` + sha256(wasm), matching
 //             placement.contractId) and its cubic coordinates (matching
 //             placement.contractCoordinates), both with an in-page SHA-256 so the browser
 //             derives the identical id a node derives, and emit the deploy descriptor an
 //             operator applies with ContractHost.deploy on a node.
 //
-// HONEST BOUNDARY: in-page WebAssembly.instantiate runs the REAL compiled bytecode, but it is
+// EXECUTION BOUNDARY: in-page WebAssembly.instantiate runs the REAL compiled bytecode, but it is
 // NOT the production execution path. The node runs the same bytes under storage-compute's
 // worker-thread isolation with CPU metering, committed to the Verkle state machine, behind the
 // delegation gate (ContractHost.call with an authorizer). None of that — isolation, metering,
@@ -476,7 +476,8 @@ function boot () {
   // The node-side, OPT-IN host calls a deployed contract may declare. NOT an in-page control:
   // the lab compiles LNG (which emits no crypto host imports) and cannot bind real xmbl zk/HE
   // in-page (both need node:crypto; WebCrypto sha256 is async, a host import must be sync), so
-  // these are proven HEADLESSLY by the named reproductions — surfaced honestly, never faked.
+  // each is proven HEADLESSLY by the named reproduction below — the lab prints the exact command
+// that produces the verdict in node rather than fabricating one in-page.
   const cap = (name, flag, sig, lead, cmd, tail) => el('div', { class: 'cap' }, [
     el('div', { class: 'cap-h' }, [el('span', { class: 'cap-name', text: name }), el('span', { class: 'cap-flag', text: flag })]),
     el('div', { class: 'cap-sig', text: sig }),
@@ -490,7 +491,9 @@ function boot () {
       cap('Coordinate / curve proof', 'deploy: zkHost', 'env.xmbl_zk_verify(x_ptr, y_ptr) → i32',
         'A contract gates a Verkle write on a real coordinate/curve zero-knowledge proof (@xmbl/zero-knowledge, FRI, ⛔ unaudited). Proven by ', 'node reproductions/contract-zk.mjs', ' — the root moves on a verified coordinate, is unmoved on a tampered one, and a malformed proof refuses without trapping.'),
       cap('Encrypted add (homomorphic)', 'deploy: heHost', 'env.xmbl_he_add(a_ptr, b_ptr, out_ptr) → i32',
-        'A contract adds post-quantum cubic-LWE ciphertexts it cannot read and persists the encrypted aggregate. Proven by ', 'node reproductions/contract-he.mjs', ' — decryption needs the secret key and is exposed to NO contract.')
+        'A contract adds post-quantum cubic-LWE ciphertexts it cannot read and persists the encrypted aggregate. Proven by ', 'node reproductions/contract-he.mjs', ' — decryption needs the secret key and is exposed to NO contract.'),
+      cap('USDC settlement (composed)', 'zkHost + heHost + seal', 'release = zk_verify(H(record)) · net = he_add · auth = sealSecret→openSecret',
+        'A contract settles USDC on a network the user chooses: the release coordinate is the settlement record hash, so a base proof cannot release an ethereum re-point; the amount nets under he_add; the rail’s authorizing key is sealed (PQ, MAINNET_N) to the receiver and never custodied. Proven by ', 'node reproductions/contract-usdc-settlement.mjs', '.')
     ]),
     el('p', { class: 'note tiny', text: 'These run on a node, not in this in-page lab: the builder compiles LNG (no crypto host imports) and the lab cannot run real xmbl zk/HE in-page (both need node:crypto). A contract opts in with the deploy flag shown; decryption is on no host ABI. Reproduce each claim headlessly with the command above — same boundary as Test mode.' })
   ])

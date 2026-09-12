@@ -10,7 +10,7 @@
 // sample with THIS module and asserts contractIdOf(wasm) is byte-identical to @xmbl/contracts'
 // node-side `contractId` — the same guarantee verify-contract-lab.mjs makes for the miniapp.
 //
-// HONEST BOUNDARY (identical to the miniapp's Test mode): in-page WebAssembly.instantiate runs the
+// EXECUTION BOUNDARY (identical to the miniapp's Test mode): in-page WebAssembly.instantiate runs the
 // REAL compiled bytecode over a Map that stands in for committed Verkle state, but it is NOT the
 // production path — no worker isolation, CPU metering, Verkle commitment, or delegation gate. Those
 // live only on a node (the headless reproductions/agentic-contract-e2e.mjs). A contract deployed
