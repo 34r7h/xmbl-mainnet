@@ -167,18 +167,25 @@ function readMemoryLimits(bytes) {
     // decodes the raw return (e.g. a returned word pointer to a BigInt). Both are pass-through
     // when the caller supplied no marshal, so the raw compute-market path is unchanged.
     const callArgs = marshal.$args ? marshal.$args(args || []) : (args || []);
-    // METER the guest's execution: wall-clock across the call (single-threaded, no host IO, so
-    // this IS the guest's CPU time) and the linear memory it ended on. WASM memory only ever
-    // grows within a run (there is no shrink), so the byte length after the call is the run's
-    // PEAK. This is the measured basis MarketPricing prices against — not an assumed figure.
+    // METER the guest's execution. CPU time comes from process.threadCpuUsage() — the CPU actually
+    // consumed by THIS worker thread, not wall-clock, so a job is not billed for time the thread
+    // spent descheduled (OS preemption, GC in this isolate, co-tenants on the box). That is the
+    // property a paid surface needs: the same guest bills the same regardless of node load.
+    // wallMs is kept alongside as elapsed real time (>= cpuMs) for observability, not billing.
+    // peakMemBytes is the guest's WASM LINEAR memory only — it never shrinks within a run, so the
+    // byte length after the call is the run's peak. The worker's V8 heap (host-binding/marshalling
+    // allocations) is capped by maxOldGenerationSizeMb but is NOT included here (see threat model).
+    const c0 = process.threadCpuUsage();
     const t0 = performance.now();
     const rawResult = fn(...callArgs);
-    const cpuMs = performance.now() - t0;
+    const wallMs = performance.now() - t0;
+    const c1 = process.threadCpuUsage(c0);
+    const cpuMs = (c1.user + c1.system) / 1000; // threadCpuUsage reports microseconds
     const result = marshal.$result ? marshal.$result(rawResult) : rawResult;
     const runMem = (instance.exports && instance.exports.memory) || providedMemory || null;
     const peakMemBytes = runMem ? runMem.buffer.byteLength : 0;
     parentPort.postMessage({ ok: true, result, writes: ctx.writes, log: ctx.log,
-      metrics: { cpuMs, peakMemBytes, peakMemPages: Math.ceil(peakMemBytes / WASM_PAGE_BYTES) } });
+      metrics: { cpuMs, wallMs, peakMemBytes, peakMemPages: Math.ceil(peakMemBytes / WASM_PAGE_BYTES) } });
   } catch (err) {
     parentPort.postMessage({ ok: false, error: String((err && err.message) || err) });
   }
@@ -224,10 +231,12 @@ export class ComputeRuntime {
    *   e.g. loading a crypto verifier's WASM); `declared` is the guest's declared import keys.
    *   Its bindings merge into the host imports and obey the same deny-by-default lookup.
    * @param {boolean} [opts.meter=false] on the RAW path (no host), return `{ result, metrics }`
-   *   instead of the bare result, where `metrics` is the MEASURED `{ cpuMs, peakMemBytes,
+   *   instead of the bare result, where `metrics` is the MEASURED `{ cpuMs, wallMs, peakMemBytes,
    *   peakMemPages }` of the guest's execution. The host path always includes `metrics`.
    * @returns {Promise<number|bigint|{result:any, writes?:any[], log?:any[], metrics:object}>}
-   *   metrics = `{ cpuMs, peakMemBytes, peakMemPages }` — the measured basis MarketPricing prices.
+   *   metrics = `{ cpuMs, wallMs, peakMemBytes, peakMemPages }`: cpuMs is per-thread CPU time (the
+   *   basis MarketPricing prices against), wallMs is elapsed real time, peakMemBytes is the guest's
+   *   WASM linear-memory peak (worker V8 heap is capped but not metered).
    */
   async execute(wasmCode, functionName, args = [], opts = {}) {
     const maxPages = Math.max(1, Math.ceil(this.maxMemory / WASM_PAGE_BYTES));
@@ -274,7 +283,7 @@ export class ComputeRuntime {
       );
       worker.once('message', (m) => {
         if (m && m.ok) {
-          const metrics = m.metrics || { cpuMs: 0, peakMemBytes: 0, peakMemPages: 0 };
+          const metrics = m.metrics || { cpuMs: 0, wallMs: 0, peakMemBytes: 0, peakMemPages: 0 };
           // Host path already returns an object — attach metrics (non-breaking). Raw path stays a
           // BARE return by default (back-compat), and returns { result, metrics } only when the
           // caller opts in with { meter: true } — e.g. a compute node that must PRICE the job.

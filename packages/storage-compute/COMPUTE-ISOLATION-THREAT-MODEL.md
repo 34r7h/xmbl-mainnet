@@ -123,18 +123,24 @@ caller and checked in audit.
 ### C1 — Metering connected to execution (billing-integrity gap — RESOLVED for completed jobs)
 
 **Status: the measurement half is CLOSED.** The worker now measures the guest's
-execution — `performance.now()` across the `fn(...)` call (single-threaded, no host
-IO in the worker, so this is the guest's CPU time) and the linear memory it ended on
-(WASM linear memory only ever grows within a run — there is no shrink instruction — so
-the byte length after the call is the run's PEAK). `execute()` surfaces
-`{ cpuMs, peakMemBytes, peakMemPages }`: always on the host path, and on the raw path
-via opt-in `{ meter: true }` (the bare return stays the default, so every existing caller
-is unchanged). `ComputeNode.runJob` meters each job and returns its measured metrics plus
-a `price` = `MarketPricing.calculateComputePrice(cpuMs, peakMemBytes/MiB)` — the price is
-now MarketPricing applied to what the runtime actually measured. Proven as outcomes in
+execution. `cpuMs` is `process.threadCpuUsage()` across the `fn(...)` call — the CPU
+actually consumed by THIS worker thread (user + system, microsecond-resolution), **not**
+wall-clock, so a job is not billed for time the thread spent descheduled (OS preemption,
+GC in this isolate, co-tenants on the box); the same guest bills the same regardless of
+node load. `wallMs` (elapsed real time via `performance.now()`) is reported alongside for
+observability but is not the billed figure; `cpuMs <= wallMs` is asserted as the invariant
+that distinguishes per-thread CPU from the old wall-clock measurement. `peakMemBytes` is
+the guest's **WASM linear memory only** — it never shrinks within a run (there is no shrink
+instruction), so its byte length after the call is the run's PEAK. `execute()` surfaces
+`{ cpuMs, wallMs, peakMemBytes, peakMemPages }`: always on the host path, and on the raw
+path via opt-in `{ meter: true }` (the bare return stays the default, so every existing
+caller is unchanged). `ComputeNode.runJob` meters each job and returns its measured metrics
+plus a `price` = `MarketPricing.calculateComputePrice(cpuMs, peakMemBytes/MiB)` — the price
+is now MarketPricing applied to what the runtime actually measured. Proven as outcomes in
 `compute.test.mjs` (a memory-growing guest measures a larger peak than a no-memory one; a
-50M-iteration loop measures more cpuMs than a single add; a node's job price is exactly the
-model over the measured figures, strictly positive for a job that used real resources).
+50M-iteration loop measures more cpuMs than a single add; `cpuMs <= wallMs` holds; a node's
+job price is exactly the model over the measured figures, strictly positive for a job that
+used real CPU time and memory).
 
 *Originally:* `MarketPricing.calculateComputePrice(durationMs, memoryMB)` existed but was
 called by nothing in the execution path; `execute()`/`runJob()` never measured duration or
@@ -147,6 +153,11 @@ jobs needs the parent to attribute elapsed wall-clock on termination. *(b)* the 
 basis is not yet a **comparison to Ethereum** — establishing "a fraction of the resources"
 requires a like-for-like benchmark (the same computation as an EVM contract vs. an XCL
 contract, both measured), which is separate work and must not be asserted from this alone.
+*(c)* `peakMemBytes` is the guest's **WASM linear memory only**; the worker's V8 heap —
+which holds host-binding and marshalling allocations (e.g. XCL staging read-sets and
+marshalling 32-byte words through a `host.source` binding) — is **capped** by
+`maxOldGenerationSizeMb` (§2.2) but is **not metered**, so a guest that drives its cost
+through host-side allocation rather than linear memory is under-billed on the memory term.
 
 ### C2 — `eval` of host source is a standing footgun
 
@@ -207,7 +218,7 @@ verdict is deterministic — a requirement, since `ContractHost` drives a shared
 | Bounded WASM/V8 memory | Enforced + tested (§2.2) |
 | Deny-by-default imports, inert stubs | Enforced + tested (§2.3) |
 | Host-hook staged read/write, per-call scoping | Enforced; trusted-caller assumption (§4) |
-| **Metering → billing** | **Finding C1 — measurement CONNECTED (cpuMs + peak memory measured, priced); killed-job billing + EVM comparison still open** |
+| **Metering → billing** | **Finding C1 — measurement CONNECTED (per-thread cpuMs + WASM-linear peak memory measured, priced); killed-job billing, worker-heap metering, EVM comparison still open** |
 | `eval` of host source | Finding C2 — safe only by contract |
 | Aggregate/concurrency caps | Open O1/O2 — out of scope here |
 | Side/covert channels (co-tenancy) | Open O3 — unmitigated |

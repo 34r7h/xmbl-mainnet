@@ -106,6 +106,32 @@ const BUSY = B(
   })()])),
 );
 
+// run()->i32 { memory.grow(8); let i = 20_000_000; while (i) i -= 1; return i }  — grows memory to
+// a deterministic 9-page peak AND burns a deterministic slice of CPU. Pricing multiplies cpuMs by
+// memoryMB, so a job priced strictly-positive needs BOTH terms nonzero: memory alone is not enough
+// (cpuMs, now real per-thread CPU time not wall-clock, can round to 0 on a one-shot allocation).
+const GROWBUSY = B(
+  ...HDR,
+  ...sect(1, vec([[0x60, 0x00, 0x01, 0x7f]])),            // t0 ()->i32
+  ...sect(3, vec([[0x00]])),                              // func0 : t0
+  ...sect(5, vec([[0x01, 0x01, 0x0a]])),                  // memory: flags1 (bounded), min 1, max 10
+  ...sect(7, vec([[...wname('memory'), 0x02, 0x00], [...wname('run'), 0x00, 0x00]])),
+  ...sect(10, vec([(() => {
+    const body = [
+      0x41, ...sleb(8), 0x40, 0x00, 0x1a,                 // i32.const 8; memory.grow 0; drop → peak 9 pages
+      0x41, ...sleb(20_000_000), 0x21, 0x00,              // i = 20_000_000
+      0x03, 0x40,                                          // loop
+      0x20, 0x00, 0x41, 0x01, 0x6b, 0x21, 0x00,           //   i = i - 1
+      0x20, 0x00, 0x0d, 0x00,                              //   br_if 0 (while i != 0)
+      0x0b,                                                // end loop
+      0x20, 0x00,                                          // push i (0) → return value
+      0x0b,                                                // end func
+    ];
+    const entry = [0x01, 0x01, 0x7f, ...body];             // locals: 1 × i32
+    return [...uleb(entry.length), ...entry];
+  })()])),
+);
+
 await check('normal guest computes and returns (5 + 7 = 12)', async () => {
   const rt = new ComputeRuntime({ maxTime: 4000 });
   const r = await rt.execute(ADD, 'add', [5, 7]);
@@ -191,6 +217,11 @@ await check('metrics: the raw path stays bare by default, and returns measured {
   const { result, metrics } = await rt.execute(ADD, 'add', [5, 7], { meter: true });
   assert.strictEqual(result, 12, 'metered run computes the same result');
   assert.ok(Number.isFinite(metrics.cpuMs) && metrics.cpuMs >= 0, 'cpuMs is a real, finite, non-negative measurement');
+  assert.ok(Number.isFinite(metrics.wallMs) && metrics.wallMs >= 0, 'wallMs (elapsed real time) is reported alongside');
+  // cpuMs is per-thread CPU time, NOT wall-clock: on a single-threaded run the CPU consumed can
+  // never exceed the real time elapsed. This invariant is what distinguishes the billed figure
+  // from the old wall-clock measurement (which billed descheduled time the guest did not use).
+  assert.ok(metrics.cpuMs <= metrics.wallMs + 1, `per-thread CPU (${metrics.cpuMs}ms) cannot exceed wall (${metrics.wallMs}ms)`);
   assert.strictEqual(typeof metrics.peakMemBytes, 'number', 'peak memory is reported');
 });
 
@@ -214,13 +245,14 @@ await check('metrics: a compute node PRICES a completed job from its measured me
   const { ComputeNode } = await import('./compute-node.js');
   const { MarketPricing } = await import('./pricing.js');
   const node = new ComputeNode({ runtime: new ComputeRuntime({ maxTime: 4000 }) });
-  const out = await node.runJob({ jobId: 'j1', wasmCode: GROW, functionName: 'grow' });
+  const out = await node.runJob({ jobId: 'j1', wasmCode: GROWBUSY, functionName: 'run' });
   assert.strictEqual(out.ok, true, 'the job ran within caps');
   assert.strictEqual(out.metrics.peakMemPages, 9, 'the node carries the job’s measured peak memory');
+  assert.ok(out.metrics.cpuMs > 0, 'the node carries the job’s measured per-thread CPU time');
   assert.strictEqual(typeof out.price, 'number', 'the completed job is priced');
   const expected = new MarketPricing().calculateComputePrice(out.metrics.cpuMs, out.metrics.peakMemBytes / (1024 * 1024));
   assert.strictEqual(out.price, expected, 'the price is exactly MarketPricing applied to the MEASURED cpuMs + peak memory');
-  assert.ok(out.price > 0, 'a job that used real memory and time has a strictly positive measured price');
+  assert.ok(out.price > 0, 'a job that used real memory and CPU time has a strictly positive measured price');
 });
 
 console.log(`\ncompute isolation: ${pass} passed, ${fail} failed`);

@@ -264,11 +264,15 @@ continue-on-error, and in the release workflow before any publish).
       adversarial timing (that stack's safety is covered separately by `@xmbl/consensus`'s
       byzantine-matrix); *(d)* the **"fraction of the resources" claim now has a MEASURED basis but no
       COMPARISON yet** — finding C1 is resolved for completed jobs (the compute worker measures real
-      cpuMs + peak memory, `execute` surfaces them, and `ComputeNode.runJob` prices from them via
-      MarketPricing; proven in compute.test.mjs 13/13), but a like-for-like benchmark against Ethereum
-      (the SAME computation as an EVM contract vs. an XCL contract, both measured) is separate work and
-      is NOT claimed from the measurement alone; a job killed at the deadline is also still unbilled.
-      These are the substance of the remaining smart-contract parity work.
+      per-thread CPU time via `process.threadCpuUsage` — not wall-clock, so descheduled time is not
+      billed — plus WASM-linear peak memory; `execute` surfaces `{cpuMs, wallMs, peakMemBytes,
+      peakMemPages}`, and `ComputeNode.runJob` prices from them via MarketPricing; proven in
+      compute.test.mjs 13/13, including the `cpuMs <= wallMs` invariant), but a like-for-like benchmark
+      against Ethereum (the SAME computation as an EVM contract vs. an XCL contract, both measured) is
+      separate work and is NOT claimed from the measurement alone; still open too: a job killed at the
+      deadline is unbilled, and worker V8-heap use (host-binding/marshalling allocations) is capped but
+      not metered (only WASM linear memory is). These are the substance of the remaining smart-contract
+      parity work.
 
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 
@@ -402,9 +406,11 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
       `packages/storage-compute/COMPUTE-ISOLATION-THREAT-MODEL.md`. Documents the trust boundaries and the
       three ENFORCED+tested properties (cross-thread wall-clock termination, bounded WASM/V8 memory,
       deny-by-default imports with inert stubs), the host-hook staged read/write path and its trusted-caller
-      `eval` assumption. Surfaces real findings for the audit: **C1 metering is DISCONNECTED** (`MarketPricing`
-      is exported but never called; `execute`/`runJob` measure no duration/memory and return no price → no
-      billing basis for a paid surface), C2 the host-source `eval` footgun, and open questions O1/O2 (no
+      `eval` assumption. Surfaces real findings for the audit: **C1 metering was DISCONNECTED** (`MarketPricing`
+      was exported but never called; `execute`/`runJob` measured no duration/memory and returned no price → no
+      billing basis for a paid surface) — **since RESOLVED for completed jobs** (per-thread CPU time +
+      WASM-linear peak memory now measured and priced; killed-job billing, worker-heap metering, and the
+      EVM comparison remain open — see T6.2 remainder (d)), C2 the host-source `eval` footgun, and open questions O1/O2 (no
       aggregate/concurrency admission control), O3 (co-tenancy side/covert channels unmitigated — Worker
       threads share the process), O4 (fuzz the hand-rolled section parser), O5 (contract-path determinism
       unscreened). Claims nothing secure; the ⛔ AUDIT gate stays open.
