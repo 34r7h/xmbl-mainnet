@@ -472,9 +472,32 @@ function boot () {
     deployBody
   ])
 
+  // ── host capabilities (read-only reference) ──────────────────────────────────
+  // The node-side, OPT-IN host calls a deployed contract may declare. NOT an in-page control:
+  // the lab compiles LNG (which emits no crypto host imports) and cannot bind real xmbl zk/HE
+  // in-page (both need node:crypto; WebCrypto sha256 is async, a host import must be sync), so
+  // these are proven HEADLESSLY by the named reproductions — surfaced honestly, never faked.
+  const cap = (name, flag, sig, lead, cmd, tail) => el('div', { class: 'cap' }, [
+    el('div', { class: 'cap-h' }, [el('span', { class: 'cap-name', text: name }), el('span', { class: 'cap-flag', text: flag })]),
+    el('div', { class: 'cap-sig', text: sig }),
+    el('div', { class: 'cap-proof' }, [document.createTextNode(lead), el('code', { text: cmd }), document.createTextNode(tail)])
+  ])
+  const capsPanel = el('section', { class: 'panel caps-panel' }, [
+    el('div', { class: 'panel-h' }, [el('span', { class: 'ph-title', text: 'Host capabilities' }), el('span', { class: 'ph-note', text: 'node-side · opt-in per contract' })]),
+    el('div', { class: 'caps' }, [
+      cap('Signature verify', 'deploy: cryptoHost', 'env.xmbl_cubic_sig_verify · env.xmbl_mayo_verify',
+        'A contract verifies a Cubic-SIG or MAYO signature over material it supplies. Proven by ', 'node reproductions/agentic-contract-e2e.mjs', ' and the crypto cases in packages/contracts/src/xcl/contract-host.test.mjs.'),
+      cap('Coordinate / curve proof', 'deploy: zkHost', 'env.xmbl_zk_verify(x_ptr, y_ptr) → i32',
+        'A contract gates a Verkle write on a real coordinate/curve zero-knowledge proof (@xmbl/zero-knowledge, FRI, ⛔ unaudited). Proven by ', 'node reproductions/contract-zk.mjs', ' — the root moves on a verified coordinate, is unmoved on a tampered one, and a malformed proof refuses without trapping.'),
+      cap('Encrypted add (homomorphic)', 'deploy: heHost', 'env.xmbl_he_add(a_ptr, b_ptr, out_ptr) → i32',
+        'A contract adds post-quantum cubic-LWE ciphertexts it cannot read and persists the encrypted aggregate. Proven by ', 'node reproductions/contract-he.mjs', ' — decryption needs the secret key and is exposed to NO contract.')
+    ]),
+    el('p', { class: 'note tiny', text: 'These run on a node, not in this in-page lab: the builder compiles LNG (no crypto host imports) and the lab cannot run real xmbl zk/HE in-page (both need node:crypto). A contract opts in with the deploy flag shown; decryption is on no host ABI. Reproduce each claim headlessly with the command above — same boundary as Test mode.' })
+  ])
+
   const cols = el('div', { class: 'cols' }, [
     editorPanel,
-    el('div', { class: 'right' }, [el('div', { class: 'compile-row' }, [compileBtn, buildMsg]), testPanel, deployPanel])
+    el('div', { class: 'right' }, [el('div', { class: 'compile-row' }, [compileBtn, buildMsg]), testPanel, deployPanel, capsPanel])
   ])
   root.appendChild(cols)
 
