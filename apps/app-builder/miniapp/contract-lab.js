@@ -614,6 +614,18 @@ function boot () {
     if (onAdd) { const b = el('button', { class: 'add', text: addLabel }); b.addEventListener('click', onAdd); h.appendChild(b) }
     return h
   }
+  // Borderless prose inputs must size to their content, or a fixed-width empty box still reads as a
+  // slot in a wall. Chromium honors `field-sizing: content` in CSS; where it is absent we drive the
+  // `size` attribute from the value length (clamped to the same 2.5–34ch the CSS uses). renderVisual
+  // rebuilds the whole panel each call, so wiring fresh listeners here leaks nothing.
+  const FIELD_SIZING = typeof CSS !== 'undefined' && CSS.supports && CSS.supports('field-sizing', 'content')
+  function autosizeBuilderInputs () {
+    if (FIELD_SIZING) return
+    for (const inp of visualPanel.querySelectorAll('input.in')) {
+      const fit = () => { inp.size = Math.max(2, Math.min(34, (inp.value || inp.placeholder || '').length + 1)) }
+      fit(); inp.addEventListener('input', fit)
+    }
+  }
   function renderVisual () {
     clear(visualPanel)
     // name
@@ -682,6 +694,7 @@ function boot () {
     const pre = el('pre', { text: S.src })
     S._srcPre = pre
     visualPanel.appendChild(el('div', { class: 'src-preview' }, [el('div', { class: 'sub-h', text: 'Generated LNG — updates as you build' }), pre]))
+    autosizeBuilderInputs()
   }
 
   // ── COMPILE / TEST ───────────────────────────────────────────────────────────

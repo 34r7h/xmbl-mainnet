@@ -240,24 +240,43 @@
     .word.dim { color: var(--faint); }
     .kicker { font-family: var(--mono); font-size: .6875rem; letter-spacing: .04em; color: var(--patina-ink); }
 
-    /* inputs: track-recessed */
-    .in, .sel, .arg {
-      font: inherit; font-size: .875rem; color: var(--ink); background: var(--paper);
-      border: 1px solid var(--rule-2); border-radius: var(--r-sm); height: 30px; padding: 0 9px;
-      transition: border-color var(--quick) var(--ease), box-shadow var(--quick) var(--ease);
-      box-shadow: var(--track-recess);
+    /* inputs & pickers: read as PROSE at rest — NO chrome until you touch them. This is the
+       anti-input-wall rule: a value is told apart from the connective words purely by typeface
+       and weight (mono ink = an editable value, sans muted = a fixed connective word), so a
+       method body reads like a typeset sentence instead of a grid of boxes. The border and
+       track-recess appear only on :hover / :focus, i.e. exactly when you are editing that one
+       value. Inputs size to their content (field-sizing, with a JS `size` fallback) so they never
+       reserve empty slot-width. */
+    .in, .sel {
+      font: inherit; font-size: .875rem; color: var(--ink);
+      background: transparent; border: 1px solid transparent; border-radius: var(--r-sm);
+      height: 28px; padding: 0 5px; box-shadow: none;
+      transition: border-color var(--quick) var(--ease), background var(--quick) var(--ease), box-shadow var(--quick) var(--ease);
     }
-    .in:focus, .sel:focus, .arg:focus { outline: none; border-color: var(--kinpaku-deep); box-shadow: var(--track-recess), 0 0 0 3px var(--accent-soft); }
-    .in { min-width: 64px; max-width: 160px; }
-    .in.name { max-width: 140px; font-family: var(--mono); }
-    .in.sm { max-width: 84px; height: 26px; }
-    .in.num { max-width: 76px; font-family: var(--mono); }
-    .in.operand { max-width: 140px; font-family: var(--mono); }
-    .sel { cursor: pointer; max-width: 240px; padding-right: 6px; }
-    .sel.op { max-width: 132px; font-family: var(--mono); }
-    .sel.vis { max-width: 104px; }
-    .sel.skind { max-width: 138px; font-weight: 500; color: var(--patina-ink); }
+    .in:hover, .sel:hover { border-color: var(--rule); background: var(--paper); }
+    .in:focus, .sel:focus {
+      outline: none; background: var(--paper); border-color: var(--kinpaku-deep);
+      box-shadow: var(--track-recess), 0 0 0 3px var(--accent-soft);
+    }
+    .in { field-sizing: content; min-width: 2.5ch; max-width: 34ch; }
+    .in.name, .in.num, .in.operand { font-family: var(--mono); }
+    .in.sm { height: 24px; }
+    .in.cname { font-weight: 600; font-size: 1.125rem; color: var(--ink); min-width: 8ch; }
+    /* selects read as prose too: native arrow hidden at rest, a hairline chevron fades in on
+       hover/focus so the control still announces itself the moment you reach for it. */
+    .sel {
+      cursor: pointer; appearance: none; -webkit-appearance: none; -moz-appearance: none;
+      max-width: 40ch; padding-right: 5px;
+      background-repeat: no-repeat; background-position: right 6px center; background-size: 9px 6px;
+    }
+    .sel:hover, .sel:focus {
+      padding-right: 20px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6' viewBox='0 0 9 6'%3E%3Cpath d='M1 1l3.5 3.5L8 1' fill='none' stroke='%23999' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    }
+    .sel.op { font-family: var(--mono); }
+    .sel.skind { font-weight: 500; color: var(--patina-ink); }
     .sel.sample { max-width: 340px; height: 32px; }
+    .sel.sample:hover, .sel.sample:focus { padding-right: 20px; }
 
     .x {
       appearance: none; border: 0; background: transparent; color: var(--mute-deep); cursor: pointer;
@@ -365,9 +384,13 @@
     .call-sig { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; font-family: var(--mono); font-size: .875rem; color: var(--inst-text); }
     .ep { font-weight: 600; color: var(--patina); }
     .paren { color: var(--inst-muted); }
+    /* Test-console call argument — deliberately an INSTRUMENT input (dark, recessed), NOT prose:
+       this is the metering panel, not the builder, so it keeps its chrome at rest. */
     .arg {
       font-family: var(--mono); font-size: .8125rem; width: 72px; height: 26px; color: var(--inst-text);
-      background: var(--inst-deep); border: 1px solid var(--inst-rule); box-shadow: inset 0 1px 2px oklch(0% 0 0 / .4);
+      background: var(--inst-deep); border: 1px solid var(--inst-rule); border-radius: var(--r-sm);
+      padding: 0 9px; box-shadow: inset 0 1px 2px oklch(0% 0 0 / .4);
+      transition: border-color var(--quick) var(--ease), box-shadow var(--quick) var(--ease);
     }
     .arg:focus { border-color: var(--kinpaku); box-shadow: inset 0 1px 2px oklch(0% 0 0 / .4), 0 0 0 3px var(--accent-soft); }
     .call-row .btn {
