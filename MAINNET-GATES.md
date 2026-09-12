@@ -254,11 +254,33 @@ continue-on-error, and in the release workflow before any publish).
       new UTXO record. — *xcl/abi.js (`HOST_ABI_UTXO_SOURCE`, `utxoKey`, `spendKey`); xcl/contract-host.js
       (`utxoHost` flag, input staging, conservation enforcement); xcl/utxo-fixtures.mjs;
       contract-host.test.mjs (33/33); utxo-multinode.test.mjs (3/3)*
+- [x] **T6.2c — CONTRACT COMPOSITION with reentrancy IMPOSSIBLE BY DESIGN** (the EVM power gap, closed —
+      and closed more safely than the EVM). A contract interacts with another through two primitives:
+      *(1)* **`xmbl_read(peer, slot)`** — a SYNCHRONOUS cross-contract state read that executes NO peer
+      code (it is served from a pre-staged, DECLARED read footprint), so it carries zero reentrancy risk
+      and covers the balanceOf/oracle/allowance case that makes composition usable; *(2)* **`xmbl_send(peer,
+      amount)`** — an ASYNCHRONOUS message whose target runs as a SEPARATE frame AFTER the sender completes,
+      never nested. The host runs the entry call plus every message it transitively emits as ONE atomic
+      transaction (a shared overlay giving read-your-writes across frames, conservation checked once over
+      the UNION, a frame cap so a loop terminates in a revert, and a whole-cascade revert if any frame
+      throws). Because a contract can NEVER yield control to another contract's code mid-execution, the
+      classic reentrancy attack is not guarded against — it is **inexpressible**. Proven as OUTCOMES in
+      *xcl/contract-compose.test.mjs (5/5)*: the canonical DAO-vulnerable withdraw (send BEFORE zeroing the
+      balance) pays out exactly ONCE across a vault→attacker→vault cascade (cumulative payout 100, not the
+      200 the identical EVM ordering drains); a synchronous read returns a peer's committed state; a read
+      outside the declared footprint traps; an unbounded cascade reverts at the frame cap with no partial
+      commit; a trapping frame reverts the whole transaction. — *xcl/abi.js (`HOST_ABI_COMPOSE_SOURCE`,
+      `HOST_IMPORT_KEYS_COMPOSE`, `callerTag`); xcl/contract-host.js (transaction boundary + `_runFrame`
+      cascade + `link()`); contract-compose.test.mjs (5/5)*
 - [ ] **T6.2 open remainders (HONEST scope of the "≥ Ethereum, fraction of resources" claim).** What
       T6.2 does NOT yet prove, and must not be claimed: *(a)* the UTXO proof contracts are hand-encoded
       and use **i64** amounts, not the `~u256` word width — LNG cannot yet EMIT `xmbl_utxo_*` calls from
-      `~contract` source (same gap as T6.1-d for crypto); *(b)* **contract-to-contract calls** do not
-      exist — `ContractHost` cannot reenter itself, a real power gap vs the EVM; *(c)* multi-node
+      `~contract` source (same gap as T6.1-d for crypto); *(b)* contract composition (T6.2c) is proven on
+      the **i32-slot subset** — `xmbl_read`/`xmbl_send` carry i32 values and messages one i32 argument; the
+      `~u256`/byte-key and multi-arg forms are the documented next extension (they change only `abi.js`, not
+      the cascade machinery). Also scoped: authorization is checked on the EXTERNAL entry only — internal
+      messages inherit it (like an EVM internal call), and per-message authorization is a future refinement;
+      *(c)* multi-node
       reproduction is proven across independent real node SUBSYSTEMS (three `Ledger`+`StateMachine`
       pairs converge on one root), but NOT yet across the full networking/consensus stack under
       adversarial timing (that stack's safety is covered separately by `@xmbl/consensus`'s

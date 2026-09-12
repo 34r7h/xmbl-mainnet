@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import {
   HOST_ABI_SOURCE, HOST_ABI_SOURCE_BYTES, XCL_WORD_MARSHAL_SOURCE, HOST_ABI_CRYPTO_INIT_SOURCE,
-  HOST_ABI_UTXO_SOURCE, slotKey, byteKey, utxoKey, spendKey, XCL_WORD_BYTES,
+  HOST_ABI_UTXO_SOURCE, HOST_ABI_COMPOSE_SOURCE, slotKey, byteKey, utxoKey, spendKey, callerTag,
+  XCL_WORD_BYTES,
 } from './abi.js';
 import { contractId, contractCoordinates } from './placement.js';
 import { InMemoryState } from './in-memory-state.js';
@@ -81,8 +82,32 @@ export class ContractHost {
       // state, attaches the UTXO value ABI, then enforces value conservation FAIL-CLOSED after the
       // run — a call that mints value (out > in) is refused and applies nothing.
       utxoHost: !!deployOpts.utxoHost,
+      // composeHost: the contract interacts with OTHER contracts (env.xmbl_read / env.xmbl_send).
+      // When set, ContractHost attaches the composition ABI, stages this contract's declared
+      // foreign reads, and — for xmbl_send — enqueues a message resolved through this contract's
+      // peer table. Peers/reads reference other contract ids, so they are wired AFTER deployment
+      // via link() (a contract id is content-addressed from its bytes and cannot embed a peer's id).
+      composeHost: !!deployOpts.composeHost,
+      peers: [],   // [{id, fn}] — the targets xmbl_send(peer_idx, …) may reach, set by link()
+      reads: [],   // [[peerIdx, slot]] — the declared synchronous foreign-read footprint, set by link()
     });
     return { id, coordinates };
+  }
+
+  /**
+   * Wire a composeHost contract's peer table and declared read footprint. Called AFTER the peer
+   * contracts are deployed (their ids are content-addressed, so a contract cannot embed a peer's
+   * id at deploy time). `peers[i]` is the {id, fn} that `xmbl_send(i, …)` targets; `reads` is the
+   * list of `[peerIdx, slot]` pairs the contract may read synchronously via `xmbl_read` — any read
+   * outside it traps (fail-closed).
+   * @param {string} id
+   * @param {{peers?:Array<{id:string, fn:string}>, reads?:Array<[number,number]>}} wiring
+   */
+  link(id, { peers, reads } = {}) {
+    const c = this.contracts.get(id);
+    if (!c) throw new Error(`ContractHost.link: unknown contract ${id}`);
+    if (peers) c.peers = peers.map((p) => ({ id: String(p.id), fn: String(p.fn) }));
+    if (reads) c.reads = reads.map(([pi, s]) => [pi | 0, s | 0]);
   }
 
   /**
@@ -102,150 +127,222 @@ export class ContractHost {
    *   (the returned 32-byte word) for a `wordAbi` contract
    */
   async call(id, fnName, args = [], opts = {}) {
-    const c = this.contracts.get(id);
-    if (!c) throw new Error(`ContractHost.call: unknown contract ${id}`);
+    const entry = this.contracts.get(id);
+    if (!entry) throw new Error(`ContractHost.call: unknown contract ${id}`);
 
     // ENFORCEMENT — the true-impute gate, load-bearing and fail-closed. A gated contract runs
     // ONLY when the delegation chain verifies for THIS contract (id as audience) and the action
     // (fnName) is in the token's scope. No authorizer configured but the contract is gated → the
     // call is refused, never silently allowed. This is where identity's verifyChain stops an
     // unauthorized state transition from ever touching the WASM or the state tree.
-    if (c.gated) {
+    // Gating authorizes the EXTERNAL entry call; internal messages the cascade emits inherit that
+    // authorization (like an EVM internal call, which is not re-authorized against msg.sender).
+    if (entry.gated) {
       if (!this.authorizer) throw new Error(`ContractHost.call: contract ${id} is gated but no authorizer is configured (fail-closed)`);
       const pres = opts.auth ? { ...opts.auth, action: fnName, args } : null;
       const decision = pres ? await this.authorizer.verify(pres) : { ok: false, reason: 'no-authorization-presented' };
       if (!decision.ok) throw new Error(`ContractHost.call: unauthorized (${decision.reason}) for ${fnName} on ${id}`);
     }
 
-    // Stage the read-set: every slot the contract declared, read from committed state.
-    const slots = {};
-    for (const slot of c.slots) {
-      const v = this.state.get(slotKey(id, slot));
-      slots[slot] = (v === undefined || v === null) ? 0 : (v | 0);
-    }
-    // Byte-keyed read-set (byteState contracts): every byte key the contract has touched,
-    // read from committed state as its 32-byte hex word. A key never written stays absent
-    // (the ABI's get zero-fills it), so a fresh contract stages nothing.
-    const kv = {};
-    for (const hk of c.byteKeys) {
-      const v = this.state.get(byteKey(id, hk));
-      if (v !== undefined && v !== null) kv[hk] = v;
-    }
-
-    // UTXO input read-set (utxoHost contracts): every id in `opts.inputs`, read from committed
-    // Verkle state as the ledger-produced `utxo:<id>` record. FAIL-CLOSED at staging: an input
-    // that does not exist, or one already carrying a `spend:<id>` marker (a double-spend), is
-    // refused before any WASM runs. inputIds is SORTED so xmbl_input_id(i) is identical on every
-    // node — the read-set a contract sees must be a pure function of the presented set.
-    let utxos = null; let inputIds = null;
-    if (c.utxoHost) {
-      utxos = {}; inputIds = [...new Set((opts.inputs || []).map(String))].sort();
-      for (const uid of inputIds) {
-        if (this.state.get(spendKey(uid)) !== undefined) {
-          throw new Error(`ContractHost.call: input utxo ${uid} is already spent (double-spend refused)`);
-        }
-        const rec = this.state.get(utxoKey(uid));
-        if (rec === undefined || rec === null) {
-          throw new Error(`ContractHost.call: input utxo ${uid} does not exist`);
-        }
-        const amt = (rec && typeof rec === 'object') ? rec.amount : rec;
-        if (amt === undefined || amt === null) throw new Error(`ContractHost.call: input utxo ${uid} has no amount`);
-        utxos[uid] = String(amt);
-      }
-    }
-
-    // The byte-pointer ABI and the v0 slot ABI collide on the names xmbl_verkle_get/set (different
-    // signatures), so a call uses exactly ONE of them per the contract's kind. The UTXO value ABI
-    // uses disjoint names (xmbl_utxo_* / xmbl_input_*), so it composes onto whichever state ABI the
-    // contract uses — both sub-factories are eval'd over the same ctx and their bindings merged.
-    const stateSource = c.byteState ? HOST_ABI_SOURCE_BYTES : HOST_ABI_SOURCE;
-    const source = c.utxoHost
-      ? `(ctx) => Object.assign({}, (${stateSource})(ctx), (${HOST_ABI_UTXO_SOURCE})(ctx))`
-      : stateSource;
-
-    const host = {
-      source,
-      // A cryptoHost contract also gets the staged signature material under `crypto`, read by
-      // the crypto init bindings and identical on every node (so the verdict is deterministic).
-      // A utxoHost contract gets the staged input UTXOs and their sorted id list.
-      data: { slots, caller: (opts.caller | 0), kv, crypto: c.cryptoHost ? (opts.crypto || null) : null, utxos, inputIds },
-      // A word-ABI (LNG-compiled) contract needs its `~u256` args marshalled into guest-memory
-      // word pointers and its returned pointer decoded; a hand-encoded i32-ABI contract does not.
-      marshal: c.wordAbi ? XCL_WORD_MARSHAL_SOURCE : null,
-      // A cryptoHost contract needs the async crypto verifiers bound before it runs.
-      init: c.cryptoHost ? HOST_ABI_CRYPTO_INIT_SOURCE : null,
+    // ── TRANSACTION. The entry call and EVERY message it transitively emits run as ONE atomic
+    // transaction. Nothing touches committed state (this.state) until the whole cascade completes
+    // AND conservation passes; any frame that throws unwinds the lot. This is what makes the
+    // cascade safe: there is no partial commit for a re-entrant caller to observe or exploit.
+    const tx = {
+      overlay: new Map(),     // stateKey -> staged value: reads see committed state OVERLAID with
+                              // writes already made in this transaction (read-your-writes across frames)
+      writes: [],             // {id, kind:'slot'|'bytes', …} state writes, in order, applied once at the end
+      spentIds: [],           // UNION of UTXO spends across all frames (conservation is over the union)
+      outputs: [],            // UNION of UTXO creates {from, to, amount}
+      spendMarkers: [],       // {id, uid, fnName} nullifiers to write at apply
+      stagedUtxos: new Map(), // uid -> amount string, accumulated as frames stage their inputs
+      queue: [],              // pending messages {from, to, fn, arg} — drained FIFO, never nested
+      frames: 0,
     };
-    // The runtime satisfies an import from the host module if the ABI provides it, and denies
-    // anything else — so the ABI keys ARE the allow surface for this call, scoped to this call.
-    // We deliberately do NOT widen the runtime's persistent `allowedImports`: mutating a shared
-    // runtime would leak a standing allowance to later, unrelated jobs on the same instance.
-    const { result, writes } = await this.runtime.execute(c.wasm, fnName, args, { host });
+    const maxFrames = opts.maxFrames || 64;
 
-    // ── UTXO CONSERVATION — the security property, enforced FAIL-CLOSED before ANY write lands.
-    // Value cannot be minted: the sum of the UTXOs this call spends must equal the sum it creates
-    // plus the fee. This is checked BEFORE applying the write-set, so a violating call reverts
-    // WHOLLY — no spend marker, no output, no slot/byte write, the state root unmoved. This is
-    // where XCL refuses an unbalanced value transition, exactly as it refuses an unauthorized one.
-    const spentIds = [];
-    const outputs = [];
-    for (const w of writes) {
-      if (w[0] === 'utxo_spend') spentIds.push(w[1]);
-      else if (w[0] === 'utxo_create') outputs.push({ to: w[1], amount: BigInt(w[2]) });
+    // The entry frame. Its result and raw write-set are what call() returns (back-compat: a
+    // single-contract call with no messages behaves exactly as before).
+    const first = await this._runFrame(tx, id, fnName, args, opts, (opts.caller | 0));
+
+    // Drain the message queue FIFO. Each frame runs to COMPLETION before the next begins — there
+    // is no nested call stack, so classic reentrancy (yielding to another contract mid-execution)
+    // cannot occur by construction. A cascade that will not terminate hits the frame cap and
+    // REVERTS wholly rather than draining resources or committing a partial transaction.
+    while (tx.queue.length) {
+      if (tx.frames >= maxFrames) {
+        throw new Error(`ContractHost.call: message cascade exceeded ${maxFrames} frames — reverted`);
+      }
+      const msg = tx.queue.shift();
+      await this._runFrame(tx, msg.to, msg.fn, [msg.arg], {}, callerTag(msg.from));
     }
-    let created = [];
-    if (spentIds.length || outputs.length) {
+
+    // ── UTXO CONSERVATION over the UNION of every frame — the security property, enforced
+    // FAIL-CLOSED before ANY write lands. Value cannot be minted: across the whole transaction the
+    // sum spent must equal the sum created plus the fee. Checked BEFORE applying, so a violating
+    // cascade reverts WHOLLY — no spend marker, no output, no slot/byte write, the root unmoved.
+    const created = [];
+    if (tx.spentIds.length || tx.outputs.length) {
       let sumIn = 0n;
-      for (const uid of spentIds) {
-        // Re-assert every guard the ABI enforced in-worker, on the trusted side. A spend of a UTXO
-        // not staged as an input, or one already spent in committed state, is refused here too.
-        if (!utxos || !Object.prototype.hasOwnProperty.call(utxos, uid)) {
+      for (const uid of tx.spentIds) {
+        if (!tx.stagedUtxos.has(uid)) {
           throw new Error(`ContractHost.call: spent utxo ${uid} was not a staged input`);
         }
         if (this.state.get(spendKey(uid)) !== undefined) {
           throw new Error(`ContractHost.call: input utxo ${uid} is already spent (double-spend refused)`);
         }
-        sumIn += BigInt(utxos[uid]);
+        sumIn += BigInt(tx.stagedUtxos.get(uid));
       }
       let sumOut = 0n;
-      for (const o of outputs) sumOut += o.amount;
+      for (const o of tx.outputs) sumOut += o.amount;
       const fee = BigInt(opts.fee || 0);
       if (sumIn !== sumOut + fee) {
         throw new Error(`ContractHost.call: value not conserved (in=${sumIn} out=${sumOut} fee=${fee}) — mint refused`);
       }
     }
 
-    // Apply the write-set atomically. Byte writes are tagged `['bytes', hexKey, hexVal]`
-    // (entry[0] is the string 'bytes'); slot writes are `[slotNum, valNum]` (entry[0] is a
-    // number). Tag-checking each entry keeps the ABIs from mis-applying each other's writes.
-    for (const w of writes) {
-      if (w[0] === 'utxo_spend') {
-        // Spend-marker (nullifier): a SEPARATE key, never a mutation of the value record — the
-        // ledger's rule (micromine.js) that spent-ness is derived from a pointer, not the datum.
-        await this.state.insert(spendKey(w[1]), { by: id, spentBy: fnName });
-      } else if (w[0] === 'utxo_create') {
-        // A created output's id is content-addressed (same 16-hex scheme as a ledger block id), a
-        // pure function of the creating contract, recipient, amount and the exact set of inputs it
-        // consumed — deterministic and identical on every node, so replay reproduces the same key.
-        const to = w[1]; const amount = w[2];
-        const idx = created.length;
-        const newId = createHash('sha256')
-          .update(JSON.stringify({ from: id, to, amount, spends: [...spentIds].sort(), i: idx }))
-          .digest('hex').slice(0, 16);
-        await this.state.insert(utxoKey(newId), { from: id, to, amount });
-        created.push({ id: newId, to, amount });
-      } else if (typeof w[0] === 'string' && w[0] === 'bytes') {
-        const [, hk, hv] = w;
-        c.byteKeys.add(hk);
-        await this.state.insert(byteKey(id, hk), hv);
-      } else {
-        const [slot, val] = w;
-        c.slots.add(slot | 0);
-        await this.state.insert(slotKey(id, slot), val | 0);
+    // ── ATOMIC APPLY (once, on success). Spend-markers first, then created outputs, then state
+    // writes. A created output's id is content-addressed over (creator, recipient, amount, the
+    // WHOLE transaction's sorted spend set, and its index in the transaction's creation order) —
+    // deterministic and collision-free even when several frames create outputs.
+    for (const m of tx.spendMarkers) {
+      await this.state.insert(spendKey(m.uid), { by: m.id, spentBy: m.fnName });
+    }
+    const spendsSorted = [...tx.spentIds].sort();
+    for (let idx = 0; idx < tx.outputs.length; idx++) {
+      const o = tx.outputs[idx];
+      const newId = createHash('sha256')
+        .update(JSON.stringify({ from: o.from, to: o.to, amount: o.amount.toString(), spends: spendsSorted, i: idx }))
+        .digest('hex').slice(0, 16);
+      await this.state.insert(utxoKey(newId), { from: o.from, to: o.to, amount: o.amount.toString() });
+      created.push({ id: newId, to: o.to, amount: o.amount.toString() });
+    }
+    for (const w of tx.writes) {
+      const wc = this.contracts.get(w.id);
+      if (w.kind === 'bytes') { wc.byteKeys.add(w.hk); await this.state.insert(byteKey(w.id, w.hk), w.hv); }
+      else { wc.slots.add(w.slot); await this.state.insert(slotKey(w.id, w.slot), w.val); }
+    }
+
+    const out = { result: first.result, writes: first.writes, stateRoot: this.state.getRoot(), coordinates: entry.coordinates, frames: tx.frames };
+    if (entry.utxoHost || tx.spentIds.length || tx.outputs.length) out.utxo = { spent: tx.spentIds, created };
+    return out;
+  }
+
+  /**
+   * Run ONE contract frame inside a transaction `tx`. Stages the contract's read-set from the
+   * transaction view (committed state OVERLAID with this transaction's writes so far), runs the
+   * WASM under the composed host ABI, and folds the frame's writes back into `tx` — state writes
+   * update the overlay immediately (so a later frame reads them), UTXO ops and messages accumulate
+   * for the transaction-level conservation check and queue drain. It NEVER touches committed state.
+   * @returns {Promise<{result:(number|bigint), writes:Array}>} the frame's raw result + write-set
+   */
+  async _runFrame(tx, id, fnName, args, opts, callerI32) {
+    const c = this.contracts.get(id);
+    if (!c) throw new Error(`ContractHost.call: unknown message target ${id}`);
+    tx.frames += 1;
+    // Read through the transaction view: the overlay (this transaction's staged writes) shadows
+    // committed state. This is the read-your-writes that makes a message cascade see a consistent,
+    // already-updated world — the re-entrant frame reads the balance the earlier frame zeroed.
+    const txGet = (k) => (tx.overlay.has(k) ? tx.overlay.get(k) : this.state.get(k));
+
+    // Slot read-set.
+    const slots = {};
+    for (const slot of c.slots) {
+      const v = txGet(slotKey(id, slot));
+      slots[slot] = (v === undefined || v === null) ? 0 : (v | 0);
+    }
+    // Byte-keyed read-set (byteState contracts).
+    const kv = {};
+    for (const hk of c.byteKeys) {
+      const v = txGet(byteKey(id, hk));
+      if (v !== undefined && v !== null) kv[hk] = v;
+    }
+    // UTXO input read-set (utxoHost contracts). Inputs are presented on the ENTRY call only;
+    // FAIL-CLOSED at staging against the transaction view (an input already spent — in committed
+    // state OR earlier in this transaction — is refused before any WASM runs). inputIds is SORTED
+    // so xmbl_input_id(i) is a pure function of the presented set, identical on every node.
+    let utxos = null; let inputIds = null;
+    if (c.utxoHost) {
+      utxos = {}; inputIds = [...new Set((opts.inputs || []).map(String))].sort();
+      for (const uid of inputIds) {
+        if (txGet(spendKey(uid)) !== undefined) {
+          throw new Error(`ContractHost.call: input utxo ${uid} is already spent (double-spend refused)`);
+        }
+        const rec = txGet(utxoKey(uid));
+        if (rec === undefined || rec === null) {
+          throw new Error(`ContractHost.call: input utxo ${uid} does not exist`);
+        }
+        const amt = (rec && typeof rec === 'object') ? rec.amount : rec;
+        if (amt === undefined || amt === null) throw new Error(`ContractHost.call: input utxo ${uid} has no amount`);
+        utxos[uid] = String(amt);
+        tx.stagedUtxos.set(uid, String(amt));
       }
     }
-    const out = { result, writes, stateRoot: this.state.getRoot(), coordinates: c.coordinates };
-    if (c.utxoHost) out.utxo = { spent: spentIds, created };
-    return out;
+    // Composition read-set (composeHost contracts): the peer table plus the DECLARED foreign reads,
+    // each read from the transaction view so xmbl_read returns a value consistent with what earlier
+    // frames wrote. A read outside this declared footprint traps in the ABI (fail-closed).
+    let peers = null; let foreign = null;
+    if (c.composeHost) {
+      peers = c.peers;
+      foreign = {};
+      for (const [pIdx, slot] of c.reads) {
+        const peer = c.peers[pIdx];
+        if (!peer) continue;
+        const v = txGet(slotKey(peer.id, slot));
+        foreign[`${pIdx}|${slot}`] = (v === undefined || v === null) ? 0 : (v | 0);
+      }
+    }
+
+    // The byte-pointer ABI and the v0 slot ABI collide on xmbl_verkle_get/set (different
+    // signatures), so a frame uses exactly ONE state ABI. The UTXO value ABI and the composition
+    // ABI use disjoint names, so each composes onto whichever state ABI the contract uses — every
+    // sub-factory is eval'd over the same ctx and their bindings merged.
+    const stateSource = c.byteState ? HOST_ABI_SOURCE_BYTES : HOST_ABI_SOURCE;
+    const parts = [stateSource];
+    if (c.utxoHost) parts.push(HOST_ABI_UTXO_SOURCE);
+    if (c.composeHost) parts.push(HOST_ABI_COMPOSE_SOURCE);
+    const source = parts.length === 1
+      ? parts[0]
+      : `(ctx) => Object.assign({}, ${parts.map((p) => `(${p})(ctx)`).join(', ')})`;
+
+    const host = {
+      source,
+      data: {
+        slots, caller: (callerI32 | 0), kv,
+        crypto: c.cryptoHost ? (opts.crypto || null) : null,
+        utxos, inputIds, peers, foreign,
+      },
+      marshal: c.wordAbi ? XCL_WORD_MARSHAL_SOURCE : null,
+      init: c.cryptoHost ? HOST_ABI_CRYPTO_INIT_SOURCE : null,
+    };
+    const { result, writes } = await this.runtime.execute(c.wasm, fnName, args, { host });
+
+    // Fold this frame's writes into the transaction. State writes go to the overlay immediately
+    // (read-your-writes) and are recorded for the atomic apply; UTXO ops and messages accumulate.
+    for (const w of writes) {
+      if (w[0] === 'utxo_spend') {
+        tx.spentIds.push(w[1]);
+        tx.spendMarkers.push({ id, uid: w[1], fnName });
+        tx.overlay.set(spendKey(w[1]), { by: id, spentBy: fnName });
+      } else if (w[0] === 'utxo_create') {
+        tx.outputs.push({ from: id, to: w[1], amount: BigInt(w[2]) });
+      } else if (w[0] === 'send') {
+        // Resolve the peer index against THIS contract's peer table on the trusted side and enqueue.
+        // The target is NOT executed here — it runs as its own frame when the queue is drained.
+        const peer = (c.peers || [])[w[1]];
+        if (!peer) throw new Error(`ContractHost.call: contract ${id} sent to undefined peer index ${w[1]}`);
+        tx.queue.push({ from: id, to: peer.id, fn: peer.fn, arg: w[2] | 0 });
+      } else if (typeof w[0] === 'string' && w[0] === 'bytes') {
+        const [, hk, hv] = w;
+        tx.writes.push({ id, kind: 'bytes', hk, hv });
+        tx.overlay.set(byteKey(id, hk), hv);
+      } else {
+        const [slot, val] = w;
+        tx.writes.push({ id, kind: 'slot', slot: slot | 0, val: val | 0 });
+        tx.overlay.set(slotKey(id, slot | 0), val | 0);
+      }
+    }
+    return { result, writes };
   }
 
   /** Read a contract's committed slot value (0 if never written). */

@@ -298,6 +298,77 @@ export const HOST_IMPORT_KEYS_UTXO = [
   'env.xmbl_utxo_amount', 'env.xmbl_utxo_spend', 'env.xmbl_utxo_create',
 ];
 
+// ────────────────────────────────────────────────────────────────────────────
+// COMPOSITION ABI — contract-to-contract interaction WITHOUT synchronous nested
+// execution. This is the seam that makes XCL ≥ Ethereum in composition power while
+// being STRICTLY safer: classic reentrancy is impossible BY CONSTRUCTION, not by a
+// developer-supplied guard (the EVM `nonReentrant` mutex / checks-effects-interactions
+// discipline that every drained contract forgot). There is no primitive by which a
+// contract yields control to another contract's code mid-execution, so the DAO pattern
+// (call out → get re-entered before state is updated) cannot be expressed.
+//
+// Two primitives, split by whether they run code:
+//
+//   xmbl_read(peer_idx:i32, slot:i32) -> i32   SYNCHRONOUS cross-contract state read.
+//     Reads NO code — it returns peer[peer_idx]'s committed/staged slot value, which the
+//     host PRE-STAGES into ctx.data.foreign before the guest starts (exactly as utxos/kv
+//     are staged). A read executes nothing in the peer, so it carries ZERO reentrancy risk
+//     — this is the balanceOf/oracle-read/allowance case that makes composition usable, and
+//     it is safe to serve synchronously. The read footprint is DECLARED up front (the
+//     contract's `reads`), so an undeclared (peer, slot) pair TRAPS — fail-closed, and the
+//     footprint is statically bounded (stronger than an EVM STATICCALL, which can read
+//     anything at any depth with no static bound).
+//
+//   xmbl_send(peer_idx:i32, amount:i32) -> i32  ASYNCHRONOUS message to peer[peer_idx].
+//     Does NOT execute the peer. It records `['send', peer_idx, amount]` in the write-set;
+//     the host resolves peer_idx → {id, fn} from THIS contract's peer table and enqueues a
+//     message. The target runs as a SEPARATE frame AFTER this one completes — never nested.
+//     Returns 0 ok / -1 if peer_idx is out of range. The message carries one i32 argument
+//     (the value/amount); the sender is surfaced to the target via xmbl_caller.
+//
+// The host runs the whole cascade (the entry call plus every message it transitively emits)
+// as ONE atomic transaction: nothing commits until it completes, any frame that throws
+// reverts everything, and the frame count is capped so a message loop terminates in a revert
+// rather than draining resources. Conservation (UTXO) is checked once over the UNION of all
+// frames. This is the i32-slot subset (mirrors the v0 slot ABI being a working subset of the
+// byte-pointer ABI): the ~u256/byte-key form is the documented next extension and changes only
+// this file, not the cascade machinery in contract-host.js.
+
+/** The import names the composition ABI defines — the deny-by-default allow surface. */
+export const HOST_IMPORT_KEYS_COMPOSE = ['env.xmbl_read', 'env.xmbl_send'];
+
+/**
+ * Composition host-module factory, as source (eval'd inside the worker). `ctx.data.peers` is
+ * THIS contract's peer table `[{id, fn}]` (only its length is consulted here — the host maps
+ * an index to {id, fn} on the trusted side when it drains the queue). `ctx.data.foreign` is the
+ * pre-staged read-set `{ 'peerIdx|slot': i32value }`. `ctx.writes` collects `['send', idx, amt]`.
+ * @type {string}
+ */
+export const HOST_ABI_COMPOSE_SOURCE = `(ctx) => {
+  var peers = (ctx.data && ctx.data.peers) || [];
+  var foreign = (ctx.data && ctx.data.foreign) || {};
+  var has = function (o, k) { return Object.prototype.hasOwnProperty.call(o, k); };
+  return {
+    'env.xmbl_read': function (peerIdx, slot) {
+      var key = (peerIdx | 0) + '|' + (slot | 0);
+      // Undeclared foreign read → TRAP (fail-closed). The whole transaction reverts: a read
+      // outside the declared footprint is a malformed transaction, not a recoverable status.
+      if (!has(foreign, key)) throw new Error('xcl compose: undeclared foreign read (peer ' + (peerIdx|0) + ' slot ' + (slot|0) + ')');
+      ctx.log.push(['read', peerIdx | 0, slot | 0]);
+      return foreign[key] | 0;
+    },
+    'env.xmbl_send': function (peerIdx, amount) {
+      if ((peerIdx | 0) < 0 || (peerIdx | 0) >= peers.length) return -1;
+      ctx.writes.push(['send', peerIdx | 0, amount | 0]);
+      ctx.log.push(['send', peerIdx | 0, amount | 0]);
+      return 0;
+    },
+  };
+}`;
+
+/** Derive a stable i32 caller tag from a (hex) contract id — surfaced to a message target via xmbl_caller. */
+export function callerTag(id) { return parseInt(String(id).slice(0, 8), 16) | 0; }
+
 /** The Verkle key an xmbl UTXO record maps to — the SAME namespace state-machine.js writes. */
 export function utxoKey(id) { return `utxo:${id}`; }
 
