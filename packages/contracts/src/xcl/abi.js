@@ -376,14 +376,15 @@ export const HOST_ABI_COMPOSE_SOURCE = `(ctx) => {
 // exactly as the T6.2c gate row predicted ("the ~u256/byte-key form … changes only this
 // file, not the cascade machinery").
 //
-//   xmbl_send(peer_ptr:i32, amount_ptr:i32) -> i32   ASYNCHRONOUS message. Reads the peer
-//     INDEX from the low 32 bits of the 32-byte word at peer_ptr and the FULL 256-bit amount
-//     from the word at amount_ptr. Records ['send', peerIdx, amountDecimalString]; the host
-//     resolves peerIdx → {id, fn} from this contract's peer table and enqueues a SEPARATE
-//     frame (never nested — reentrancy stays impossible by construction). Returns 0 ok / -1
-//     on out-of-range peer or a bad pointer. The full word value crosses the message boundary
-//     faithfully (decimal string → BigInt → the target's word marshal), so a `~u256` amount is
-//     NOT truncated to i32.
+//   xmbl_send(peer_ptr:i32, args_ptr:i32, arg_count:i32) -> i32   ASYNCHRONOUS message. Reads the
+//     peer INDEX from the FULL 256-bit word at peer_ptr and arg_count CONTIGUOUS 32-byte words
+//     starting at args_ptr (the message arguments). Records ['send', peerIdx, [decStr, ...]]; the
+//     host resolves peerIdx → {id, fn} from this contract's peer table and enqueues a SEPARATE
+//     frame (never nested — reentrancy stays impossible by construction). Returns 0 ok / -1 on
+//     out-of-range peer, a bad pointer, or an arg_count outside [1,16]. Every argument crosses the
+//     message boundary faithfully (decimal string → BigInt → the target's word marshal), so a
+//     multi-`~u256` message is delivered intact, NOT truncated to i32. A single-argument send is
+//     the arg_count==1 case — the amount/value message stays the common form.
 //
 //   xmbl_read(peer_ptr:i32, field_ptr:i32, val_out_ptr:i32) -> i32   SYNCHRONOUS word-valued
 //     cross-contract read. Reads NO peer code (reentrancy-free, like the i32 read). peer_ptr and
@@ -418,19 +419,28 @@ export const HOST_ABI_COMPOSE_SOURCE_WORD = `(ctx) => {
   var view = function () { var m = ctx.mem && ctx.mem(); return m ? new Uint8Array(m.buffer) : null; };
   var wordAt = function (v, ptr) { var x = 0n; for (var i = WORD - 1; i >= 0; i--) x = (x << 8n) | BigInt(v[ptr + i]); return x; };
   return {
-    'env.xmbl_send': function (peerPtr, amountPtr) {
+    'env.xmbl_send': function (peerPtr, argsPtr, argCount) {
       var v = view(); if (!v) return -1;
       if (peerPtr < 0 || peerPtr + WORD > v.length) return -1;
-      if (amountPtr < 0 || amountPtr + WORD > v.length) return -1;
+      argCount = argCount | 0;
+      // A message carries at least one argument and a bounded number of them. The block is
+      // argCount CONTIGUOUS 32-byte words at argsPtr; reject a count that is non-positive or whose
+      // block would run past guest memory (fail-safe: return -1, enqueue nothing).
+      if (argCount < 1 || argCount > 16) return -1;
+      if (argsPtr < 0 || argsPtr + argCount * WORD > v.length) return -1;
       // Read the peer index as the FULL 256-bit word and range-check it — NEVER mask to the low
       // limb. Masking would be FAIL-OPEN: a word with nonzero high bits (a buggy or adversarial
       // peer-index computation) would silently land on peers[lowBits] instead of being refused.
       var peerWord = wordAt(v, peerPtr);
       if (peerWord < 0n || peerWord >= BigInt(peers.length)) return -1;
       var peerIdx = Number(peerWord);
-      var amount = wordAt(v, amountPtr).toString();
-      ctx.writes.push(['send', peerIdx, amount]);
-      ctx.log.push(['send', peerIdx, amount]);
+      // Each argument crosses as a full 256-bit decimal string (no i32/i64 truncation). The host
+      // enqueues the whole array as ONE message; the target frame's word marshal turns each back
+      // into a 32-byte word pointer, so a multi-word u256 message is delivered intact.
+      var amounts = [];
+      for (var i = 0; i < argCount; i++) amounts.push(wordAt(v, argsPtr + i * WORD).toString());
+      ctx.writes.push(['send', peerIdx, amounts]);
+      ctx.log.push(['send', peerIdx, amounts]);
       return 0;
     },
     'env.xmbl_read': function (peerPtr, fieldPtr, valOutPtr) {

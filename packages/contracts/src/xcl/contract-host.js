@@ -220,7 +220,7 @@ export class ContractHost {
         throw new Error(`ContractHost.call: message cascade exceeded ${maxFrames} frames — reverted`);
       }
       const msg = tx.queue.shift();
-      await this._runFrame(tx, msg.to, msg.fn, [msg.arg], {}, callerTag(msg.from));
+      await this._runFrame(tx, msg.to, msg.fn, msg.args, {}, callerTag(msg.from));
     }
 
     // ── UTXO CONSERVATION over the UNION of every frame — the security property, enforced
@@ -404,13 +404,15 @@ export class ContractHost {
         // The target is NOT executed here — it runs as its own frame when the queue is drained.
         const peer = (c.peers || [])[w[1]];
         if (!peer) throw new Error(`ContractHost.call: contract ${id} sent to undefined peer index ${w[1]}`);
-        // A word-ABI send records its amount as a DECIMAL STRING (full 256-bit fidelity); an i32
-        // send records a plain number. Carry the full value through — the target frame's word
-        // marshal (if any) turns a BigInt arg into a 32-byte word pointer, so a `~u256` amount is
-        // delivered intact rather than truncated to i32.
+        // A word-ABI send records its arguments as an ARRAY of decimal strings (full 256-bit
+        // fidelity, one or more); an i32 send records a single plain number. Normalize both to a
+        // BigInt/number arg LIST — the target frame's word marshal (if any) turns each into a
+        // 32-byte word pointer, so every `~u256` argument is delivered intact, not truncated to i32.
         const rawAmt = w[2];
-        const arg = (typeof rawAmt === 'string') ? BigInt(rawAmt) : (rawAmt | 0);
-        tx.queue.push({ from: id, to: peer.id, fn: peer.fn, arg });
+        const msgArgs = Array.isArray(rawAmt)
+          ? rawAmt.map((a) => BigInt(a))              // word ABI: one or more `~u256` args
+          : (typeof rawAmt === 'string') ? [BigInt(rawAmt)] : [rawAmt | 0]; // legacy word single / i32 slot
+        tx.queue.push({ from: id, to: peer.id, fn: peer.fn, args: msgArgs });
       } else if (typeof w[0] === 'string' && w[0] === 'bytes') {
         const [, hk, hv] = w;
         tx.writes.push({ id, kind: 'bytes', hk, hv });

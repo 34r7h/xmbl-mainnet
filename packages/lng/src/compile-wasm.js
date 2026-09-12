@@ -156,14 +156,15 @@ function compile(src, opts = {}) {
   // type section is untouched. get: (i32,i32,i32)->i32; set: (i32,i32,i32,i32)->i32.
   const T_get = hostState ? T([I32, I32, I32], [I32]) : 0;
   const T_set = hostState ? T([I32, I32, I32, I32], [I32]) : 0;
-  // xmbl_read is (peer_ptr, field_ptr, val_out_ptr)->i32. Registered unconditionally when compose
-  // is on (NOT gated on hostState) so the stateless-compose path has a live type index — T()
-  // deduplicates, so it collapses onto T_get's shape when hostState is also on.
+  // xmbl_read is (peer_ptr, field_ptr, val_out_ptr)->i32, and xmbl_send is now
+  // (peer_ptr, args_ptr, arg_count)->i32 — the SAME shape, so both use T_read. Registered
+  // unconditionally when compose is on (NOT gated on hostState) so the stateless-compose path has a
+  // live type index — T() deduplicates, so it collapses onto T_get's shape when hostState is on too.
   const T_read = compose ? T([I32, I32, I32], [I32]) : 0;
   const typeSec = section(1, vec(types));
   // Import entries in the SAME order the indices were assigned: state imports (0,1), then the
   // compose imports read THEN send — so READ_IDX / SEND_IDX above match these entries' positions.
-  // xmbl_read is T_read (i32,i32,i32)->i32; xmbl_send is the already-registered T_2 shape.
+  // xmbl_read AND xmbl_send are both (i32,i32,i32)->i32 = T_read.
   const importEntries = [];
   if (hostState) {
     importEntries.push([...nm('env'), ...nm('xmbl_verkle_get'), 0x00, ...uleb(T_get)]);
@@ -171,7 +172,7 @@ function compile(src, opts = {}) {
   }
   if (compose) {
     importEntries.push([...nm('env'), ...nm('xmbl_read'), 0x00, ...uleb(T_read)]);
-    importEntries.push([...nm('env'), ...nm('xmbl_send'), 0x00, ...uleb(T_2)]);
+    importEntries.push([...nm('env'), ...nm('xmbl_send'), 0x00, ...uleb(T_read)]);
   }
   const importSec = importEntries.length ? section(2, vec(importEntries)) : [];
   const funcSec = section(3, vec(defined.map(f => uleb(f.ti))));
@@ -339,7 +340,14 @@ function compileMethod(m, ctx) {
   // expression value; because each read fully consumes-and-reloads the local before returning the
   // pointer, two reads in ONE expression never alias (their buffers differ — __alloc bumps).
   const rt = ctx.compose ? next++ : -1; if (ctx.compose) localTypes.push(I32);
-  ctx = Object.assign({}, ctx, { vt, rt });
+  // Scratch for a (possibly multi-arg) xmbl_send: st = peer-index word pointer, sb = base of the
+  // contiguous arg-word block, sc = per-arg copy source. Allocated ONLY under compose so the
+  // default path's local section stays byte-identical (unused locals are legal for read-only
+  // compose methods).
+  const st = ctx.compose ? next++ : -1; if (ctx.compose) localTypes.push(I32);
+  const sb = ctx.compose ? next++ : -1; if (ctx.compose) localTypes.push(I32);
+  const sc = ctx.compose ? next++ : -1; if (ctx.compose) localTypes.push(I32);
+  ctx = Object.assign({}, ctx, { vt, rt, st, sb, sc });
   const code = []; let ret = false;
   const get = (name) => params.has(name) ? params.get(name) : idx.get(name);
   // hostState prologue: load every committed field from Verkle into its memory word BEFORE
@@ -485,9 +493,35 @@ function emitP(n, code, ctx, params, get) {
       const path = xmblCallPath(n.callee);
       if (path && path.length === 2 && path[0] === 'coord' && path[1] === 'send') {
         if (!ctx.compose) throw new Error('WASM backend: xmbl.coord.send requires compile(src, { compose: true })');
-        if (n.args.length !== 2) throw new Error('WASM backend: xmbl.coord.send(peer, amount) takes exactly 2 arguments');
-        emitP(n.args[0], code, ctx, params, get);   // peer index word pointer
-        emitP(n.args[1], code, ctx, params, get);   // amount word pointer
+        if (n.args.length < 2) throw new Error('WASM backend: xmbl.coord.send(peer, arg, ...) takes a peer index and at least one message argument');
+        const valueArgs = n.args.slice(1);            // args[0] is the peer index; the rest are the message
+        const count = valueArgs.length;
+        // peer index word pointer → st
+        emitP(n.args[0], code, ctx, params, get);
+        code.push(O.lset, ...uleb(ctx.st));
+        // Allocate `count` CONTIGUOUS 32-byte words up front. __alloc is a bump allocator, so
+        // back-to-back calls with nothing between them yield a contiguous block: sb is slot 0 and
+        // slot i is sb + i*32. This MUST precede any arg evaluation — an arg expression can itself
+        // __alloc temporaries, which would interleave and break the block's contiguity.
+        code.push(O.call, ...uleb(ctx.H.alloc), O.lset, ...uleb(ctx.sb));       // slot 0 base
+        for (let i = 1; i < count; i++) code.push(O.call, ...uleb(ctx.H.alloc), O.drop); // slots 1..count-1
+        // Copy each value arg's 32-byte word into its slot. emitP leaves a source word pointer; a
+        // word is 4 i64 limbs, copied with fixed-offset loads/stores. The destination is sb and the
+        // per-slot/per-limb byte offset (i*32 + k*8) folds into the i64.store static offset.
+        for (let i = 0; i < count; i++) {
+          emitP(valueArgs[i], code, ctx, params, get);
+          code.push(O.lset, ...uleb(ctx.sc));                                   // sc = source word pointer
+          for (let k = 0; k < 4; k++) {
+            code.push(O.lget, ...uleb(ctx.sb));                                 // destination base
+            code.push(O.lget, ...uleb(ctx.sc), O.i64load, ...m64(k * 8));       // limb k of the source
+            code.push(O.i64store, ...m64(i * SLOT + k * 8));                    // → sb[i*32 + k*8]
+          }
+        }
+        // xmbl_send(peer_ptr, args_ptr, arg_count) -> i32 status. The status is the call's value;
+        // in statement position the exprstmt handler drops it (send is an effect, not a value).
+        code.push(O.lget, ...uleb(ctx.st));
+        code.push(O.lget, ...uleb(ctx.sb));
+        code.push(O.i32const, ...sleb(count));
         code.push(O.call, ...uleb(ctx.compose.sendIdx));
         return;
       }

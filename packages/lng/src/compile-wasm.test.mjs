@@ -178,15 +178,34 @@ ok('~decimal rejected', (() => { try { compile("~contract `D { ~state { ~public 
   const wrWord = (inst, ptr, val) => { const dv = new DataView(inst.exports.memory.buffer); let v = val; for (let i = 0; i < 4; i++) { dv.setBigUint64(ptr + i * 8, v & ((1n << 64n) - 1n), true); v >>= 64n; } };
   sinst = await WebAssembly.instantiate(smod, { env: {
     xmbl_read: () => { throw new Error('sender should not read'); },
-    xmbl_send: (peerPtr, amountPtr) => { seen = { peer: rdWord(sinst, peerPtr), amount: rdWord(sinst, amountPtr) }; return 0; },
+    // xmbl_send is now (peer_ptr, args_ptr, arg_count): the args are a contiguous block of 32-byte
+    // words at args_ptr. A single-arg send passes arg_count == 1 and its word at args_ptr.
+    xmbl_send: (peerPtr, argsPtr, argCount) => { seen = { peer: rdWord(sinst, peerPtr), amount: rdWord(sinst, argsPtr), count: argCount }; return 0; },
   } });
   const AMT = (1n << 130n) + 9n;   // exceeds 2^128: a truncated payload could not equal it
   sinst.exports.__reset();
   const ap = sinst.exports.__alloc();
   wrWord(sinst, ap, AMT);
   sinst.exports.fire(ap);
-  ok('compose: xmbl_send received peer index 0 and the full 256-bit amount by pointer',
-     seen !== null && seen.peer === 0n && seen.amount === AMT);
+  ok('compose: xmbl_send received peer index 0, arg_count 1, and the full 256-bit amount by pointer',
+     seen !== null && seen.peer === 0n && seen.amount === AMT && seen.count === 1);
+
+  // multi-arg send: `xmbl.coord.send(0, a, b)` packs TWO contiguous 32-byte words at args_ptr and
+  // passes arg_count == 2. The second word sits at args_ptr + 32 — proving the contiguous block.
+  const SENDER2ARG = "~contract `S2 { ~on `fire(`a ~u256, `b ~u256) { `xmbl.coord.send(0, `a, `b) } }";
+  const s2mod = await WebAssembly.compile(Uint8Array.from(compile(SENDER2ARG, { compose: true })));
+  let seen2 = null; let s2inst;
+  s2inst = await WebAssembly.instantiate(s2mod, { env: {
+    xmbl_read: () => { throw new Error('sender should not read'); },
+    xmbl_send: (peerPtr, argsPtr, argCount) => { seen2 = { peer: rdWord(s2inst, peerPtr), count: argCount, a: rdWord(s2inst, argsPtr), b: rdWord(s2inst, argsPtr + 32) }; return 0; },
+  } });
+  const AV = (1n << 200n) + 5n, BV = (1n << 90n) + 7n;   // distinct, both > 2^64
+  s2inst.exports.__reset();
+  const pa = s2inst.exports.__alloc(); wrWord(s2inst, pa, AV);
+  const pb = s2inst.exports.__alloc(); wrWord(s2inst, pb, BV);
+  s2inst.exports.fire(pa, pb);
+  ok('compose: a two-arg send passes arg_count 2 and both full 256-bit words in a contiguous block',
+     seen2 !== null && seen2.peer === 0n && seen2.count === 2 && seen2.a === AV && seen2.b === BV);
 
   // read: the backend allocates a result buffer, passes (peer_ptr, field_ptr, val_out_ptr), and the
   // method's return value IS that buffer pointer — so a stub that writes a known word into val_out

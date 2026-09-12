@@ -207,5 +207,28 @@ await check('link() rejects a word-read with an out-of-range field index, and a 
     /declared no field list/, 'a read against a field-less peer is refused');
 });
 
+// RECEIVER2: a two-argument entrypoint that persists EACH arg into its own field — so a test can
+// prove both crossed intact AND in order (a swap or a truncation would surface, which a sum hides).
+const RECEIVER2_SRC = "~contract `R2 {\n  ~state { ~public { `first ~u256 0\n `second ~u256 0 } }\n  ~on `take2(`a ~u256, `b ~u256) { `first = `a\n `second = `b }\n}";
+// SENDER_MULTI: forwards TWO ~u256 arguments to peer 0 in ONE message.
+const SENDER_MULTI_SRC = "~contract `SM {\n  ~on `fire(`a ~u256, `b ~u256) { `xmbl.coord.send(0, `a, `b) }\n}";
+
+await check('a MULTI-ARG message delivers TWO distinct 256-bit args intact and in order (one frame per message, not per arg)', async () => {
+  const host = newHost();
+  const receiver2 = compile(RECEIVER2_SRC, { hostState: true });
+  const senderMulti = compile(SENDER_MULTI_SRC, { compose: true });
+  const { id: rId } = host.deploy(receiver2, [], { byteState: true, wordAbi: true, fields: contractFields(RECEIVER2_SRC) });
+  const { id: sId } = host.deploy(senderMulti, [], { wordAbi: true, composeHost: true });
+  host.link(sId, { peers: [{ id: rId, fn: 'take2' }] });
+
+  const A = (1n << 130n) + 9n;   // > 2^64 and distinct from B — a swap or i64 truncation would fail
+  const B = (1n << 70n) + 11n;
+  const out = await host.call(sId, 'fire', [A, B], { caller: 0 });
+
+  assert.strictEqual(out.frames, 2, `the whole message is ONE frame regardless of arg count (got ${out.frames})`);
+  assert.strictEqual(host.getBytes(rId, 'first'), A, 'arg 0 arrived as the EXACT 256-bit word (not truncated, not the second arg)');
+  assert.strictEqual(host.getBytes(rId, 'second'), B, 'arg 1 arrived as the EXACT 256-bit word, in order (contiguous arg block, no clobber)');
+});
+
 console.log(`\nXCL composition from LNG: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

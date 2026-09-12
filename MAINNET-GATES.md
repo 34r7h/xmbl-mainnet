@@ -300,8 +300,17 @@ continue-on-error, and in the release workflow before any publish).
       contract's source, which compiles to different bytes and a different content-addressed id. The host
       resolves the index → field name → `byteKey` when it stages the read-set. An UNDECLARED (peer, field)
       read TRAPS (reverts the cascade), never returns a silent-zero word. This half therefore also touched `link()` (footprint validation) and the staging
-      block in `call()` — NOT the cascade machinery, which is unchanged. What REMAINS of the `~u256` form:
-      **multi-arg** messages (the `{from,to,fn,arg}` queue shape → `args[]`, which READ did not need). The
+      block in `call()` — NOT the cascade machinery, which is unchanged. **Multi-arg messages are now
+      also DONE:** `xmbl.coord.send(peer, a, b, …)` carries one OR MORE `~u256` arguments — the WASM
+      backend packs the value args into a contiguous 32-byte-word block and lowers to
+      `env.xmbl_send(peer_ptr, args_ptr, arg_count)`; the host reads `arg_count` words (rejecting a count
+      outside [1,16] or a block past guest memory, fail-safe), enqueues them as ONE message
+      `{from,to,fn,args[]}`, and the target frame's word marshal turns each back into a word pointer.
+      Proven end-to-end: a two-arg message delivers two DISTINCT 256-bit words intact and IN ORDER (a
+      swap or i64 truncation would fail) in a single frame — *contract-compose-lng.test.mjs 11/11*,
+      *compile-wasm.test.mjs* compose unit (arg_count 1 and 2, contiguous block). So the `~u256` word
+      form of contract composition (SEND, multi-arg SEND, and READ) is COMPLETE; the composite gate
+      here stays open only for remainders (a), (c), and (d) below. The
       hand-encoded **i32-slot** form (`xmbl_read`/`xmbl_send` over numbered slots, one i32 arg) remains
       proven separately (*contract-compose.test.mjs 5/5*). Also scoped: authorization is checked on the
       EXTERNAL entry only — internal messages inherit it (like an EVM internal call), and per-message
