@@ -238,15 +238,25 @@ continue-on-error, and in the release workflow before any publish).
       *(6)* the spend is provable against the committed Verkle root via `generateProof`/`verifyProof`,
       and a TAMPERED value is rejected;
       *(7)* the committed UTXO-bearing set reproduces the same root under any insertion order.
-      — *xcl/abi.js (`HOST_ABI_UTXO_SOURCE`, `utxoKey`, `spendKey`); xcl/contract-host.js (`utxoHost`
-      flag, input staging, conservation enforcement); contract-host.test.mjs (28/28)*
+      **REPRODUCTION ACROSS A SMALL SET OF TEST NODES** (the mandate's "spin up test nodes"):
+      *utxo-multinode.test.mjs* boots THREE independent nodes built from the real node subsystems
+      (a genuine `Ledger` + `StateMachine` pair each, as `@xmbl/core` composes), feeds each the
+      identical set of xmbl `utxo` transactions, and proves as outcomes that *(i)* all three seal +
+      derive ONE identical Verkle root with no coordination; *(ii)* all three hold the identical set
+      of ledger `utxo:<id>` keys; *(iii)* a contract that spends a ledger-produced UTXO run on each
+      node leaves all three STILL at one identical root, each committing the same spend-marker and
+      new UTXO record. — *xcl/abi.js (`HOST_ABI_UTXO_SOURCE`, `utxoKey`, `spendKey`); xcl/contract-host.js
+      (`utxoHost` flag, input staging, conservation enforcement); xcl/utxo-fixtures.mjs;
+      contract-host.test.mjs (28/28); utxo-multinode.test.mjs (3/3)*
 - [ ] **T6.2 open remainders (HONEST scope of the "≥ Ethereum, fraction of resources" claim).** What
       T6.2 does NOT yet prove, and must not be claimed: *(a)* the UTXO proof contracts are hand-encoded
       and use **i64** amounts, not the `~u256` word width — LNG cannot yet EMIT `xmbl_utxo_*` calls from
       `~contract` source (same gap as T6.1-d for crypto); *(b)* **contract-to-contract calls** do not
       exist — `ContractHost` cannot reenter itself, a real power gap vs the EVM; *(c)* multi-node
-      convergence is proven IN-PROCESS (independent hosts, same calls → same root), not yet across real
-      node boundaries; *(d)* the **"fraction of the resources" claim is unmeasured** — finding C1
+      reproduction is proven across independent real node SUBSYSTEMS (three `Ledger`+`StateMachine`
+      pairs converge on one root), but NOT yet across the full networking/consensus stack under
+      adversarial timing (that stack's safety is covered separately by `@xmbl/consensus`'s
+      byzantine-matrix); *(d)* the **"fraction of the resources" claim is unmeasured** — finding C1
       (`storage-compute` metering disconnected from execution) means there is no measured CPU/memory
       basis to compare against Ethereum; the caps are enforced, the meter is not. These are the
       substance of the remaining smart-contract parity work.
