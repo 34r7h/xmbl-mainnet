@@ -38,7 +38,7 @@ Legend: ✓ done · ◐ partial · ✗ not yet · n/a not applicable · ⛔ bloc
 | `packages/zero-knowledge` | ✓ | ✓ (1, gate) | ✗ | FRI experimental/unaudited ⛔; must not gate consensus/ledger/sealing |
 | `packages/networking` | ◐ | ✓ (1, gate) | ✗ | **Node-only by construction** — discovery/gossip under NAT is ⛔ integration/audit |
 | `packages/lng` | ✓ | ✓ (8, gate) | ✗ | LNG→WASM compiler + XCL compose backend; EVM backend output asserted but not deployed |
-| `packages/contracts` | ✓ | ✓ (5, gate) | ✗ | XCL agentic-contract runtime (ContractHost); reentrancy inexpressible by construction |
+| `packages/contracts` | ✓ | ✓ (5, gate) | ✓ | XCL agentic-contract runtime (ContractHost); `reproductions/contracts-reentrancy.mjs` reproduces "reentrancy inexpressible by construction" |
 
 ## Tooling / client packages
 

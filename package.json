@@ -19,7 +19,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "test:protocol": "node scripts/run-node-tests.mjs packages/core packages/identity packages/networking packages/cubic-ledger packages/state-machine packages/consensus packages/storage-compute packages/zero-knowledge packages/lng packages/contracts crates tests",
+    "test:protocol": "node scripts/run-node-tests.mjs packages/core packages/identity packages/networking packages/cubic-ledger packages/state-machine packages/consensus packages/storage-compute packages/zero-knowledge packages/lng packages/contracts crates tests reproductions",
     "lint": "npm run lint --workspaces --if-present",
     "visualizer": "npm run dev -w apps/visualizer",
     "app-builder": "npm run dev -w apps/app-builder",
