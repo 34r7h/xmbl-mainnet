@@ -6,3 +6,4 @@ export { ContractHost } from './contract-host.js';
 export { InMemoryState } from './in-memory-state.js';
 export { contractId, contractCoordinates } from './placement.js';
 export { HOST_ABI_SOURCE, HOST_IMPORT_KEYS, slotKey } from './abi.js';
+export { HOST_IMPORT_KEYS_UTXO, utxoKey, spendKey } from './abi.js';

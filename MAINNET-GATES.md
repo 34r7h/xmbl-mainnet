@@ -216,6 +216,40 @@ continue-on-error, and in the release workflow before any publish).
       `xmbl_lwe_decrypt` is deliberately NOT provided: decryption needs a SECRET key, which is neither
       chain-derivable nor safe to place in a guest's reach — its determinism and key-custody model is
       an open design question, not a build task. Both are the remaining §3.1 surface.
+- [x] **T6.2 — contracts LINK xmbl UTXOs to the Verkle state machine, provably and reproducibly.** A
+      contract can now SPEND committed xmbl UTXOs and CREATE new ones, into the SAME Verkle tree the
+      state machine already commits ledger blocks to (`state-machine.js` maps a `utxo` block to
+      `utxo:<block.id>`), so contract execution and value transfer share one provable state root. The
+      spend model matches the ledger's own type-6/type-7 rule (`micromine.js`): spent-ness is derived
+      from a SEPARATE nullifier key `spend:<id>`, never by mutating the immutable value record — a
+      double-spend is simply a key that already exists. A contract does not hardcode the ids it spends;
+      it enumerates the inputs the caller PRESENTED (`xmbl_input_count`/`xmbl_input_id`), so the same
+      bytecode spends a content-addressed ledger id it could not have known at compile time. **The
+      security property — value conservation — is enforced by the HOST, fail-closed:** `ContractHost`
+      sums the spent inputs against the created outputs + fee AFTER the run and BEFORE any write lands,
+      so a contract that mints value (out > in) is refused and applies NOTHING (root unmoved). Proven as
+      OUTCOMES on hand-encoded contracts (no LNG dependency, like COUNTER):
+      *(1)* a valid transfer spends an input and creates a conserved output, moving the root;
+      *(2)* a mint (out > in) is refused fail-closed, root unmoved;
+      *(3)* a double-spend of the same input is refused, root unmoved;
+      *(4)* two independent hosts fed the same transfer converge to ONE root;
+      *(5)* a contract spends a LEDGER-PRODUCED key (real `Block.fromTransaction` +
+      `StateMachine._stateChangesFor`, not a fabricated key);
+      *(6)* the spend is provable against the committed Verkle root via `generateProof`/`verifyProof`,
+      and a TAMPERED value is rejected;
+      *(7)* the committed UTXO-bearing set reproduces the same root under any insertion order.
+      — *xcl/abi.js (`HOST_ABI_UTXO_SOURCE`, `utxoKey`, `spendKey`); xcl/contract-host.js (`utxoHost`
+      flag, input staging, conservation enforcement); contract-host.test.mjs (28/28)*
+- [ ] **T6.2 open remainders (HONEST scope of the "≥ Ethereum, fraction of resources" claim).** What
+      T6.2 does NOT yet prove, and must not be claimed: *(a)* the UTXO proof contracts are hand-encoded
+      and use **i64** amounts, not the `~u256` word width — LNG cannot yet EMIT `xmbl_utxo_*` calls from
+      `~contract` source (same gap as T6.1-d for crypto); *(b)* **contract-to-contract calls** do not
+      exist — `ContractHost` cannot reenter itself, a real power gap vs the EVM; *(c)* multi-node
+      convergence is proven IN-PROCESS (independent hosts, same calls → same root), not yet across real
+      node boundaries; *(d)* the **"fraction of the resources" claim is unmeasured** — finding C1
+      (`storage-compute` metering disconnected from execution) means there is no measured CPU/memory
+      basis to compare against Ethereum; the caps are enforced, the meter is not. These are the
+      substance of the remaining smart-contract parity work.
 
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 

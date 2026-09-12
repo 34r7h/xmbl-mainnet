@@ -8,8 +8,9 @@
 //   6. an LNG-compiled contract runs in the delegated sandbox, deterministically.
 import assert from 'node:assert';
 import { ComputeRuntime } from '@xmbl/storage-compute';
-import { VerkleStateTree } from '@xmbl/state-machine';
-import { ContractHost, InMemoryState, contractCoordinates, contractId } from './index.js';
+import { VerkleStateTree, StateMachine } from '@xmbl/state-machine';
+import { Block } from '@xmbl/cubic-ledger';
+import { ContractHost, InMemoryState, contractCoordinates, contractId, utxoKey, spendKey } from './index.js';
 import { compile } from '@xmbl/lng';
 import {
   Identity, mintGrant, mintZspToken, signAction, makeAuthorizer, RevocationSet, DurableNonceRegistry,
@@ -413,6 +414,174 @@ await check('gated seam: a durable nonce store rejects a replay action-replayed 
   store2.close();
 
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// UTXO ↔ VERKLE LINK — a contract spends xmbl UTXOs and creates new ones, committed
+// into the SAME Verkle state machine, with value conservation enforced fail-closed.
+// The contracts below are emitted structurally (not hand-typed bytes) so the mixed
+// i32/i64 host signatures and data segments stay legible and correct.
+// ────────────────────────────────────────────────────────────────────────────
+const uleb = (n) => { const o = []; let v = n >>> 0; do { let b = v & 0x7f; v >>>= 7; if (v) b |= 0x80; o.push(b); } while (v); return o; };
+const sleb = (n) => { const o = []; let more = true; while (more) { let b = n & 0x7f; n >>= 7; if ((n === 0 && (b & 0x40) === 0) || (n === -1 && (b & 0x40))) more = false; else b |= 0x80; o.push(b); } return o; };
+const wstr = (s) => [...uleb(s.length), ...[...s].map((c) => c.charCodeAt(0))];
+const sect = (id, payload) => [id, ...uleb(payload.length), ...payload];
+const wvec = (items) => [...uleb(items.length), ...items.flat()];
+const ftype = (params, results) => [0x60, ...uleb(params.length), ...params, ...uleb(results.length), ...results];
+const I32 = 0x7f, I64 = 0x7e;
+const impFn = (mod, name, t) => [...wstr(mod), ...wstr(name), 0x00, ...uleb(t)];
+const RECIP = 'BENEF01'; const RPTR = 256;
+
+// TRANSFER: enumerate input 0 (xmbl_input_id), spend it for its amount, create ONE output to a
+// fixed recipient of exactly that amount → conserves by construction, for ANY input id.
+const TRANSFER = Uint8Array.from([
+  ...HDR,
+  ...sect(1, wvec([                       // types
+    ftype([], [I32]),                     // t0 input_count       ()->i32
+    ftype([I32, I32], [I32]),             // t1 input_id          (i32,i32)->i32
+    ftype([I32, I32], [I64]),             // t2 amount/spend      (i32,i32)->i64
+    ftype([I32, I32, I64], [I64]),        // t3 create            (i32,i32,i64)->i64
+    ftype([], []),                        // t4 transfer          ()->()
+  ])),
+  ...sect(2, wvec([                       // imports (func idx 0..4)
+    impFn('env', 'xmbl_input_count', 0),
+    impFn('env', 'xmbl_input_id', 1),
+    impFn('env', 'xmbl_utxo_amount', 2),
+    impFn('env', 'xmbl_utxo_spend', 2),
+    impFn('env', 'xmbl_utxo_create', 3),
+  ])),
+  ...sect(3, wvec([[4]])),                 // functions: transfer -> t4 (func idx 5)
+  ...sect(5, wvec([[0x01, ...uleb(1), ...uleb(2)]])),  // memory: 1 page min
+  ...sect(7, wvec([                        // exports
+    [...wstr('memory'), 0x02, ...uleb(0)],
+    [...wstr('transfer'), 0x00, ...uleb(5)],
+  ])),
+  ...sect(10, wvec([(() => {               // code: transfer
+    const body = [
+      0x41, ...sleb(0), 0x41, ...sleb(0), 0x10, ...uleb(1), 0x21, ...uleb(1), // len = input_id(0, ptr0)
+      0x41, ...sleb(0), 0x20, ...uleb(1), 0x10, ...uleb(3), 0x21, ...uleb(0), // amt = spend(ptr0, len)
+      0x41, ...sleb(RPTR), 0x41, ...sleb(RECIP.length), 0x20, ...uleb(0), 0x10, ...uleb(4), 0x1a, // create(recip, len, amt); drop
+      0x0b,
+    ];
+    const locals = [...uleb(2), ...uleb(1), I64, ...uleb(1), I32]; // local0 i64 amt, local1 i32 len
+    const entry = [...locals, ...body];
+    return [...uleb(entry.length), ...entry];
+  })()])),
+  ...sect(11, wvec([[0x00, 0x41, ...sleb(RPTR), 0x0b, ...wstr(RECIP)]])), // data: recipient @ RPTR
+]);
+
+// MINT: create an output WITHOUT spending any input → out>in. A contract that fabricates value;
+// the host must refuse it and move nothing.
+const MINT = Uint8Array.from([
+  ...HDR,
+  ...sect(1, wvec([ftype([I32, I32, I64], [I64]), ftype([], [])])), // t0 create, t1 mint
+  ...sect(2, wvec([impFn('env', 'xmbl_utxo_create', 0)])),          // func idx 0
+  ...sect(3, wvec([[1]])),                                          // mint -> t1 (func idx 1)
+  ...sect(5, wvec([[0x01, ...uleb(1), ...uleb(2)]])),
+  ...sect(7, wvec([[...wstr('memory'), 0x02, ...uleb(0)], [...wstr('mint'), 0x00, ...uleb(1)]])),
+  ...sect(10, wvec([(() => {
+    const body = [0x41, ...sleb(RPTR), 0x41, ...sleb(RECIP.length), 0x42, 0xE4, 0x00, 0x10, ...uleb(0), 0x1a, 0x0b]; // create(recip,len,i64 100); drop
+    const entry = [...uleb(0), ...body];
+    return [...uleb(entry.length), ...entry];
+  })()])),
+  ...sect(11, wvec([[0x00, 0x41, ...sleb(RPTR), 0x0b, ...wstr(RECIP)]])),
+]);
+
+const seedUtxo = async (state, id, amount, from = 'genesis', to = 'alice') =>
+  state.insert(utxoKey(id), { from, to, amount: String(amount) });
+
+await check('utxo: a valid transfer spends an input and creates a conserved output, moving the root', async () => {
+  const state = new VerkleStateTree();
+  await seedUtxo(state, 'U1', 100);
+  const host = new ContractHost({ runtime: runtime(), state });
+  const { id } = host.deploy(TRANSFER, [], { utxoHost: true });
+  const root0 = state.getRoot();
+  const r = await host.call(id, 'transfer', [], { inputs: ['U1'] });
+  assert.deepStrictEqual(r.utxo.spent, ['U1'], 'the presented input was spent');
+  assert.strictEqual(r.utxo.created.length, 1, 'one output created');
+  assert.strictEqual(r.utxo.created[0].amount, '100', 'output amount equals input (conserved)');
+  assert.strictEqual(r.utxo.created[0].to, RECIP, 'output goes to the contract-chosen recipient');
+  assert.notStrictEqual(state.get(spendKey('U1')), undefined, 'a spend-marker (nullifier) was written');
+  const rec = state.get(utxoKey(r.utxo.created[0].id));
+  assert.strictEqual(rec.amount, '100', 'the new UTXO record is committed to Verkle');
+  assert.notStrictEqual(state.getRoot(), root0, 'committing the transfer moved the Verkle root');
+});
+
+await check('utxo: a mint (out > in) is refused fail-closed and the state root is unmoved', async () => {
+  const state = new VerkleStateTree();
+  const host = new ContractHost({ runtime: runtime(), state });
+  const { id } = host.deploy(MINT, [], { utxoHost: true });
+  const root0 = state.getRoot();
+  await assert.rejects(() => host.call(id, 'mint', [], { inputs: [] }), /value not conserved|mint refused/);
+  assert.strictEqual(state.getRoot(), root0, 'a refused mint must apply NOTHING — root unmoved');
+});
+
+await check('utxo: a double-spend of the same input is refused and the root is unmoved', async () => {
+  const state = new VerkleStateTree();
+  await seedUtxo(state, 'U1', 100);
+  const host = new ContractHost({ runtime: runtime(), state });
+  const { id } = host.deploy(TRANSFER, [], { utxoHost: true });
+  await host.call(id, 'transfer', [], { inputs: ['U1'] });  // first spend succeeds
+  const root1 = state.getRoot();
+  await assert.rejects(() => host.call(id, 'transfer', [], { inputs: ['U1'] }), /already spent|double-spend/);
+  assert.strictEqual(state.getRoot(), root1, 'the refused re-spend must move nothing');
+});
+
+await check('utxo: two independent hosts fed the same transfer converge to one root', async () => {
+  const mk = async () => {
+    const state = new VerkleStateTree();
+    await seedUtxo(state, 'U1', 100);
+    const host = new ContractHost({ runtime: runtime(), state });
+    const { id } = host.deploy(TRANSFER, [], { utxoHost: true });
+    await host.call(id, 'transfer', [], { inputs: ['U1'] });
+    return state.getRoot();
+  };
+  const [ra, rb] = [await mk(), await mk()];
+  assert.strictEqual(ra, rb, 'same seed + same call → same root on independent nodes');
+});
+
+await check('utxo: a contract spends a LEDGER-PRODUCED key (real Block + StateMachine derivation)', async () => {
+  // The key is not fabricated: Block.fromTransaction content-addresses the utxo tx (id = its hash),
+  // and StateMachine._stateChangesFor is the real mapping a node runs to place it in the Verkle tree.
+  const utxoTx = { type: 'utxo', from: 'alice', to: 'bob', amount: 100, timestamp: 1 };
+  const block = Block.fromTransaction(utxoTx);
+  const changes = StateMachine.prototype._stateChangesFor.call(null, block);
+  const key = Object.keys(changes)[0];
+  assert.strictEqual(key, `utxo:${block.id}`, 'the ledger produces the utxo:<block.id> key the contract will spend');
+  const state = new VerkleStateTree();
+  await state.insert(key, changes[key]);           // exactly what _handleLedgerBlock inserts
+  const host = new ContractHost({ runtime: runtime(), state });
+  const { id } = host.deploy(TRANSFER, [], { utxoHost: true });
+  const r = await host.call(id, 'transfer', [], { inputs: [block.id] });
+  assert.deepStrictEqual(r.utxo.spent, [block.id], 'the contract spent the ledger-produced UTXO');
+  assert.strictEqual(r.utxo.created[0].amount, '100', 'value conserved across the ledger→contract link');
+  assert.notStrictEqual(state.get(spendKey(block.id)), undefined, 'the ledger UTXO now carries a spend-marker');
+});
+
+await check('utxo: the spend is provable against the verkle root and a tampered value is rejected', async () => {
+  const state = new VerkleStateTree();
+  await seedUtxo(state, 'U1', 100);
+  const host = new ContractHost({ runtime: runtime(), state });
+  const { id } = host.deploy(TRANSFER, [], { utxoHost: true });
+  await host.call(id, 'transfer', [], { inputs: ['U1'] });
+  const sk = spendKey('U1');
+  const value = state.get(sk);
+  const proof = state.generateProof(sk);
+  assert.strictEqual(proof.root, state.getRoot(), 'the proof is against the committed state root');
+  assert.strictEqual(VerkleStateTree.verifyProof(sk, value, proof), true, 'the spend is provable against the committed root');
+  assert.strictEqual(VerkleStateTree.verifyProof(sk, { by: 'someone-else' }, proof), false, 'a tampered value fails the proof');
+});
+
+await check('utxo: the committed set reproduces the same root under any insertion order', async () => {
+  const state = new VerkleStateTree();
+  await seedUtxo(state, 'U1', 100);
+  const host = new ContractHost({ runtime: runtime(), state });
+  const { id } = host.deploy(TRANSFER, [], { utxoHost: true });
+  await host.call(id, 'transfer', [], { inputs: ['U1'] });
+  const entries = [...state.state.entries()];
+  const replay = new VerkleStateTree();
+  for (const [k, v] of [...entries].reverse()) await replay.insert(k, v);
+  assert.strictEqual(replay.getRoot(), state.getRoot(), 'the UTXO-bearing state root is a function of the SET, not order');
 });
 
 console.log(`\nXCL conformance: ${pass} passed, ${fail} failed`);

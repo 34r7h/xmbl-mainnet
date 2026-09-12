@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import {
   HOST_ABI_SOURCE, HOST_ABI_SOURCE_BYTES, XCL_WORD_MARSHAL_SOURCE, HOST_ABI_CRYPTO_INIT_SOURCE,
-  slotKey, byteKey, XCL_WORD_BYTES,
+  HOST_ABI_UTXO_SOURCE, slotKey, byteKey, utxoKey, spendKey, XCL_WORD_BYTES,
 } from './abi.js';
 import { contractId, contractCoordinates } from './placement.js';
 import { InMemoryState } from './in-memory-state.js';
@@ -75,6 +76,11 @@ export class ContractHost {
       // those imports bind to the REAL @xmbl/identity verifiers, and stages the signature
       // material from the call's `opts.crypto` (chain-provided, identical on every node).
       cryptoHost: !!deployOpts.cryptoHost,
+      // utxoHost: the contract SPENDS and CREATES xmbl UTXOs (env.xmbl_utxo_* / env.xmbl_input_*).
+      // When set, ContractHost stages the input UTXOs named in `opts.inputs` from committed Verkle
+      // state, attaches the UTXO value ABI, then enforces value conservation FAIL-CLOSED after the
+      // run — a call that mints value (out > in) is refused and applies nothing.
+      utxoHost: !!deployOpts.utxoHost,
     });
     return { id, coordinates };
   }
@@ -126,13 +132,43 @@ export class ContractHost {
       if (v !== undefined && v !== null) kv[hk] = v;
     }
 
+    // UTXO input read-set (utxoHost contracts): every id in `opts.inputs`, read from committed
+    // Verkle state as the ledger-produced `utxo:<id>` record. FAIL-CLOSED at staging: an input
+    // that does not exist, or one already carrying a `spend:<id>` marker (a double-spend), is
+    // refused before any WASM runs. inputIds is SORTED so xmbl_input_id(i) is identical on every
+    // node — the read-set a contract sees must be a pure function of the presented set.
+    let utxos = null; let inputIds = null;
+    if (c.utxoHost) {
+      utxos = {}; inputIds = [...new Set((opts.inputs || []).map(String))].sort();
+      for (const uid of inputIds) {
+        if (this.state.get(spendKey(uid)) !== undefined) {
+          throw new Error(`ContractHost.call: input utxo ${uid} is already spent (double-spend refused)`);
+        }
+        const rec = this.state.get(utxoKey(uid));
+        if (rec === undefined || rec === null) {
+          throw new Error(`ContractHost.call: input utxo ${uid} does not exist`);
+        }
+        const amt = (rec && typeof rec === 'object') ? rec.amount : rec;
+        if (amt === undefined || amt === null) throw new Error(`ContractHost.call: input utxo ${uid} has no amount`);
+        utxos[uid] = String(amt);
+      }
+    }
+
+    // The byte-pointer ABI and the v0 slot ABI collide on the names xmbl_verkle_get/set (different
+    // signatures), so a call uses exactly ONE of them per the contract's kind. The UTXO value ABI
+    // uses disjoint names (xmbl_utxo_* / xmbl_input_*), so it composes onto whichever state ABI the
+    // contract uses — both sub-factories are eval'd over the same ctx and their bindings merged.
+    const stateSource = c.byteState ? HOST_ABI_SOURCE_BYTES : HOST_ABI_SOURCE;
+    const source = c.utxoHost
+      ? `(ctx) => Object.assign({}, (${stateSource})(ctx), (${HOST_ABI_UTXO_SOURCE})(ctx))`
+      : stateSource;
+
     const host = {
-      // The byte-pointer ABI and the v0 slot ABI collide on the names xmbl_verkle_get/set
-      // (different signatures), so a call uses exactly ONE of them per the contract's kind.
-      source: c.byteState ? HOST_ABI_SOURCE_BYTES : HOST_ABI_SOURCE,
+      source,
       // A cryptoHost contract also gets the staged signature material under `crypto`, read by
       // the crypto init bindings and identical on every node (so the verdict is deterministic).
-      data: { slots, caller: (opts.caller | 0), kv, crypto: c.cryptoHost ? (opts.crypto || null) : null },
+      // A utxoHost contract gets the staged input UTXOs and their sorted id list.
+      data: { slots, caller: (opts.caller | 0), kv, crypto: c.cryptoHost ? (opts.crypto || null) : null, utxos, inputIds },
       // A word-ABI (LNG-compiled) contract needs its `~u256` args marshalled into guest-memory
       // word pointers and its returned pointer decoded; a hand-encoded i32-ABI contract does not.
       marshal: c.wordAbi ? XCL_WORD_MARSHAL_SOURCE : null,
@@ -145,11 +181,59 @@ export class ContractHost {
     // runtime would leak a standing allowance to later, unrelated jobs on the same instance.
     const { result, writes } = await this.runtime.execute(c.wasm, fnName, args, { host });
 
+    // ── UTXO CONSERVATION — the security property, enforced FAIL-CLOSED before ANY write lands.
+    // Value cannot be minted: the sum of the UTXOs this call spends must equal the sum it creates
+    // plus the fee. This is checked BEFORE applying the write-set, so a violating call reverts
+    // WHOLLY — no spend marker, no output, no slot/byte write, the state root unmoved. This is
+    // where XCL refuses an unbalanced value transition, exactly as it refuses an unauthorized one.
+    const spentIds = [];
+    const outputs = [];
+    for (const w of writes) {
+      if (w[0] === 'utxo_spend') spentIds.push(w[1]);
+      else if (w[0] === 'utxo_create') outputs.push({ to: w[1], amount: BigInt(w[2]) });
+    }
+    let created = [];
+    if (spentIds.length || outputs.length) {
+      let sumIn = 0n;
+      for (const uid of spentIds) {
+        // Re-assert every guard the ABI enforced in-worker, on the trusted side. A spend of a UTXO
+        // not staged as an input, or one already spent in committed state, is refused here too.
+        if (!utxos || !Object.prototype.hasOwnProperty.call(utxos, uid)) {
+          throw new Error(`ContractHost.call: spent utxo ${uid} was not a staged input`);
+        }
+        if (this.state.get(spendKey(uid)) !== undefined) {
+          throw new Error(`ContractHost.call: input utxo ${uid} is already spent (double-spend refused)`);
+        }
+        sumIn += BigInt(utxos[uid]);
+      }
+      let sumOut = 0n;
+      for (const o of outputs) sumOut += o.amount;
+      const fee = BigInt(opts.fee || 0);
+      if (sumIn !== sumOut + fee) {
+        throw new Error(`ContractHost.call: value not conserved (in=${sumIn} out=${sumOut} fee=${fee}) — mint refused`);
+      }
+    }
+
     // Apply the write-set atomically. Byte writes are tagged `['bytes', hexKey, hexVal]`
     // (entry[0] is the string 'bytes'); slot writes are `[slotNum, valNum]` (entry[0] is a
-    // number). Tag-checking each entry keeps the two ABIs from mis-applying each other's writes.
+    // number). Tag-checking each entry keeps the ABIs from mis-applying each other's writes.
     for (const w of writes) {
-      if (typeof w[0] === 'string' && w[0] === 'bytes') {
+      if (w[0] === 'utxo_spend') {
+        // Spend-marker (nullifier): a SEPARATE key, never a mutation of the value record — the
+        // ledger's rule (micromine.js) that spent-ness is derived from a pointer, not the datum.
+        await this.state.insert(spendKey(w[1]), { by: id, spentBy: fnName });
+      } else if (w[0] === 'utxo_create') {
+        // A created output's id is content-addressed (same 16-hex scheme as a ledger block id), a
+        // pure function of the creating contract, recipient, amount and the exact set of inputs it
+        // consumed — deterministic and identical on every node, so replay reproduces the same key.
+        const to = w[1]; const amount = w[2];
+        const idx = created.length;
+        const newId = createHash('sha256')
+          .update(JSON.stringify({ from: id, to, amount, spends: [...spentIds].sort(), i: idx }))
+          .digest('hex').slice(0, 16);
+        await this.state.insert(utxoKey(newId), { from: id, to, amount });
+        created.push({ id: newId, to, amount });
+      } else if (typeof w[0] === 'string' && w[0] === 'bytes') {
         const [, hk, hv] = w;
         c.byteKeys.add(hk);
         await this.state.insert(byteKey(id, hk), hv);
@@ -159,7 +243,9 @@ export class ContractHost {
         await this.state.insert(slotKey(id, slot), val | 0);
       }
     }
-    return { result, writes, stateRoot: this.state.getRoot(), coordinates: c.coordinates };
+    const out = { result, writes, stateRoot: this.state.getRoot(), coordinates: c.coordinates };
+    if (c.utxoHost) out.utxo = { spent: spentIds, created };
+    return out;
   }
 
   /** Read a contract's committed slot value (0 if never written). */

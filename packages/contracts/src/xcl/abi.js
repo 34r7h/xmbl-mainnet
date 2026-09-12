@@ -256,3 +256,103 @@ export const HOST_ABI_CRYPTO_INIT_SOURCE = `async (ctx, declared) => {
   };
   return out;
 }`;
+
+// ────────────────────────────────────────────────────────────────────────────
+// UTXO VALUE ABI — the seam that LINKS xmbl UTXOs to the Verkle state machine.
+//
+// An xmbl UTXO is a ledger record the state machine already commits to the SAME Verkle
+// tree XCL writes into: state-machine.js maps a `utxo` block to the key `utxo:<id>` with
+// value `{ from, to, amount }` (id = the block's content hash). This ABI lets a contract
+// SPEND those committed UTXOs and CREATE new ones, so contract execution and value
+// transfer share one provable state root.
+//
+// The spend model matches the ledger's type-6/type-7 rule (micromine.js): spent-ness is
+// DERIVED FROM A SEPARATE POINTER, never by mutating the value datum. Spending a UTXO does
+// not touch its `utxo:<id>` record — it writes a distinct nullifier key `spend:<id>`. So
+// the record stays immutable and a double-spend is a key that already exists.
+//
+// A contract does NOT hardcode the ids it spends: it enumerates the inputs the caller
+// PRESENTED (xmbl_input_count / xmbl_input_id), so the same bytecode spends a
+// content-addressed ledger id it could never have known at compile time.
+//
+//   xmbl_input_count() -> i32            number of UTXOs staged as this call's inputs
+//   xmbl_input_id(i:i32, out:i32) -> i32 writes input i's id bytes to `out`, returns its
+//                                        byte length (-1 if i is out of range / region OOB)
+//   xmbl_utxo_amount(id_ptr, id_len:i32) -> i64  the staged amount of input `id`
+//                                        (-1 if `id` was not presented as an input)
+//   xmbl_utxo_spend(id_ptr, id_len:i32)  -> i64  mark input `id` spent for this call and
+//                                        return its amount (-1 if not an input, or already
+//                                        spent in THIS call)
+//   xmbl_utxo_create(to_ptr, to_len:i32, amount:i64) -> i64  create an output UTXO to
+//                                        recipient `to` of `amount` (0 ok, -1 if amount<=0)
+//
+// Amounts cross as i64 (BigInt at the JS boundary). The host COLLECTS spends and creates in
+// ctx.writes tagged ['utxo_spend', id] / ['utxo_create', to, amountDecimalString]; it does
+// NOT check conservation here (a WASM import cannot abort the whole call cleanly). ContractHost
+// enforces conservation (sum(spent) === sum(created) + fee) FAIL-CLOSED after the run, applying
+// nothing on a mint — see contract-host.js.
+
+/** The import names the UTXO value ABI defines — the deny-by-default allow surface. */
+export const HOST_IMPORT_KEYS_UTXO = [
+  'env.xmbl_input_count', 'env.xmbl_input_id',
+  'env.xmbl_utxo_amount', 'env.xmbl_utxo_spend', 'env.xmbl_utxo_create',
+];
+
+/** The Verkle key an xmbl UTXO record maps to — the SAME namespace state-machine.js writes. */
+export function utxoKey(id) { return `utxo:${id}`; }
+
+/** The Verkle key a UTXO's spend-marker (nullifier) maps to. Spending writes THIS, never the record. */
+export function spendKey(id) { return `spend:${id}`; }
+
+/**
+ * UTXO value host-module factory, as source (eval'd inside the worker). `ctx.data.utxos` is the
+ * staged input read-set `{ [id:string]: amountDecimalString }`; `ctx.data.inputIds` is the
+ * deterministic (sorted) list of those ids. `ctx.writes` collects tagged UTXO ops; `ctx.mem()`
+ * gives guest memory. i64 amounts arrive/return as BigInt.
+ * @type {string}
+ */
+export const HOST_ABI_UTXO_SOURCE = `(ctx) => {
+  var utxos = (ctx.data && ctx.data.utxos) || {};
+  var ids = (ctx.data && ctx.data.inputIds) || [];
+  var spent = {};
+  var view = function () { var m = ctx.mem && ctx.mem(); return m ? new Uint8Array(m.buffer) : null; };
+  var strAt = function (ptr, len) {
+    var v = view(); if (!v) return null;
+    if (ptr < 0 || len < 0 || ptr + len > v.length) return null;
+    var s = ''; for (var i = 0; i < len; i++) s += String.fromCharCode(v[ptr + i]); return s;
+  };
+  var has = function (o, k) { return Object.prototype.hasOwnProperty.call(o, k); };
+  return {
+    'env.xmbl_input_count': function () { return ids.length | 0; },
+    'env.xmbl_input_id': function (i, outPtr) {
+      if (i < 0 || i >= ids.length) return -1;
+      var v = view(); if (!v) return -1;
+      var id = ids[i];
+      if (outPtr < 0 || outPtr + id.length > v.length) return -1;
+      for (var k = 0; k < id.length; k++) v[outPtr + k] = id.charCodeAt(k) & 0xff;
+      return id.length | 0;
+    },
+    'env.xmbl_utxo_amount': function (idPtr, idLen) {
+      var id = strAt(idPtr, idLen); if (id === null) return -1n;
+      if (!has(utxos, id)) return -1n;
+      return BigInt(utxos[id]);
+    },
+    'env.xmbl_utxo_spend': function (idPtr, idLen) {
+      var id = strAt(idPtr, idLen); if (id === null) return -1n;
+      if (!has(utxos, id)) return -1n;
+      if (spent[id]) return -1n;
+      spent[id] = true;
+      ctx.writes.push(['utxo_spend', id]);
+      ctx.log.push(['utxo_spend', id]);
+      return BigInt(utxos[id]);
+    },
+    'env.xmbl_utxo_create': function (toPtr, toLen, amount) {
+      var to = strAt(toPtr, toLen); if (to === null) return -1n;
+      var amt = BigInt(amount);
+      if (amt <= 0n) return -1n;
+      ctx.writes.push(['utxo_create', to, amt.toString()]);
+      ctx.log.push(['utxo_create', to, amt.toString()]);
+      return 0n;
+    },
+  };
+}`;
