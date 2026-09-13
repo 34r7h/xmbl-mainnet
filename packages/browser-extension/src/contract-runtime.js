@@ -95,6 +95,10 @@ function sha256Bytes (msg) {
 }
 
 const hex = (u8) => { let s = ''; for (let i = 0; i < u8.length; i++) s += u8[i].toString(16).padStart(2, '0'); return s }
+// Re-export the compiler's lexer/parser so the visual builder (contract-builder.js) derives its
+// model from the SAME AST the in-page compiler uses — and inherits the Buffer shim installed above.
+export { lex, parse }
+
 export const sha256Hex = (u8) => hex(sha256Bytes(u8))
 const utf8 = (s) => new TextEncoder().encode(s)
 

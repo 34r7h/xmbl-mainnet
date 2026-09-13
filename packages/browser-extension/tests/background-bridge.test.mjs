@@ -47,6 +47,18 @@ try {
   const s1 = await bg.getNodeStatus();
   ok('height advanced to 1 after the send', s1.height === 1, `height=${s1.height}`);
 
+  // ── node-side capability surface: the bridge proxies REAL primitives run in the devnet ──
+  const sr = await bg.capability({ type: 'getStateRoot' });
+  ok('getStateRoot proxies real ledger state (connected, landed=1)', sr.connected === true && sr.landed === 1, JSON.stringify(sr));
+  const zk = await bg.capability({ type: 'zkProof', derivedX: 99 });
+  ok('zkProof proxies a real verified+negative-controlled proof', zk.connected === true && zk.ok === true && zk.tamperedRejected === true, JSON.stringify(zk));
+  const he = await bg.capability({ type: 'heAdd', a: 1, b: 0 });
+  ok('heAdd proxies a real homomorphic add (1 ⊞ 0 = 1)', he.connected === true && he.ok === true && he.sum === 1, JSON.stringify(he));
+  const sig = await bg.capability({ type: 'sigVerify', message: 'xbe' });
+  ok('sigVerify proxies a real sign+verify with tamper rejection', sig.connected === true && sig.ok === true && sig.tamperedRejected === true, JSON.stringify(sig));
+  const seal = await bg.capability({ type: 'seal', secret: 'k' });
+  ok('seal proxies a real PQ KEM round-trip', seal.connected === true && seal.ok === true && seal.roundTrip === true, JSON.stringify(seal));
+
   // lifecycle toggles the real node
   const stop = await bg.stopNode();
   ok('stopNode succeeds', stop.success === true);
@@ -63,6 +75,13 @@ try {
   ok('offline getBalance is 0 + disconnected (not a fabricated figure)', bo.balance === 0 && bo.connected === false);
   const to = await off.sendTransaction({ to: net.addressOf(1), amount: 5 });
   ok('offline sendTransaction errors instead of returning a fake txId', typeof to.error === 'string' && !to.txId, JSON.stringify(to));
+  const co = await off.capability({ type: 'zkProof', derivedX: 99 });
+  ok('offline capability reports disconnected, not a fabricated verdict', co.connected === false && co.ok !== true, JSON.stringify(co));
+
+  // ── config: setDevnetUrl repoints the bridge at a live endpoint ──
+  const cfg = await off.setDevnetUrl(`http://127.0.0.1:${port}`);
+  ok('setDevnetUrl repoints the bridge and finds the live devnet', cfg.url === `http://127.0.0.1:${port}` && cfg.connected === true, JSON.stringify(cfg));
+  ok('after repoint the capability surface works', (await off.capability({ type: 'heAdd', a: 1, b: 1 })).sum === 0);
 
   console.log(`\n✅ background bridge: ${pass} checks passed`);
 } finally {

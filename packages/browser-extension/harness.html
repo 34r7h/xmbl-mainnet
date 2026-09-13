@@ -32,6 +32,15 @@
           else if (msg && msg.type === 'sendTransaction') resp = { txId: 'dtx_harness_' + Date.now(), connected: true };
           else if (msg && msg.type === 'startNode') { _bg.nodeRunning = true; resp = { success: true, connected: true }; }
           else if (msg && msg.type === 'stopNode') { _bg.nodeRunning = false; resp = { success: true, connected: true }; }
+          else if (msg && msg.type === 'getStateRoot') resp = { root: '0x' + '00'.repeat(16), pooled: 0, landed: 0, connected: true };
+          // Crypto host-cap verdicts — shaped exactly like the real devnet capability responses
+          // (capabilities.js). The REAL primitives are proven in background-bridge.test.mjs.
+          else if (msg && msg.type === 'zkProof') resp = { ok: true, derivedX: String(msg.derivedX), derivedY: '254430811', honestVerifies: true, tamperedRejected: true, scheme: 'xzk', connected: true };
+          else if (msg && msg.type === 'heAdd') resp = { ok: true, a: msg.a, b: msg.b, sum: (msg.a + msg.b) % 2, expected: (msg.a + msg.b) % 2, scheme: 'cubic-LWE', connected: true };
+          else if (msg && msg.type === 'sigVerify') resp = { ok: true, message: msg.message, signedVerifies: true, tamperedRejected: true, scheme: 'Cubic-SIG', connected: true };
+          else if (msg && msg.type === 'seal') resp = { ok: true, roundTrip: true, scheme: 'cubic-LWE KEM seal', connected: true };
+          else if (msg && msg.type === 'getDevnetUrl') resp = { url: 'http://127.0.0.1:8646' };
+          else if (msg && msg.type === 'setDevnetUrl') resp = { url: (msg.url || 'http://127.0.0.1:8646'), connected: true, running: _bg.nodeRunning };
           setTimeout(() => cb && cb(resp), 0);
         },
       },

@@ -5,14 +5,19 @@
 // -extension message contract over loopback HTTP and stays up until Ctrl-C. The printed URL is
 // the one a node bridge (replacing the extension's stub BackgroundNode) would POST to.
 //
-//   PORT=8645 npm run devnet -w packages/simulator     # pin the RPC port (default: OS-assigned)
+//   PORT=8645 npm run devnet -w packages/simulator     # pin a different RPC port
 //   IDENTITIES=6 SEED=12 npm run devnet -w packages/simulator
+//
+// The default port is 8646 — the browser extension's documented default endpoint (its Config tab
+// and `xmbl:devnetUrl` default to http://127.0.0.1:8646), so `npm run devnet` serves the loaded
+// extension with no reconfiguration. Override with PORT to run elsewhere (then re-point the
+// extension's Config tab to match).
 import { LocalDevnet } from './devnet.js';
 import { DevnetRpc } from './devnet-rpc.js';
 
 const identities = Number(process.env.IDENTITIES || 4);
 const seed = Number(process.env.SEED || 9);
-const port = Number(process.env.PORT || 0);
+const port = Number(process.env.PORT || 8646);
 
 const net = await new LocalDevnet({ identities }).start();
 console.log(`[devnet] booted ${net.metrics.identities} real identities; wallet = ${net.addressOf(0)}`);

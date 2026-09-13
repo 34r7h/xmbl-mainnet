@@ -126,8 +126,15 @@
     #app [hidden] { display: none !important; }
     .mono { font-family: var(--mono); }
 
-    /* ── masthead (wordmark, no icon tile) ── */
+    /* ── masthead (wordmark + XMBL logo mark) ── */
     .head { margin-bottom: clamp(22px, 3vw, 34px); }
+    .brand { display: flex; align-items: center; gap: clamp(12px, 1.4vw, 18px); }
+    .brand-logo { display: inline-flex; flex: 0 0 auto; }
+    .xmbl-mark {
+      width: clamp(38px, 5vw, 54px); height: clamp(38px, 5vw, 54px); display: block;
+    }
+    /* monochrome, theme-aware: dark discs / paper separators on light; inverts on the dark token swap */
+    .xmbl-mark .c { fill: var(--ink); stroke: var(--paper); stroke-width: 14px; stroke-miterlimit: 10; }
     .title {
       font-family: var(--font); font-weight: 200; font-size: clamp(1.9rem, 3.6vw, 2.9rem);
       line-height: 1; letter-spacing: -.02em; color: var(--ink); text-wrap: balance;

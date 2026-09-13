@@ -407,8 +407,14 @@ function boot () {
   // ── shell ────────────────────────────────────────────────────────────────
   clear(root)
   const dot = () => el('span', { class: 'dot', text: '·' })
+  // XMBL wordmark logo (static markup; monochrome, styled from the page tokens via .xmbl-mark .c).
+  const XMBL_MARK = '<svg class="xmbl-mark" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 943.339996338 933.169998169"><g><circle class="c" cx="470.859992981" cy="126.000003815" r="120.000017166"/><circle class="c" cx="245.470001221" cy="208.750003815" r="120.000005722"/><circle class="c" cx="126" cy="417.009986877" r="119.999988556"/><circle class="c" cx="168.349994659" cy="653.349990845" r="120.000005722"/><circle class="c" cx="352.709991455" cy="807.169998169" r="120"/><circle class="c" cx="592.809967041" cy="806.500015259" r="120"/><circle class="c" cx="776.309967041" cy="651.649978638" r="120"/><circle class="c" cx="817.339996338" cy="415.08000946" r="120.000011444"/><circle class="c" cx="696.709991455" cy="207.490005493" r="120"/></g><g><circle class="c" cx="391.179992676" cy="250.590011597" r="82.940002441"/><circle class="c" cx="262.970001221" cy="355.960006714" r="82.940002441"/><circle class="c" cx="232.5" cy="519.099990845" r="82.940002441"/><circle class="c" cx="314.010009766" cy="663.659988403" r="82.940002441"/><circle class="c" cx="469.369987488" cy="722.000015259" r="82.939990997"/><circle class="c" cx="625.889984131" cy="666.829971313" r="82.940002441"/><circle class="c" cx="710.329986572" cy="523.959976196" r="82.940002441"/><circle class="c" cx="683.170013428" cy="360.229995728" r="82.940002441"/><circle class="c" cx="557.129974365" cy="252.270004272" r="82.940002441"/></g><g><circle class="c" cx="473.570014954" cy="307.180007935" r="58.05999694" transform="translate(94.498982891 725.430254783) rotate(-80.782526715)"/><circle class="c" cx="364" cy="345.800003052" r="58.059997559"/><circle class="c" cx="304.899993896" cy="445.810012817" r="58.059997559"/><circle class="c" cx="323.910003662" cy="560.419998169" r="58.059997559"/><circle class="c" cx="412.139984131" cy="635.990005493" r="58.059997559"/><circle class="c" cx="528.300018311" cy="637.169998169" r="58.059997559"/><circle class="c" cx="618.050018311" cy="563.399978638" r="58.059997559"/><circle class="c" cx="639.379974365" cy="449.210014343" r="58.060009003"/><circle class="c" cx="582.319976807" cy="348.020004272" r="58.059997559"/></g></svg>'
+  const logoMark = () => { const s = el('span', { class: 'brand-logo' }); s.innerHTML = XMBL_MARK; return s }
   const head = el('header', { class: 'head' }, [
-    el('h1', { class: 'title' }, [document.createTextNode('XMBL '), el('b', { text: 'Contract Lab' })]),
+    el('div', { class: 'brand' }, [
+      logoMark(),
+      el('h1', { class: 'title' }, [document.createTextNode('XMBL '), el('b', { text: 'Contract Lab' })])
+    ]),
     el('p', { class: 'sub' }, [
       document.createTextNode('Build a contract — visually or in code'), dot(),
       document.createTextNode('run every call against live state'), dot(),

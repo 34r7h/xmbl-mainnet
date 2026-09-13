@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "XMBL Wallet",
+  "name": "XMBL Console",
   "version": "0.1.0",
-  "description": "XMBL Browser Extension - Wallet and Node",
+  "description": "XMBL Browser Extension — contracts, crypto host capabilities, wallet, node & config",
   "permissions": [
     "storage",
     "activeTab",
@@ -14,6 +14,11 @@
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   },
   "background": {
     "service_worker": "dist/background.js"

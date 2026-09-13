@@ -1,18 +1,23 @@
 <template>
   <div id="shell">
     <header class="head">
-      <h1 class="title">XMBL <b>Wallet</b></h1>
-      <p class="sub">A wallet & contract client for xmbl — built on the same compiler and content-addressed identity a node runs.</p>
+      <div class="brand">
+        <svg class="xmbl-mark" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 943.339996338 933.169998169"><g><circle class="c" cx="470.859992981" cy="126.000003815" r="120.000017166"/><circle class="c" cx="245.470001221" cy="208.750003815" r="120.000005722"/><circle class="c" cx="126" cy="417.009986877" r="119.999988556"/><circle class="c" cx="168.349994659" cy="653.349990845" r="120.000005722"/><circle class="c" cx="352.709991455" cy="807.169998169" r="120"/><circle class="c" cx="592.809967041" cy="806.500015259" r="120"/><circle class="c" cx="776.309967041" cy="651.649978638" r="120"/><circle class="c" cx="817.339996338" cy="415.08000946" r="120.000011444"/><circle class="c" cx="696.709991455" cy="207.490005493" r="120"/></g><g><circle class="c" cx="391.179992676" cy="250.590011597" r="82.940002441"/><circle class="c" cx="262.970001221" cy="355.960006714" r="82.940002441"/><circle class="c" cx="232.5" cy="519.099990845" r="82.940002441"/><circle class="c" cx="314.010009766" cy="663.659988403" r="82.940002441"/><circle class="c" cx="469.369987488" cy="722.000015259" r="82.939990997"/><circle class="c" cx="625.889984131" cy="666.829971313" r="82.940002441"/><circle class="c" cx="710.329986572" cy="523.959976196" r="82.940002441"/><circle class="c" cx="683.170013428" cy="360.229995728" r="82.940002441"/><circle class="c" cx="557.129974365" cy="252.270004272" r="82.940002441"/></g><g><circle class="c" cx="473.570014954" cy="307.180007935" r="58.05999694" transform="translate(94.498982891 725.430254783) rotate(-80.782526715)"/><circle class="c" cx="364" cy="345.800003052" r="58.059997559"/><circle class="c" cx="304.899993896" cy="445.810012817" r="58.059997559"/><circle class="c" cx="323.910003662" cy="560.419998169" r="58.059997559"/><circle class="c" cx="412.139984131" cy="635.990005493" r="58.059997559"/><circle class="c" cx="528.300018311" cy="637.169998169" r="58.059997559"/><circle class="c" cx="618.050018311" cy="563.399978638" r="58.059997559"/><circle class="c" cx="639.379974365" cy="449.210014343" r="58.060009003"/><circle class="c" cx="582.319976807" cy="348.020004272" r="58.059997559"/></g></svg>
+        <h1 class="title">XMBL <b>Console</b></h1>
+      </div>
+      <p class="sub">The whole xmbl stack in one surface — contracts, crypto host capabilities, wallet, node &amp; modules, config — on the same compiler, identity and ledger a node runs.</p>
     </header>
 
     <nav class="tabs" role="tablist">
-      <button class="tab" role="tab" :aria-selected="tab === 'contracts'" :class="{ on: tab === 'contracts' }" @click="tab = 'contracts'">Contracts</button>
-      <button class="tab" role="tab" :aria-selected="tab === 'wallet'" :class="{ on: tab === 'wallet' }" @click="tab = 'wallet'">Wallet</button>
+      <button v-for="t in TABS" :key="t.id" class="tab" role="tab" :aria-selected="tab === t.id" :class="{ on: tab === t.id }" @click="tab = t.id">{{ t.label }}</button>
     </nav>
 
     <main class="body">
       <Contracts v-show="tab === 'contracts'" />
+      <Crypto v-show="tab === 'crypto'" />
       <Wallet v-show="tab === 'wallet'" />
+      <Node v-show="tab === 'node'" />
+      <Config v-show="tab === 'config'" />
     </main>
   </div>
 </template>
@@ -20,9 +25,20 @@
 <script setup>
 import { ref } from 'vue'
 import Contracts from './Contracts.vue'
+import Crypto from './Crypto.vue'
 import Wallet from './Wallet.vue'
+import Node from './Node.vue'
+import Config from './Config.vue'
 
-// Contracts is the real, proven surface (in-page @xmbl/lng compile + node-parity id), so it leads.
+// Contracts is the real, proven in-page surface (@xmbl/lng compile + node-parity id), so it leads.
+// The rest surface the whole stack: crypto host caps, the wallet, the node & module map, and config.
+const TABS = [
+  { id: 'contracts', label: 'Contracts' },
+  { id: 'crypto', label: 'Crypto' },
+  { id: 'wallet', label: 'Wallet' },
+  { id: 'node', label: 'Node' },
+  { id: 'config', label: 'Config' },
+]
 const tab = ref('contracts')
 </script>
 
@@ -108,6 +124,10 @@ const tab = ref('contracts')
   #shell * { box-sizing: border-box; }
 
   .head { padding: 16px 18px 12px; border-bottom: 1px solid var(--rule); }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .xmbl-mark { width: 26px; height: 26px; flex: 0 0 auto; display: block; }
+  /* monochrome, theme-aware: dark discs / paper separators on light; inverts in dark mode */
+  .xmbl-mark .c { fill: var(--ink); stroke: var(--paper); stroke-width: 14px; stroke-miterlimit: 10; }
   .title { margin: 0; font-size: 1.25rem; font-weight: 400; letter-spacing: .01em; color: var(--ink); }
   .title b { font-weight: 700; }
   .sub { margin: 5px 0 0; font-size: .8125rem; line-height: 1.45; color: var(--muted); }

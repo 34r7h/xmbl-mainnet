@@ -13,7 +13,16 @@
 // Contract deploy/call are intentionally NOT served here — the in-page contract path is already
 // node-parity-proven in the extension, and a deploy route pulls in the delegation gate + worker
 // isolation questions, which are a separate piece.
+//
+// It ALSO serves the node-side capability surface the extension cannot run in-page — each a REAL
+// primitive run end-to-end in this node process, verdict returned JSON-safe (see capabilities.js):
+//   getStateRoot    {type}                  → { root, pooled, landed }   // live ledger state root
+//   zkProof         {type, derivedX?}       → { ok, derivedX, derivedY, honestVerifies, tamperedRejected, … }
+//   heAdd           {type, a?, b?}          → { ok, a, b, sum, expected, … }  // homomorphic add
+//   sigVerify       {type, message?}        → { ok, signedVerifies, tamperedRejected, … }  // Cubic-SIG
+//   seal            {type, secret?}         → { ok, roundTrip, … }             // PQ KEM seal
 import { createServer } from 'node:http';
+import { CAPABILITIES } from './capabilities.js';
 
 export class DevnetRpc {
   constructor(devnet, options = {}) {
@@ -54,8 +63,17 @@ export class DevnetRpc {
       case 'stopNode':
         if (this.net.isRunning()) await this.net.stop();
         return { success: true };
-      default:
+      case 'getStateRoot': {
+        const m = await this.net.getMetrics();
+        return { root: m.root ?? null, pooled: m.pooled ?? 0, landed: m.landed ?? this.net.height() };
+      }
+      default: {
+        // Node-side capability surface (zk / HE / signature / seal): a real primitive run to a
+        // verdict in this process. Unknown types still fall through to an honest error.
+        const cap = CAPABILITIES[message && message.type];
+        if (cap) return cap(message || {});
         return { error: `Unknown message type: ${message && message.type}` };
+      }
     }
   }
 

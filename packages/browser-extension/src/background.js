@@ -59,8 +59,41 @@ export class BackgroundNode {
         return await this.startNode();
       case 'stopNode':
         return await this.stopNode();
+      // Node-side capability surface (ledger state root + zk / HE / signature / seal). Each is a
+      // real primitive run in the devnet process; the popup's Crypto/Node tabs drive these.
+      case 'getStateRoot':
+      case 'zkProof':
+      case 'heAdd':
+      case 'sigVerify':
+      case 'seal':
+        return await this.capability(message);
+      case 'getDevnetUrl':
+        return { url: this.devnetUrl };
+      case 'setDevnetUrl':
+        return await this.setDevnetUrl(message.url);
       default:
         throw new Error(`Unknown message type: ${message.type}`);
+    }
+  }
+
+  /** Point the bridge at a new devnet URL, persist it, and report current reachability. */
+  async setDevnetUrl(url) {
+    const next = (url || '').trim() || DEFAULT_DEVNET_URL;
+    this.devnetUrl = next;
+    try { await browser.storage.local.set({ 'xmbl:devnetUrl': next }); } catch { /* storage may be unavailable */ }
+    const status = await this.getNodeStatus(); // probes the new URL
+    return { url: next, connected: this.connected, running: status.running };
+  }
+
+  /** Proxy a node-side capability message to the devnet; truthful disconnected state on failure. */
+  async capability(message) {
+    try {
+      const r = await this._rpc(message);
+      this.connected = true;
+      return { ...r, connected: true };
+    } catch (e) {
+      this.connected = false;
+      return { connected: false, error: `devnet unreachable (${e.message})` };
     }
   }
 

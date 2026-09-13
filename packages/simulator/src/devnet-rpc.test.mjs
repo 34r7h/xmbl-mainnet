@@ -48,6 +48,29 @@ try {
   const bad = await call({ type: 'sendTransaction', tx: { amount: 5 } });
   ok('sendTransaction without a recipient returns an error', typeof bad.error === 'string', JSON.stringify(bad));
 
+  // live ledger state root (real, moves as faces seal)
+  const sr = await call({ type: 'getStateRoot' });
+  ok('getStateRoot returns landed count and pooled', sr.landed === 1 && typeof sr.pooled === 'number', JSON.stringify(sr));
+
+  // ── node-side capability surface: each a REAL primitive verified + negative-controlled ──
+  const zk = await call({ type: 'zkProof', derivedX: 99 });
+  ok('zkProof verifies the honest coordinate and rejects the tampered one', zk.ok === true && zk.honestVerifies === true && zk.tamperedRejected === true, JSON.stringify(zk));
+
+  const he1 = await call({ type: 'heAdd', a: 1, b: 0 });
+  ok('heAdd: ENC(1) ⊞ ENC(0) decrypts to 1 (blind add)', he1.ok === true && he1.sum === 1, JSON.stringify(he1));
+  const he2 = await call({ type: 'heAdd', a: 1, b: 1 });
+  ok('heAdd: ENC(1) ⊞ ENC(1) decrypts to 0 (mod-2 wrap)', he2.ok === true && he2.sum === 0, JSON.stringify(he2));
+  // the message space is a single bit: a non-bit operand is rejected, NOT silently coerced to a
+  // green verdict for an operation nobody asked for
+  const heBad = await call({ type: 'heAdd', a: 3, b: 5 });
+  ok('heAdd rejects non-bit operands (no coerced false pass)', heBad.ok === false && /0 or 1/.test(heBad.error || ''), JSON.stringify(heBad));
+
+  const sig = await call({ type: 'sigVerify', message: 'xbe' });
+  ok('sigVerify signs+verifies and rejects a tampered message', sig.ok === true && sig.signedVerifies === true && sig.tamperedRejected === true, JSON.stringify(sig));
+
+  const seal = await call({ type: 'seal', secret: 'authorizing-key' });
+  ok('seal round-trips a secret through a PQ KEM envelope', seal.ok === true && seal.roundTrip === true, JSON.stringify(seal));
+
   // unknown type is reported
   const unk = await call({ type: 'frobnicate' });
   ok('unknown message type returns an error', /Unknown message type/.test(unk.error || ''), JSON.stringify(unk));
