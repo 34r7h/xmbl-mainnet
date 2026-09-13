@@ -3,6 +3,13 @@ const { VueLoaderPlugin } = require('vue-loader');
 
 module.exports = {
   mode: 'development',
+  // CRITICAL for MV3: the default dev devtool is 'eval', which wraps every module in eval() — and
+  // extension pages run under a CSP that forbids eval(), so an eval-devtool bundle silently dies at
+  // load and the popup is blank ("nothing happens when I click the icon"). A normal web page (the
+  // Playwright harness) has no such CSP, which is why it never caught this. devtool:false emits plain
+  // source with NO eval, while keeping development mode (no terser) so @xmbl/lng's BigInt literals
+  // are left intact. WebAssembly (@xmbl/lng) is separately allowed via manifest CSP 'wasm-unsafe-eval'.
+  devtool: false,
   entry: {
     background: './src/background.js',
     popup: './src/popup/main.js',
@@ -33,7 +40,12 @@ module.exports = {
     new VueLoaderPlugin()
   ],
   resolve: {
-    extensions: ['.js', '.vue']
+    extensions: ['.js', '.vue'],
+    alias: {
+      // Runtime-only Vue: SFC templates are precompiled by vue-loader, so the template compiler
+      // (which uses new Function, also CSP-forbidden on extension pages) must not ship.
+      vue$: 'vue/dist/vue.runtime.esm-bundler.js'
+    }
   }
 };
 

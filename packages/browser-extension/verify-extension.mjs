@@ -15,11 +15,15 @@
 import { chromium } from '@playwright/test';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm' };
+const SHOTS = join(HERE, 'tests', 'screenshots');
+mkdirSync(SHOTS, { recursive: true });
+const shot = (page, name) => page.screenshot({ path: join(SHOTS, name) });
 
 let pass = 0, fail = 0;
 const check = (n, cond, detail = '') => { if (cond) { console.log(`  ok   ${n}`); pass++; } else { console.log(`  FAIL ${n}${detail ? '\n       ' + detail : ''}`); fail++; } };
@@ -84,6 +88,7 @@ try {
     const okTxt = bad ? await text('.status.bad') : await text('.status.ok');
     check(`${key}: compiles (real bytecode)`, bad === 0 && /Compiled/.test(okTxt), okTxt);
   }
+  await shot(page, 'harness-01-compiled.png');
 
   // ── 3) DEPLOY (content-addressed, saved to the browser.storage registry) ──
   console.log('\n── deploy ──');
@@ -97,6 +102,7 @@ try {
   const stored = await page.evaluate(() => window.__store['xmbl:contracts']);
   check('deploy writes the instance to browser.storage', !!stored && !!stored[deployedId], `store keys: ${stored ? Object.keys(stored).length : 0}`);
   check('stored instance records the node-identical id', !!stored && stored[deployedId] && stored[deployedId].id === deployedId);
+  await shot(page, 'harness-02-deployed.png');
 
   // ── 4) FIND (list + search filter) ──
   console.log('\n── find ──');
@@ -124,6 +130,7 @@ try {
     return t && (t.querySelector('.tv')?.textContent || '').trim() === '42';
   }, { timeout: 10000 });
   check('incBy(41) commits count → 42', (await tileValue('count')) === '42', `count=${await tileValue('count')}`);
+  await shot(page, 'harness-03-call-count-42.png');
 
   // Revert path: deploy Vault, over-withdraw → reverts, balance unmoved.
   await page.selectOption('.sec select.sel', 'Vault');
@@ -141,6 +148,7 @@ try {
     const msg = await callStatus();
     check('Vault over-withdraw reverts (underflow)', /reverted/.test(msg), msg);
     check('reverted call leaves bal unmoved', (await tileValue('bal')) === balStart, `before=${balStart} after=${await tileValue('bal')}`);
+    await shot(page, 'harness-04-vault-revert.png');
   } else {
     check('Vault exposes a withdraw entrypoint', false, `entrypoints: ${vaultEps.join(', ')}`);
   }
@@ -153,7 +161,8 @@ try {
   check('node status shows stopped', (await text('.live-dot')) === 'stopped');
   await page.getByRole('button', { name: /Start node/ }).click();
   await page.waitForFunction(() => /running/.test(document.querySelector('.live-dot')?.textContent || ''), { timeout: 5000 });
-  check('Start node toggles to running (stub)', (await text('.live-dot')) === 'running');
+  check('Start node toggles to running', (await text('.live-dot')) === 'running');
+  await shot(page, 'harness-05-wallet.png');
 
   // ── 7) no page errors anywhere in the run ──
   console.log('\n── errors ──');

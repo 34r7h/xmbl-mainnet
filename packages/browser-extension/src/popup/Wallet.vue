@@ -21,7 +21,7 @@
 
     <div class="sec">
       <div class="sec-h"><span class="eyebrow">Node</span>
-        <span class="live-dot" :class="{ on: nodeStatus.running }">{{ nodeStatus.running ? 'running' : 'stopped' }}</span>
+        <span class="live-dot" :class="{ on: connected && nodeStatus.running }">{{ !connected ? 'no devnet' : (nodeStatus.running ? 'running' : 'stopped') }}</span>
       </div>
       <div class="stat-grid">
         <div class="stat"><div class="k">peers</div><div class="v mono">{{ nodeStatus.peers }}</div></div>
@@ -30,7 +30,8 @@
       <button class="btn ghost sm" style="margin-top:9px" @click="toggleNode">{{ nodeStatus.running ? 'Stop node' : 'Start node' }}</button>
     </div>
 
-    <p class="note">The node bridge is a stub until a local xmbl node endpoint is wired — balances and transactions are placeholders. Contract creation, deployment and calls (the Contracts tab) run for real, in-page.</p>
+    <p class="note" v-if="connected">Connected to a local XMBL devnet — balance and sends are real signed, verified transactions on it. Contract creation, deployment and calls (the Contracts tab) run for real, in-page.</p>
+    <p class="note" v-else>No local XMBL devnet reachable, so balance shows 0 and sends are disabled — start one with <code>npm run devnet -w packages/simulator</code> (default <code>http://127.0.0.1:8646</code>). Contract creation, deployment and calls (the Contracts tab) run for real, in-page regardless.</p>
   </div>
 </template>
 
@@ -42,6 +43,7 @@ const balance = ref(0)
 const recipient = ref('')
 const amount = ref('')
 const nodeStatus = ref({ running: false, peers: 0, height: 0 })
+const connected = ref(false)
 const sending = ref(false)
 const sendMsg = ref('')
 const sendMsgKind = ref('info')
@@ -50,7 +52,7 @@ let poll = null
 function say (text, kind) { sendMsg.value = text; sendMsgKind.value = kind || 'info' }
 
 async function loadBalance () {
-  try { const r = await browser.runtime.sendMessage({ type: 'getBalance', address: 'current' }); balance.value = (r && r.balance) || 0 }
+  try { const r = await browser.runtime.sendMessage({ type: 'getBalance', address: 'current' }); balance.value = (r && r.balance) || 0; if (r) connected.value = !!r.connected }
   catch (e) { console.error('balance:', e) }
 }
 
@@ -67,7 +69,7 @@ async function sendTransaction () {
 }
 
 async function loadNodeStatus () {
-  try { const s = await browser.runtime.sendMessage({ type: 'getNodeStatus' }); if (s) nodeStatus.value = s }
+  try { const s = await browser.runtime.sendMessage({ type: 'getNodeStatus' }); if (s) { nodeStatus.value = s; connected.value = !!s.connected } }
   catch (e) { console.error('node status:', e) }
 }
 

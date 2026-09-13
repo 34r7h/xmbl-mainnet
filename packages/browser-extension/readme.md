@@ -66,3 +66,10 @@ commitment, no delegation gate — stated on screen. The full gated path is the 
 `npm run build -w packages/browser-extension` — webpack bundles `src/` into `dist/`. No babel:
 the extension targets modern Chromium and `@xmbl/lng` is BigInt-heavy (`@babel/preset-env`
 down-levels its BigInt literals and breaks at load); Vue SFCs are compiled by `vue-loader`.
+
+**MV3 CSP constraints (why the popup was blank):** extension pages forbid `eval`/`new Function`, so
+the config sets `devtool:false` (the default dev devtool is `eval`, which would make the whole bundle
+die at load), aliases `vue` to the runtime-only build (no template-compiler `new Function`), and the
+manifest declares `content_security_policy.extension_pages` with `'wasm-unsafe-eval'` so `@xmbl/lng`'s
+WebAssembly runs. `tests/verify-extension-loaded.mjs` (part of `verify:extension`) loads the REAL
+unpacked extension under the real CSP and asserts the popup mounts, so a regression here fails loudly.

@@ -17,8 +17,9 @@
     window.addEventListener('error', (e) => window.__errors.push('error: ' + (e.message || e.error)));
     window.addEventListener('unhandledrejection', (e) => window.__errors.push('unhandledrejection: ' + (e.reason && (e.reason.message || e.reason))));
     const _store = {};
-    // Mirrors src/background.js exactly (the shipped stub node bridge): stateful nodeRunning,
-    // mock balance/txId. Keeps the harness faithful to what the real service worker returns.
+    // Emulates the RPC bridge's responses when CONNECTED to a fresh LocalDevnet (connected:true,
+    // stateful nodeRunning, 0 balance/peers/height). Keeps the popup workflow hermetic; the real
+    // bridge↔devnet path is proven in tests/background-bridge.test.mjs against a live devnet RPC.
     const _bg = { nodeRunning: false };
     globalThis.chrome = {
       runtime: {
@@ -26,11 +27,11 @@
         lastError: null,
         sendMessage: (msg, cb) => {
           let resp = {};
-          if (msg && msg.type === 'getBalance') resp = { balance: 0 };
-          else if (msg && msg.type === 'getNodeStatus') resp = { running: _bg.nodeRunning, peers: 0, height: 0 };
-          else if (msg && msg.type === 'sendTransaction') resp = { txId: 'mock-tx-id-' + Date.now() };
-          else if (msg && msg.type === 'startNode') { _bg.nodeRunning = true; resp = { success: true }; }
-          else if (msg && msg.type === 'stopNode') { _bg.nodeRunning = false; resp = { success: true }; }
+          if (msg && msg.type === 'getBalance') resp = { balance: 0, connected: true };
+          else if (msg && msg.type === 'getNodeStatus') resp = { running: _bg.nodeRunning, peers: 0, height: 0, connected: true };
+          else if (msg && msg.type === 'sendTransaction') resp = { txId: 'dtx_harness_' + Date.now(), connected: true };
+          else if (msg && msg.type === 'startNode') { _bg.nodeRunning = true; resp = { success: true, connected: true }; }
+          else if (msg && msg.type === 'stopNode') { _bg.nodeRunning = false; resp = { success: true, connected: true }; }
           setTimeout(() => cb && cb(resp), 0);
         },
       },

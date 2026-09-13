@@ -7,7 +7,7 @@
     "build": "webpack",
     "watch": "webpack --watch",
     "test": "node tests/assert-loadable.mjs && node tests/contract-runtime.parity.test.mjs && node tests/background-bridge.test.mjs",
-    "verify:extension": "npm run build && node tests/assert-loadable.mjs && node verify-extension.mjs"
+    "verify:extension": "npm run build && node tests/assert-loadable.mjs && node verify-extension.mjs && node tests/verify-extension-loaded.mjs"
   },
   "dependencies": {
     "vue": "^3.5.24",
