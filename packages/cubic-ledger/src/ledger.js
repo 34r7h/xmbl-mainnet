@@ -312,9 +312,11 @@ export class Ledger extends EventEmitter {
     // re-admitted below, in deterministic id order after the anchors, so two nodes holding the same canonical
     // set and the same local txs still rebuild to the same chain.
     const preserved = [];
+    let wipedBlocks = 0;
     if (this._dbOpen) {
       try {
         for await (const [, value] of this.db.iterator({ gte: 'block:', lt: 'block;' })) {
+          wipedBlocks++;
           let raw; try { raw = JSON.parse(value.toString()); } catch { continue; }
           if (!raw || !raw.tx || raw.tx.type === 'anchor') continue;
           try { preserved.push(Block.deserialize(value.toString())); } catch { /* unreadable row, leave it */ }
@@ -399,9 +401,16 @@ export class Ledger extends EventEmitter {
       if (!r || r.sealedFaces === 0 || ++guard > 200000) break;
     }
     await this._persistMembershipPool();
+    // SAY WHAT WAS DESTROYED. A rebuild clears the whole block/cube/face/pool keyspace and nothing anywhere
+    // wrote a line about it: SirKit watched this box lose 13,750 block rows and regain 10,500 over one day
+    // with no prune, rebuild, compact or delete entry in node.log or coordinator.log. A box can lose most of
+    // its ledger invisibly. This is the only place that knows both numbers, so it is the place to print them.
+    console.log(`[XCLT] canonical rebuild: wiped ${wipedBlocks} block row(s), rebuilt ${uniq.length} anchor(s), `
+      + `preserved ${preserved.length} non-anchor block(s), sealed ${faces} face(s), ${this.cubes.size} cube(s)`);
     return {
       anchors: uniq.length,
       blocks: this.blocks.size,
+      wiped: wipedBlocks,
       preserved: preserved.length,
       faces_sealed: faces,
       cubes: this.cubes.size,
