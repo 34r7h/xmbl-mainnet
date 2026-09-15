@@ -21,7 +21,7 @@
     "@xmbl/identity": "^0.1.2",
     "@xmbl/networking": "^0.1.1",
     "@xmbl/state-machine": "^0.1.2",
-    "@xmbl/storage-compute": "^0.1.1",
+    "@xmbl/storage-compute": "^0.1.2",
     "@xmbl/zero-knowledge": "^0.1.1",
     "pino": "^10.1.0"
   },
