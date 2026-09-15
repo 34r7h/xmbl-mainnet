@@ -418,6 +418,23 @@ export class Ledger extends EventEmitter {
     };
   }
 
+  // WHAT THIS LEDGER CAN DO, ASKED OF THE RUNNING CODE RATHER THAN THE INSTALL TREE.
+  //
+  // A caller deciding whether `rebuild_ledger` is safe to issue has two bad options: read
+  // node_modules/@xmbl/cubic-ledger/package.json, which reports the INSTALLED version and not the one in
+  // memory (an OTA that lands a new bundle without restarting leaves the old code running — this box was in
+  // exactly that state for part of 2026-09-15), or issue the destructive op and look at the result, which
+  // only tells you afterwards. This is the third option: a non-destructive question the running process
+  // answers about itself. `rescues_non_anchor_blocks` is the one that matters — false means a canonical
+  // rebuild on this node will drop every value tx, utxo, identity and contract it holds.
+  capabilities() {
+    return {
+      rescues_non_anchor_blocks: true,
+      reports_wiped_count: true,
+      rebuild_logs_to_stdout: true,
+    };
+  }
+
   // ---- CONSENSUS-V2 (2b) seal hooks. STATE lives here; the SealRoundManager (in core, with the gossip) injects
   // getMembershipPool as getItems and calls sealAgreedBlocks as sealSet. block.hash is the node-consistent L1 key. ----
   getMembershipPool() { return this._membershipPool; }
