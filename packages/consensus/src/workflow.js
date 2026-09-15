@@ -2,6 +2,7 @@ import { Mempool } from './mempool.js';
 import { ValidationTaskManager } from './validation-tasks.js';
 import { EventEmitter } from 'events';
 import { createHash } from 'crypto';
+import { verifyMicromine, type6TxBody } from '@xmbl/cubic-ledger';   // content-addressing: the ONLY admissible proof an unsigned type-6 carries
 
 export class ConsensusWorkflow extends EventEmitter {
   constructor(options = {}) {
@@ -99,6 +100,37 @@ export class ConsensusWorkflow extends EventEmitter {
   // Flag-gated (XPC_INGRESS_GUARD=0 disables = rollback switch) + LOGGED (never a silent drop). Scoped to
   // type='anchor' ONLY (the confirmed spam) so legit non-value types (identity/contract/state_diff) are never
   // dropped — widen only if advisor confirms those never use the value-tx pool.
+  // THE ONE PREDICATE BOTH INGRESS GUARDS USE FOR A TYPE-6 VALUE-TX (task 9d80916e).
+  //
+  // A type-6 is CONTENT-ADDRESSED, not signed: src/xmbl-value-tx.ts:39 leaves sig/sig_by deliberately absent
+  // until the signature-model ruling lands, and core/index.js:308 already dedups these by `tx.xid` precisely
+  // because `tx.sig` is empty. So the signature-presence check below and the user-resolvability check further
+  // down both refuse every one of them, and 7,276 emissions stranded with type-6 count ZERO on chain.
+  //
+  // What this admits on is the SAME check xclt's validateTransaction runs at validate time: recompute the oid
+  // over the canonical 8-field body, confirm xid === SHA256(oid + nonce) and carries the '06' prefix. A
+  // tampered body, a wrong nonce or a mistyped key fails here exactly as it would there.
+  //
+  // ⚠ WHAT THIS IS NOT, AND WHAT IT COSTS — both, because a comment that states only the first is a control
+  //   asserted with its cost hidden:
+  //   (1) A type-6 admitted this way is bound to its CONTENT and NOT to an AUTHOR. Content-addressing proves
+  //       the bytes are the bytes that were mined; it proves nothing about who mined them. NO SURFACE MAY
+  //       DESCRIBE SUCH A DATUM AS SIGNED, VERIFIED OR AUTHENTICATED. There is no authorship check with teeth
+  //       on this path, and there will not be one until the signature model lands.
+  //   (2) It is REPLAYABLE BY ANY PEER. These datums are public on /api/v1/xmbl/utxo, so any peer can re-gossip
+  //       a legitimate one under its OWN leader id: mempool.rawTx is Map<leaderId, Map<rawTxId>> and
+  //       core/index.js dedups PER LEADER, so one datum becomes N pool entries for N peers (measured: 1 datum,
+  //       3 leaders, 3 entries). It is bounded — _processedRawTxIds is global and the flood cap still applies —
+  //       but that cap is per SUBMITTER, so the bound scales with PEER COUNT, not with datum count.
+  // Ruled acceptable by handoff-claude against 7,276 permanently stranded emissions, with the limitation
+  // RECORDED rather than discharged. Narrow it when the signature model lands; do not widen it before.
+  _isContentAddressedType6(txData) {
+    if (!txData || txData.type !== 'tx') return false;
+    if (typeof txData.xid !== 'string' || !txData.xid.startsWith('06')) return false;
+    if (!Number.isInteger(txData.nonce) || txData.nonce < 0) return false;
+    try { return verifyMicromine(type6TxBody(txData), txData.nonce, txData.xid, 6); } catch { return false; }
+  }
+
   // INGRESS GUARD — reject what the chain can never use, admit everything else.
   //
   // ⛔ THE PREVIOUS VERSION DROPPED EVERY type:'anchor'. The line `if (!txData || txData.type !== 'anchor')
@@ -130,7 +162,10 @@ export class ConsensusWorkflow extends EventEmitter {
     // 1. UNSIGNED -> reject. No signature or no sender means nothing can ever validate it.
     const signed = typeof txData.sig === 'string' && txData.sig.length > 0
       && (typeof txData.from === 'string' ? txData.from.length > 0 : Array.isArray(txData.from) && txData.from.length > 0);
-    if (!signed) {
+    // NARROWED, not removed (9d80916e): an unsigned datum is still junk UNLESS it is a type-6 whose xid
+    // actually content-addresses its body. Everything else unsigned — anchors, utxos, identity txs, and a
+    // type-6 carrying no xid or a forged one — is refused exactly as before.
+    if (!signed && !this._isContentAddressedType6(txData)) {
       console.warn(`ingress-guard: REJECT unsigned ${txData.type || 'tx'} from ${submitterId}`);
       return false;
     }
@@ -175,6 +210,14 @@ export class ConsensusWorkflow extends EventEmitter {
   _userCanValidate(txData) {
     if (process.env.XPC_REQUIRE_RESOLVABLE_USER === '0') return true;
     if (typeof this.getPublicKeyByAddress !== 'function') return true;   // no resolver wired: cannot judge, admit
+    // (9d80916e) A CONTENT-ADDRESSED TYPE-6 IS THE SECOND, INDEPENDENT REFUSAL ON THIS PATH, and exempting
+    // only _admitToPool leaves the real emission dead here with "user unresolvable". Its `from` is an ARRAY of
+    // BROKER account ids (sandbox-api, __platform__, platform) — not node addresses — so this resolver returns
+    // null for every one of them and can never mean anything else for this type. Under user-as-validator the
+    // premise fails too: such a tx is validated as a content-addressed record, not by resolving its payer.
+    // The exemption is exactly as narrow as the one above: it costs the same two things, listed at
+    // _isContentAddressedType6, and nothing more.
+    if (this._isContentAddressedType6(txData)) return true;
     const from = txData && txData.from;
     if (!from) return true;                                              // no claimed user: other guards own this
     try { return !!this.getPublicKeyByAddress(from); } catch { return true; }
@@ -777,11 +820,18 @@ export class ConsensusWorkflow extends EventEmitter {
     const utxos = this._extractUtxos(processingTx.txData);
     await this.mempool.unlockUtxos(utxos);
     
-    // Ensure txData has id property for xclt
-    const txDataWithId = {
-      ...processingTx.txData,
-      id: validatedHash
-    };
+    // PRESERVE THE ORIGINATOR'S SIGNED `id`. This block used to overwrite it with
+    // `validatedHash` unconditionally — but `id` is inside the signed message (identity's
+    // signingMessage covers every field except sig/publicKey), so the mutation made the
+    // ledger's re-verification stringify a different tx and a valid signature could never
+    // match ("Invalid transaction signature or address mismatch"). The consensus hash is
+    // already carried to the ledger as the finalized event's `txId`, and the ledger derives
+    // its own content-addressed block id via Block.fromTransaction — it never needs
+    // txData.id to equal validatedHash. So: keep the signed id when present; only fall back
+    // to validatedHash for a tx that carried none (was DEVNET-SEAM-FINDING defect (a)).
+    const txDataWithId = processingTx.txData.id != null
+      ? processingTx.txData
+      : { ...processingTx.txData, id: validatedHash };
     
     // Emit finalized event - xclt will add this to ledger
     // Blocks are sorted by hash when face has 9 blocks

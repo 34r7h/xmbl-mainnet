@@ -4,12 +4,13 @@
 // It drives the REAL modules — MAYO identities, the cubic ledger with signature verification
 // ON — through a network pipeline and asserts the OUTCOME by count: N signed transfers
 // submitted → N landed → blocks sealed into a face, with a negative control proving the
-// verification is live (a tampered tx is rejected). It then PINS the two currently-broken
-// consensus→ledger seams so that a later protocol fix makes this test fail loudly (forcing the
-// assertions to be updated) instead of the bug silently returning. See ../DEVNET-SEAM-FINDING.md.
+// verification is live (a tampered tx is rejected). It then proves the two consensus→ledger
+// seams documented in ../DEVNET-SEAM-FINDING.md are now FIXED, each with a live negative
+// control so a regression fails loudly.
 import assert from 'node:assert/strict';
 import { LocalDevnet } from './devnet.js';
 import { Identity } from '../../identity/index.js';
+import { ConsensusWorkflow } from '../../consensus/index.js';
 
 let pass = 0;
 const ok = (name, cond, detail = '') => {
@@ -55,24 +56,59 @@ const ok = (name, cond, detail = '') => {
   await net.stop();
 }
 
-// ── 2) REGRESSION PINS — the two broken consensus→ledger seams (fix ⇒ these flip) ──
+// ── 2) SEAM FIXES — the two consensus→ledger defects are corrected (each with a neg-control) ──
 {
   const net = await new LocalDevnet({ identities: 2 }).start();
   const from = net.identities[0];
   const signed = await from.signTransaction({ id: 'seam_client_id', type: 'utxo', from: from.address, to: net.addressOf(1), amount: 7, timestamp: Date.now() });
 
-  // (a) consensus/src/workflow.js:781-784 overwrites the signed `id` with validatedHash; the
-  //     legacy finalize path then re-verifies the mutated tx and the signature can't match.
-  const idOverwritten = { ...signed, id: 'validatedHash_' + 'ab'.repeat(8) };
-  let aThrew = '';
-  try { await net.ledger.addTransaction(idOverwritten); } catch (e) { aThrew = e.message; }
-  ok('PIN(a): id-overwritten signed tx fails re-verification (workflow.js:781-784)', /Invalid transaction signature|address mismatch/.test(aThrew), `threw="${aThrew}"`);
+  // FIX(a): consensus finalizeTransaction now PRESERVES the originator's signed `id`. It used to
+  // overwrite it with validatedHash (workflow.js), corrupting the signed message so the ledger's
+  // re-verification could never match. Driven at the real code site: a signed tx placed in the
+  // processing mempool is finalized, and the emitted txData must keep its signed id AND still
+  // verify against the signer's key. The consensus hash rides separately as the event's txId.
+  {
+    const w = new ConsensusWorkflow({});
+    const validatedHash = 'validatedHash_' + 'ab'.repeat(8);
+    w.mempool.processingTx.set(validatedHash, { txData: { ...signed }, validationTimestamp: null });
+    let emitted = null;
+    w.on('tx:finalized', (d) => { emitted = d; });
+    await w.finalizeTransaction(validatedHash);
+    ok('FIX(a): finalize PRESERVES the signed id (not validatedHash)', !!emitted && emitted.txData.id === 'seam_client_id', `id=${emitted?.txData?.id}`);
+    ok('FIX(a): the finalized tx STILL verifies against the signer key', (await Identity.verifyTransaction(emitted.txData, from.publicKey)) === true);
+    ok('FIX(a): the consensus hash is carried separately as the event txId', emitted.txId === validatedHash);
+    // OPEN defect (c), PINNED here (not only in DEVNET-SEAM-FINDING.md prose): moveToProcessing
+    // injects a `validationTimestamp` INTO the signed tx body, which is outside the signed domain,
+    // so a real finalized tx does NOT re-verify against the signer key. This is why ledger-side
+    // re-verification stays OFF in production. If someone wires getPublicKeyByAddress into the
+    // Ledger without first resolving (c) (block-id-from-signed-body OR carrying validationTimestamp
+    // as a sibling), THIS assertion flips and the gate fails — which is the intended tripwire.
+    const withVt = { ...signed, validationTimestamp: '123' };
+    ok('FIX(a) scope: a tx carrying consensus-injected validationTimestamp does NOT re-verify (open defect (c))',
+       (await Identity.verifyTransaction(withVt, from.publicKey)) === false);
+    try { await w.mempool?.db?.close?.(); } catch { /* in-memory / already closed */ }
+  }
 
-  // (b) cubic-ledger/src/ledger.js:249 calls this.xid.verify(...), absent on an Identity instance.
+  // FIX(a) negative control: mutating `id` AFTER signing (what the old overwrite effectively did)
+  // is REJECTED by the ledger — `id` is inside the signed domain, which is exactly why consensus
+  // must not overwrite it.
+  const idMutated = { ...signed, id: 'attacker_reid' };
+  let aThrew = '';
+  try { await net.ledger.addTransaction(idMutated); } catch (e) { aThrew = e.message; }
+  ok('FIX(a) neg-control: an id-mutated signed tx is REJECTED (id is signed)', /Invalid transaction signature|address mismatch/.test(aThrew), `threw="${aThrew}"`);
+
+  // FIX(b): addSealedBatch now verifies via the static Identity.verifyTransaction. It used to call
+  // this.xid.verify(...) — a method that does not exist on an Identity instance → TypeError, so its
+  // signature check had never verified anything. Identity instances still expose no `.verify`
+  // (only the static), so the corrected call site is the reason this now works.
   ok('Identity instances have no .verify (only static verifyTransaction)', typeof from.verify === 'undefined' && typeof Identity.verifyTransaction === 'function');
+  const sealedResult = await net.ledger.addSealedBatch([{ ...signed }]);
+  ok('FIX(b): addSealedBatch VERIFIES a valid sig and lands (no TypeError)', !!sealedResult && typeof sealedResult === 'object');
+
+  // FIX(b) negative control: a tx tampered after signing is REJECTED on the sealed-batch path too.
   let bThrew = '';
-  try { await net.ledger.addSealedBatch([{ ...signed }]); } catch (e) { bThrew = e.constructor.name + ': ' + e.message; }
-  ok('PIN(b): addSealedBatch throws TypeError on this.xid.verify (ledger.js:249)', /TypeError.*verify is not a function/.test(bThrew), `threw="${bThrew}"`);
+  try { await net.ledger.addSealedBatch([{ ...signed, amount: 4242 }]); } catch (e) { bThrew = e.message; }
+  ok('FIX(b) neg-control: addSealedBatch REJECTS a tampered tx (verification is live)', /Invalid signature|address mismatch/.test(bThrew), `threw="${bThrew}"`);
 
   await net.stop();
 }

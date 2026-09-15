@@ -12,12 +12,12 @@
   "dependencies": {
     "electron": "^28.0.0",
     "vue": "^3.4.0",
-    "@xmbl/identity": "*",
-    "@xmbl/networking": "*",
-    "@xmbl/cubic-ledger": "*",
-    "@xmbl/state-machine": "*",
-    "@xmbl/consensus": "*",
-    "@xmbl/storage-compute": "*",
+    "@xmbl/identity": "^0.1.2",
+    "@xmbl/networking": "^0.1.1",
+    "@xmbl/cubic-ledger": "^0.1.1",
+    "@xmbl/state-machine": "^0.1.2",
+    "@xmbl/consensus": "^0.1.1",
+    "@xmbl/storage-compute": "^0.1.1",
     "level": "^8.0.0"
   },
   "devDependencies": {

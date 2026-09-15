@@ -2,7 +2,8 @@
   "name": "@xmbl/visualizer",
   "version": "0.1.0",
   "type": "module",
-  "main": "index.js",
+  "private": true,
+  "main": "server.js",
   "description": "XMBL Visualizer",
   "scripts": {
     "dev": "vite",
@@ -34,15 +35,9 @@
     "vite": "^5.0.0"
   },
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/34r7h/xmbl-mainnet.git",
     "directory": "packages/visualizer"
-  },
-  "exports": {
-    ".": "./index.js"
   }
 }

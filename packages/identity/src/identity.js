@@ -3,6 +3,26 @@ import { sign as signerSign, verify as signerVerify } from './signer.js';
 import { createHash } from 'crypto';
 
 /**
+ * The ONE canonical signed-message derivation, used by BOTH signTransaction and
+ * verifyTransaction so the two strip-lists can never drift. Two hand-maintained lists were
+ * asymmetric — sign excluded `sig` AND `publicKey`, verify excluded only `sig` — so a tx that
+ * carried a `publicKey` field was verified against a different message than was signed and
+ * failed a valid signature. This is the single source of truth.
+ *
+ * The signature covers every tx field EXCEPT `sig` (the signature itself) and `publicKey`
+ * (a recovery aid, not signed content). `id` and every other field ARE covered — cubic-ledger
+ * Block.fromTransaction derives a block's content-address from the WHOLE tx, so an unsigned
+ * `id` would be attacker-mutable into a distinct block that re-applies the same value.
+ * Consensus therefore MUST NOT overwrite `id` after signing (see finalizeTransaction).
+ * @param {Object} tx
+ * @returns {string} the exact JSON string the signature is/was computed over
+ */
+export function signingMessage(tx) {
+  const { sig, publicKey, ...signed } = tx;
+  return JSON.stringify(signed);
+}
+
+/**
  * Identity class for XMBL
  * Manages MAYO post-quantum cryptographic identities
  * @class Identity
@@ -43,17 +63,6 @@ export class Identity {
    */
   static fromPublicKey(publicKey) {
     return new Identity(publicKey, null);
-  }
-
-  /**
-   * Create identity from private key
-   * @param {string} privateKey - Base64-encoded MAYO private key
-   * @throws {Error} Not implemented
-   */
-  static fromPrivateKey(privateKey) {
-    // Derive public key from private key (MAYO specific)
-    // For now, assume we store both
-    throw new Error('Not implemented: derive public from private');
   }
 
   /**
@@ -112,16 +121,19 @@ export class Identity {
     // is DELIBERATELY kept. A CONTENT-ADDRESSED type-6 (whose `from`=[payer] is a mined body field) must NOT reach
     // here — core.submitTransaction skips signing it (type-scoped), because overwriting `from` would break its
     // content-address. Keeping this path unconditional preserves the node-authored sig-ownership invariant.
-    const txWithAddress = { ...tx, from: this.address };
-    // Create message to sign (tx without sig and publicKey fields)
-    const { sig, publicKey, ...txWithoutSig } = txWithAddress;
-    const message = JSON.stringify(txWithoutSig);
+    // Strip any inbound publicKey/sig here so the RETURNED tx has the exact shape the
+    // signature was computed over (signingMessage excludes both). Otherwise a caller that
+    // passed a publicKey field would get it back on the signed tx, and verifyTransaction —
+    // which also excludes it — would be verifying a different shape than the object carries.
+    const { publicKey: _pk, sig: _sig, ...body } = { ...tx, from: this.address };
+    // Message to sign — the ONE canonical derivation (excludes sig + publicKey).
+    const message = signingMessage(body);
     const messageBytes = new TextEncoder().encode(message);
     // Route through the ONE signer seam (xid/src/signer.js) — do not call the
     // signature primitive directly here. Sign under this identity's scheme.
     const signature = await signerSign(messageBytes, this.privateKey, this.scheme);
     // Return transaction with signature, but NO publicKey
-    return { ...txWithAddress, sig: signature };
+    return { ...body, sig: signature };
   }
 
   /**
@@ -138,12 +150,13 @@ export class Identity {
       return false;
     }
 
-    const { sig, ...txWithoutSig } = signedTx;
-    const message = JSON.stringify(txWithoutSig);
+    // Message to verify — the SAME canonical derivation the signer used (excludes sig +
+    // publicKey), so a tx carrying a publicKey field verifies against what was actually signed.
+    const message = signingMessage(signedTx);
     const messageBytes = new TextEncoder().encode(message);
 
     // Verify signature through the ONE signer seam (xid/src/signer.js).
-    const isValidSig = await signerVerify(messageBytes, sig, publicKey, opts);
+    const isValidSig = await signerVerify(messageBytes, signedTx.sig, publicKey, opts);
     if (!isValidSig) {
       return false;
     }

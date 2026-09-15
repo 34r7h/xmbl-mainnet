@@ -5,7 +5,7 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { SystemSimulator } from '../xsim/index.js';
+import { SystemSimulator } from '../simulator/index.js';
 import { Ledger } from '../cubic-ledger/index.js';
 
 const __filename = fileURLToPath(import.meta.url);

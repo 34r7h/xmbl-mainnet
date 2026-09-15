@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/contracts",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -19,20 +19,28 @@
   "description": "XCL — the XMBL Contract Layer. Binds contracts compiled by @xmbl/lng to cubic-ledger coordinates and Verkle state, executing them in the @xmbl/storage-compute sandbox.",
   "dependencies": {},
   "peerDependencies": {
-    "@xmbl/lng": "0.1.0",
-    "@xmbl/storage-compute": "0.1.0",
-    "@xmbl/state-machine": "0.1.0",
-    "@xmbl/identity": "0.1.0",
-    "@xmbl/cubic-ledger": "0.1.0",
-    "@xmbl/zero-knowledge": "0.1.0"
+    "@xmbl/lng": "^0.1.1",
+    "@xmbl/storage-compute": "^0.1.1",
+    "@xmbl/state-machine": "^0.1.2",
+    "@xmbl/identity": "^0.1.2",
+    "@xmbl/zero-knowledge": "^0.1.1"
   },
   "peerDependenciesMeta": {
-    "@xmbl/lng": { "optional": true },
-    "@xmbl/storage-compute": { "optional": true },
-    "@xmbl/state-machine": { "optional": true },
-    "@xmbl/identity": { "optional": true },
-    "@xmbl/cubic-ledger": { "optional": true },
-    "@xmbl/zero-knowledge": { "optional": true }
+    "@xmbl/lng": {
+      "optional": true
+    },
+    "@xmbl/storage-compute": {
+      "optional": true
+    },
+    "@xmbl/state-machine": {
+      "optional": true
+    },
+    "@xmbl/identity": {
+      "optional": true
+    },
+    "@xmbl/zero-knowledge": {
+      "optional": true
+    }
   },
   "scripts": {
     "test": "node ../../scripts/run-node-tests.mjs ."

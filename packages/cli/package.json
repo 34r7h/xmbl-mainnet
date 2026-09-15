@@ -13,12 +13,12 @@
     "inquirer": "^13.0.1",
     "ora": "^9.0.0",
     "ws": "^8.18.3",
-    "@xmbl/identity": "*",
-    "@xmbl/networking": "*",
-    "@xmbl/cubic-ledger": "*",
-    "@xmbl/state-machine": "*",
-    "@xmbl/consensus": "*",
-    "@xmbl/storage-compute": "*"
+    "@xmbl/identity": "^0.1.2",
+    "@xmbl/networking": "^0.1.1",
+    "@xmbl/cubic-ledger": "^0.1.1",
+    "@xmbl/state-machine": "^0.1.2",
+    "@xmbl/consensus": "^0.1.1",
+    "@xmbl/storage-compute": "^0.1.1"
   },
   "devDependencies": {
     "@jest/globals": "^29.7.0",

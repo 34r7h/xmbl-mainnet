@@ -10,22 +10,18 @@
 //
 // WHY THE DIRECT LEDGER PATH (ledger.addTransaction), NOT CONSENSUS:
 //   A signed node-authored tx, submitted directly, is verified by the ledger as-signed and
-//   lands — proven here with real MAYO keys + real verification. The consensus finalize route
-//   is DELIBERATELY not driven, because it is currently broken on the very ledger-entry points
-//   that verify signatures — both pinned by devnet.test.mjs and documented in
-//   ../DEVNET-SEAM-FINDING.md:
-//     (a) ConsensusWorkflow.finalizeTransaction OVERWRITES the signed `id` with `validatedHash`
-//         (consensus/src/workflow.js:781-784); the legacy finalize path then hands that mutated
-//         tx to ledger.addTransaction, whose re-verification JSON.stringifies the changed `id`
-//         and the signature can no longer match → "Invalid transaction signature or address
-//         mismatch" (the exact error seen in prior simulator runs).
-//     (b) ledger.addSealedBatch (the real lead-role seal path) calls `this.xid.verify(...)`,
-//         a method that does not exist on an Identity instance (the only thing ever assigned to
-//         ledger.xid) → TypeError. Its signature check has therefore never verified anything.
-//   Both blocks are UNREACHABLE in the production daemon (core/index.js constructs the Ledger
-//   without getPublicKeyByAddress, so the lookup returns null and verification is skipped), so
-//   these are latent/dead-defensive-code defects, not a live mainnet break — but a devnet that
-//   opts into verification is exactly the caller that trips them, which is why it pins them.
+//   lands — proven here with real MAYO keys + real verification. Two ledger-entry defects that
+//   the direct path never hit but the consensus finalize route did are now FIXED (proven by
+//   devnet.test.mjs, documented in ../DEVNET-SEAM-FINDING.md):
+//     (a) FIXED — ConsensusWorkflow.finalizeTransaction no longer overwrites the signed `id`
+//         with `validatedHash`; the signed id survives the handoff so re-verification matches.
+//     (b) FIXED — ledger.addSealedBatch now verifies via the static Identity.verifyTransaction
+//         (it used to call the nonexistent this.xid.verify → TypeError, so it verified nothing).
+//   ONE seam remains OPEN and audit-scoped (defect (c) in the finding): moveToProcessing injects
+//   `validationTimestamp` INTO the signed body, so the FULL consensus path still cannot re-verify
+//   at the ledger without a signature-domain / block-id decision. Ledger-side re-verification is
+//   therefore still OFF in the production daemon (core/index.js constructs the Ledger without
+//   getPublicKeyByAddress); the devnet opts it in, which is why the direct path is what it drives.
 import { EventEmitter } from 'node:events';
 import { Identity } from '../../identity/index.js';
 import { Ledger } from '../../cubic-ledger/index.js';

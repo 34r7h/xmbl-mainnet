@@ -238,15 +238,21 @@ export class Ledger extends EventEmitter {
         if (this._anchorKeys.has(akey)) continue;
         this._anchorKeys.add(akey);
       }
-      // Mirror addTransaction's optional signature verification.
+      // Mirror addTransaction's optional signature verification — IDENTICALLY. This used to
+      // call `this.xid.verify(tx, tx.sig, publicKey)`, a method that does not exist on an
+      // Identity instance (the only thing ever assigned to ledger.xid) → TypeError, so this
+      // check had never actually verified a signature (DEVNET-SEAM-FINDING defect (b)). The
+      // correct, consistent call is the static Identity.verifyTransaction used by
+      // addTransaction, which also enforces derivedAddress===from sig-ownership.
       if (this.xid && tx.sig && tx.from) {
         try {
+          const { Identity } = await import('@xmbl/identity');
           let publicKey = null;
           if (this.getPublicKeyByAddress && typeof this.getPublicKeyByAddress === 'function') {
             publicKey = await this.getPublicKeyByAddress(tx.from);
           }
           if (publicKey) {
-            const isValid = await this.xid.verify(tx, tx.sig, publicKey);
+            const isValid = await Identity.verifyTransaction(tx, publicKey);
             if (!isValid) {
               throw new Error(`Invalid signature for transaction from ${tx.from}`);
             }

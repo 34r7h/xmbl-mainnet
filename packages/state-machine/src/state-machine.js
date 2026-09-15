@@ -21,6 +21,7 @@ export class StateMachine extends EventEmitter {
     this.shards = [];
     this.totalShards = options.totalShards || 4;
     this.diffs = [];
+    this._diffIndex = new Map();
     this.transactionLog = [];
     
     // Initialize shards
@@ -76,7 +77,7 @@ export class StateMachine extends EventEmitter {
         const diffData = JSON.parse(value.toString());
         const diff = new StateDiff(diffData.txId, diffData.changes);
         diff.timestamp = diffData.timestamp;
-        this.diffs.push(diff);
+        this._recordDiff(diff);
         loaded.push(diff);
       }
       loaded.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0) || String(a.txId).localeCompare(String(b.txId)));
@@ -142,6 +143,23 @@ export class StateMachine extends EventEmitter {
   // Every transaction type IS a state change, so each maps to its natural key space. Keys are namespaced by
   // type so two kinds can never collide, and values carry only consensus-derived fields — nothing node-local,
   // because the state root is a cross-node commitment.
+  // applied_tx_count COUNTED APPLY CALLS, NOT TRANSACTIONS. Every apply site appended to `this.diffs`
+  // unconditionally while persisting to `diff:<txId>`, a key that OVERWRITES. So a second apply_backfill over
+  // an unchanged block set left the verkle root identical (the root is a function of the final key SET) and
+  // still added one array entry per block: MEASURED on node xmb0844bbed..., 82910 -> 104446 over the same
+  // 21536 blocks, then 88486 after a restart reloaded the deduped rows from disk. A monitoring number that
+  // moves on a repeated no-op cannot tell work from a replay, and /api/v1/xmbl/status publishes this one.
+  // Upsert by txId so the in-memory set matches the durable one it was always meant to mirror.
+  //
+  // REPLACE, don't skip: re-applying a txId with different changes is a legitimate later state for that key
+  // and the disk already resolves it that way. Skipping would leave the array disagreeing with the tree.
+  _recordDiff(diff) {
+    const at = this._diffIndex.get(diff.txId);
+    if (at === undefined) { this._diffIndex.set(diff.txId, this.diffs.length); this.diffs.push(diff); return true; }
+    this.diffs[at] = diff;
+    return false;
+  }
+
   _stateChangesFor(block) {
     const tx = block?.tx;
     if (!tx || typeof tx !== 'object') return null;
@@ -182,7 +200,7 @@ export class StateMachine extends EventEmitter {
     if (!changes || !Object.keys(changes).length) return;
     try {
       const diff = new StateDiff(block.id, changes);
-      this.diffs.push(diff);
+      this._recordDiff(diff);
       for (const [key, value] of Object.entries(changes)) {
         await this.stateTree.insert(key, value);
       }
@@ -231,7 +249,7 @@ export class StateMachine extends EventEmitter {
       if (!changes || !Object.keys(changes).length) { out.skipped++; continue; }
       try {
         const diff = new StateDiff(block.id, changes);
-        this.diffs.push(diff);
+        this._recordDiff(diff);
         for (const [key, val] of Object.entries(changes)) await this.stateTree.insert(key, val);
         if (this._dbOpen !== false) {
           try { await this.db.put(`diff:${block.id}`, diff.serialize()); } catch { /* in-memory fallback */ }
@@ -254,6 +272,7 @@ export class StateMachine extends EventEmitter {
     const out = { requested: list.length, applied: 0, skipped: 0, state_root: null, started: true };
     await this.stateTree.clear();
     this.diffs = [];
+    this._diffIndex.clear();
     for (const a of list) {
       if (!a || !a.event || !a.hash) { out.skipped++; continue; }
       try {

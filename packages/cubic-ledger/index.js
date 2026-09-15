@@ -26,3 +26,9 @@ export {
 // `xclt/src/...` import fails with ERR_PACKAGE_PATH_NOT_EXPORTED.
 export { CubeSyncManager } from './src/cube-sync-manager.js';
 export { verifyCube, planAdoption, diffWanted, setDigest, TOPIC_DIGEST, TOPIC_LIST, TOPIC_CUBE } from './src/cube-sync.js';
+
+// Content-addressing — exported from the package root for the same reason cube sync is (this package's
+// exports map has only "."). The consensus ingress guard needs verifyMicromine to admit an UNSIGNED type-6
+// on its content address; re-implementing the hash there would be a second copy of a golden-vector-pinned
+// algorithm. The deployed fleet bundle has carried this export since task 9d80916e; this repo had not.
+export { micromine, verifyMicromine, oidOf, typePrefix, type6TxBody, type7PointerBody } from './src/micromine.js';

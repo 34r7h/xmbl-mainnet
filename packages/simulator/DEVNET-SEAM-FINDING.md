@@ -1,82 +1,102 @@
-# Devnet finding: two broken signature-re-verification seams in the consensus→ledger path
+# Devnet finding: the consensus→ledger signature-re-verification seams (two FIXED, one open)
 
 Surfaced while reviving the simulator into `LocalDevnet` (the "hardhat for XMBL"). The devnet
 opts into ledger-side signature verification — it wires **both** `xid` and
 `getPublicKeyByAddress` into the `Ledger` — which is precisely the caller configuration that
-exercises two defects no production code path currently reaches. Both are **pinned by
-`src/devnet.test.mjs`** (cases PIN(a)/PIN(b)); a protocol fix makes those assertions flip, so
-the bugs cannot silently return.
+exercises defects no production code path currently reaches. Two of the three defects below are
+now **FIXED**; the third is a genuine signature-domain decision left for the audit and documented
+honestly rather than papered over. All are covered by `src/devnet.test.mjs`.
 
-## The ledger verifies a signature only when it holds BOTH `xid` and `getPublicKeyByAddress`
+## Where ledger-side verification runs
 
 `cubic-ledger/src/ledger.js` re-verifies a tx's signature on entry in two methods:
 
-- `addTransaction` (line ~174): `if (this.xid && tx.sig && tx.from)` → look up the pubkey via
+- `addTransaction`: `if (this.xid && tx.sig && tx.from)` → look up the pubkey via
   `this.getPublicKeyByAddress(tx.from)`; if found, `Identity.verifyTransaction(tx, publicKey)`.
-- `addSealedBatch` (line ~242): same guard → but calls **`this.xid.verify(tx, tx.sig, publicKey)`**.
+- `addSealedBatch`: same guard.
 
 The pubkey lookup is the gate. **`packages/core/index.js` constructs the `Ledger` WITHOUT
 `getPublicKeyByAddress`** (it passes only `dbPath`, `xn`, `xid`, `consensusV2`), so in the
 production daemon the lookup is `undefined`, `publicKey` resolves `null`, and **neither
-verification block is ever entered**. Both defects below are therefore **latent / dead
-defensive code in production**, not a live mainnet break. They become reachable the moment a
-caller (the devnet, a future node that wires the lookup) turns verification on.
+verification block is entered**. Ledger-side re-verification is therefore **OFF in production
+today** — a deliberate posture (consensus verifies at validation time via
+`workflow.js completeValidation`, wired at `core/index.js:304`); the ledger block is a
+defense-in-depth layer that is not yet enabled. Enabling it is gated on defect (c) below.
 
-## Defect (a): `finalizeTransaction` overwrites the signed `id`, breaking re-verification
+## Defect (a) — FIXED: `finalizeTransaction` no longer overwrites the signed `id`
 
-`consensus/src/workflow.js:781-784`:
+`consensus/src/workflow.js finalizeTransaction` used to do
+`const txDataWithId = { ...processingTx.txData, id: validatedHash }` unconditionally.
+`identity`'s `signingMessage` covers every field except `sig`/`publicKey`, so `id` is inside the
+signed message; overwriting it made re-verification stringify a different tx and a valid
+signature could never match ("Invalid transaction signature or address mismatch" — the exact
+error observed in earlier simulator runs).
 
-```js
-const txDataWithId = { ...processingTx.txData, id: validatedHash };
-```
-
-Finalization replaces the originator's `id` with the consensus `validatedHash`, then the legacy
-finalize path (`workflow.js:81`) hands that mutated object to `ledger.addTransaction`.
-`Identity.signTransaction` signs over `JSON.stringify` of the whole tx minus `sig`/`publicKey`,
-so `id` is inside the signed message; `Identity.verifyTransaction` re-stringifies the tx with the
-**changed** `id`, the messages differ, and verification fails with
-`"Invalid transaction signature or address mismatch"` — the exact error observed in earlier
-simulator runs.
-
-Root tension: the originator cannot sign a consensus-assigned identifier it does not yet know.
-Either `id` must be excluded from the signed message (signing-domain separation) or the ledger
-must verify against the originator's signed form. **That is an audit-level decision about the
-signature domain and is deliberately NOT made here** — widening a signature check is exactly the
-change that must not ride in on a tooling commit.
-
-## Defect (b): `addSealedBatch` calls a method that does not exist
-
-`cubic-ledger/src/ledger.js:249`:
+**Fix:** preserve the originator's signed `id`; only fall back to `validatedHash` when the tx
+carried none:
 
 ```js
-const isValid = await this.xid.verify(tx, tx.sig, publicKey);
+const txDataWithId = processingTx.txData.id != null
+  ? processingTx.txData
+  : { ...processingTx.txData, id: validatedHash };
 ```
 
-`ledger.xid` is only ever assigned an **`Identity` instance** (`core/index.js:181`:
-`this.xid = await Identity.create()`). The `Identity` class exposes `signTransaction` and the
-static `Identity.verifyTransaction` — it has **no `verify` method**, on the instance or the class.
-So when reached, this line throws `TypeError: this.xid.verify is not a function`, which is caught
-at line ~255 but **re-thrown** (the guard only swallows `ERR_MODULE_NOT_FOUND` / Base64 errors).
+The consensus hash is already carried to the ledger as the finalized event's `txId`, and the
+ledger derives its own content-addressed block id via `Block.fromTransaction` — it never needs
+`txData.id` to equal `validatedHash`. `src/devnet.test.mjs` drives `finalizeTransaction` at the
+real code site and asserts the emitted `txData.id` is preserved AND the tx still verifies against
+the signer key, with a negative control that an `id`-mutated signed tx is rejected (id is inside
+the signed domain — the reason it must not be overwritten).
 
-Two consequences: (1) `addSealedBatch`'s signature check has **never actually verified a
-signature** — it is wrong dead code; and (2) it uses a **different verification method name** than
-`addTransaction`'s `Identity.verifyTransaction`, so the two entry points were never consistent.
-The real lead-role seal path routes through here (`core/lead-worker.js:73` →
-`xclt.addSealedBatch([txData])` via `ConsensusWorkflow`'s `batchSealer`), so this must be made
-correct — and consistent with `addTransaction` — before ledger-side verification is ever enabled
-in production.
+## Defect (b) — FIXED: `addSealedBatch` called a method that does not exist
 
-## Empirical proof
+`cubic-ledger/src/ledger.js addSealedBatch` called **`this.xid.verify(tx, tx.sig, publicKey)`**.
+`ledger.xid` is only ever an **`Identity` instance**, which exposes `signTransaction` and the
+static `Identity.verifyTransaction` — it has **no `verify` method**. When reached this threw
+`TypeError: this.xid.verify is not a function`, so `addSealedBatch`'s signature check had **never
+actually verified a signature**, and it used a **different method name** than `addTransaction`.
 
-`src/devnet.test.mjs` asserts all three outcomes against the real modules (no stubs):
-- a valid signed `utxo` tx submitted via `addTransaction` with verification ON **lands**, and a
-  tx tampered after signing is **rejected** (verification is live, not a no-op);
-- PIN(a): the same tx with its `id` overwritten **throws** `/Invalid transaction signature/`;
-- PIN(b): `addSealedBatch([signed])` **throws** `/TypeError.*verify is not a function/`.
+**Fix:** call the same static `Identity.verifyTransaction(tx, publicKey)` `addTransaction` uses
+(importing `Identity` the same way), which also enforces `derivedAddress===from` sig-ownership.
+The real lead-role seal path routes through here (`core/lead-worker.js` →
+`xclt.addSealedBatch([txData])`), so the two entry points are now consistent. `src/devnet.test.mjs`
+asserts a validly signed tx VERIFIES and lands via `addSealedBatch`, with a negative control that
+a tampered tx is rejected.
+
+## Defect (c) — OPEN (audit-level): consensus injects `validationTimestamp` into the signed body
+
+`consensus/src/workflow.js moveToProcessing` adds `validationTimestamp` (the quorum-averaged
+validator timestamp) **inside** `txData` ("Include in txData for xclt to use"). That field is not
+in the originator's signed message, so — exactly like the old `id` overwrite — a tx that has
+passed through `moveToProcessing` will **not** re-verify at the ledger against the originator's
+signature. Fixes (a)/(b) make the code correct for the **direct** path (an originator-signed tx
+handed straight to the ledger, as the devnet does); they do **not** by themselves make the full
+`submit → validate → moveToProcessing → finalize → ledger` path re-verifiable, because of this
+injection.
+
+This cannot be fixed by simply excluding `validationTimestamp` (or `id`) from the signature,
+because **`Block.fromTransaction` derives the block's content-address `id` from the WHOLE tx**
+(`sha256(JSON.stringify(tx)).slice(0,16)`). Any field that (i) affects `block.id` but (ii) is not
+signed becomes an inflation/double-apply vector: one valid finalized tx re-broadcast with N
+different values of that field yields N distinct `block.id`s and applies the same value N times.
+So a correct enablement of ledger-side re-verification on the consensus path requires one of two
+architectural choices, **which is an audit-level signature-domain / block-identity decision**:
+
+1. **Derive `block.id` from the signed body only** (exclude consensus-assigned fields such as
+   `validationTimestamp`), so those fields cannot mint distinct blocks — then they may safely be
+   excluded from the signature; or
+2. **Carry `validationTimestamp` as a sibling of `txData`, never inside it** (the ledger reads it
+   as a second input and dedups on the signed-body hash), so the signed body the ledger verifies
+   is byte-identical to what the originator signed.
+
+Both touch `block.js`, ledger dedup, and cross-node determinism, so neither rides in on a tooling
+commit. Until one is made and audited, **ledger-side re-verification stays OFF in production**
+(the `getPublicKeyByAddress` lookup is deliberately not wired into the `Ledger`), and consensus
+remains the single verification point. This is the honest, current posture — not a silent gap.
 
 ## Why the devnet drives the direct path
 
 `LocalDevnet` submits signed txs straight to `ledger.addTransaction` (not through consensus
-finalization), because that path verifies the tx as-signed and works. This lets the devnet be a
-real, verifiable local network today while the consensus→ledger seam above is an open, pinned
-finding rather than a silently-skipped one.
+finalization), because that path verifies the tx as-signed and works. This keeps the devnet a
+real, verifiable local network today while defect (c) — the only remaining consensus→ledger
+verification seam — is an explicit, documented, audit-scoped decision.
