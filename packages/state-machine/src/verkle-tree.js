@@ -16,9 +16,10 @@ export class VerkleStateTree {
     this.db = options.db || null;
     this._dbOpen = false;
     
-    if (this.db) {
-      this._initDb().catch(() => {});
-    }
+    // KEEP THE PROMISE. This was fire-and-forget, so XVSM's own _loadDiffs raced the tree's _loadState and
+    // could not tell "the tree is empty" from "the tree has not finished loading" — the exact distinction the
+    // replay decision below now turns on. `ready()` is the join point.
+    this._ready = this.db ? this._initDb().catch(() => {}) : Promise.resolve();
   }
   
   async _initDb() {
@@ -33,6 +34,9 @@ export class VerkleStateTree {
     }
   }
   
+  // Resolves once the `state:` keyspace has been read and the trie rebuilt from it.
+  ready() { return this._ready || Promise.resolve(); }
+
   async _loadState() {
     if (!this.db || !this._dbOpen) return;
     
@@ -45,6 +49,30 @@ export class VerkleStateTree {
     } catch (error) {
       // Ignore errors during load
     }
+    // ⛔ REBUILD THE TRIE. This loop restored `this.state` — the key->value map — and stopped there, leaving
+    // `this.root` a fresh empty VerkleNode. So a node that had loaded EVERY key off disk answered getRoot()
+    // with 64 zeros: a tree that holds the whole state and commits to nothing. MEASURED 2026-09-15: after a
+    // canonical rebuild of 10 anchors, restart loaded all 10 keys and published root 0000…0000; across the
+    // fleet 39 of 44 reporting nodes published exactly that, including one with 11,691 blocks persisted. The
+    // only boxes showing a real root were showing it by accident, via XVSM's diff replay re-inserting keys
+    // through insert(). The state map is not the commitment — the hashed trie over it is, and it has to be
+    // reconstructed on open or every restart silently un-commits the node's entire state.
+    this._rebuildTrie();
+  }
+
+  // Rebuild the hashed trie from `this.state` in ONE bottom-up pass. Per-key _updateHashPath would re-hash
+  // every ancestor once per key (32 levels x 8KB of child hashes each); this inserts every key first and
+  // hashes each node exactly once, so a 50k-key store rehydrates in a single walk instead of 1.6M of them.
+  _rebuildTrie() {
+    this.root = new VerkleNode();
+    for (const [k, v] of this.state) {
+      this._insertNode(this.root, this._hashKey(k), this._hashValue(v), 0, []);
+    }
+    const hashSubtree = (node) => {
+      for (const child of node.children.values()) hashSubtree(child);
+      this._updateHash(node);
+    };
+    hashSubtree(this.root);
   }
   
   async _saveState(key, value) {

@@ -32,8 +32,10 @@ export class StateMachine extends EventEmitter {
     // Integration: xclt for state commitments from ledger
     this.xclt = options.xclt || null;
     
-    // Initialize database
-    this._initDb().catch(() => {});
+    // Initialize database. KEEP THE PROMISE: `_dbOpen` flips true the moment Level opens, long before the
+    // diff sweep and the tree rehydration have finished, so anything that polls `_dbOpen` and then reads a
+    // count is reading a store mid-rebuild. `ready()` is the only honest join point.
+    this._ready = this._initDb().catch(() => {});
     
     // Listen to ledger events if available
     if (this.xclt) {
@@ -51,10 +53,16 @@ export class StateMachine extends EventEmitter {
     }
   }
   
+  // Resolves once the store is open, the tree rehydrated from `state:`, and the diff rows swept and loaded.
+  ready() { return this._ready || Promise.resolve(); }
+
   async _initDb() {
     try {
       await this.db.open();
       this._dbOpen = true;
+      // The tree rehydrates itself from the `state:` keyspace; wait for it before deciding whether the diff
+      // rows still need to be replayed, or an unfinished load reads as an empty tree.
+      await this.stateTree.ready();
       await this._loadDiffs();
       await this._loadTransactionLog();
     } catch (error) {
@@ -72,24 +80,46 @@ export class StateMachine extends EventEmitter {
       // Replay is safe to do in iterator order because the tree is a key->value map: the root is a function
       // of the final key set, not of application order (proven in verkle-integration.test.mjs, "same set in
       // any order yields the SAME root"). Later diffs for the same key legitimately overwrite earlier ones.
+      // RE-KEY SWEEP. Rows written before content identity existed are keyed `diff:<block.id>`, so the same
+      // anchor re-submitted under a fresh tx id left one row per submission and every one of them came back
+      // here on boot. Rewriting each row under `diff:<identity>` collapses them: the identity-keyed row is
+      // PUT first and the old key deleted only after, so nothing is lost if this is interrupted. Measured on
+      // a live store 2026-09-15: 92,505 rows over 50,497 distinct anchors, 42,008 of them redundant.
       const loaded = [];
+      let rekeyed = 0;
       for await (const [key, value] of this.db.iterator({ gt: 'diff:', lt: 'diff:\xFF' })) {
         const diffData = JSON.parse(value.toString());
         const diff = new StateDiff(diffData.txId, diffData.changes);
         diff.timestamp = diffData.timestamp;
-        this._recordDiff(diff);
-        loaded.push(diff);
+        const want = this._diffKey(diff);
+        const have = key.toString();
+        if (have !== want) {
+          try { await this.db.put(want, value); await this.db.del(have); rekeyed++; } catch { /* leave it */ }
+        }
+        if (this._recordDiff(diff)) loaded.push(diff);
       }
-      loaded.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0) || String(a.txId).localeCompare(String(b.txId)));
+      if (rekeyed) console.log(`[XVSM] diff rows re-keyed to content identity: ${rekeyed}, distinct now ${this.diffs.length}`);
+
+      // ⛔ REPLAY ONLY AS RECOVERY. This loop replayed every diff into the tree unconditionally, which is how
+      // it papered over the real defect — VerkleStateTree._loadState restored the key map but never rebuilt
+      // the trie, so the root read 64 zeros and the replay was the only thing putting keys back through
+      // insert(). With the trie rebuilt on open, an unconditional replay is actively harmful: it reinstates
+      // every key that rebuildFromCanonical deliberately dropped, so the canonical root a node adopts SURVIVES
+      // until its next restart and no further. MEASURED 2026-09-15: rebuild to root 02eaf3e76c over 10
+      // canonical anchors, restart, root 4bc7dd2813 over 50 keys — the node left the canonical set by booting.
+      // Replay stays for the one case it is still needed: a store whose `state:` keyspace is genuinely empty.
       let replayed = 0;
-      for (const diff of loaded) {
-        for (const [k, v] of Object.entries(diff.changes || {})) {
-          if (v === null) { await this.stateTree.delete?.(k); continue; }
-          await this.stateTree.insert(k, v);
-          replayed++;
+      if (this.stateTree.state.size === 0 && loaded.length) {
+        loaded.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0) || String(a.txId).localeCompare(String(b.txId)));
+        for (const diff of loaded) {
+          for (const [k, v] of Object.entries(diff.changes || {})) {
+            if (v === null) { await this.stateTree.delete?.(k); continue; }
+            await this.stateTree.insert(k, v);
+            replayed++;
+          }
         }
       }
-      if (replayed) console.log(`[XVSM] verkle tree rehydrated: ${replayed} change(s) from ${loaded.length} diff(s), root=${this.stateTree.getRoot().slice(0, 16)}…`);
+      if (replayed) console.log(`[XVSM] verkle tree recovered from diffs (state: keyspace was empty): ${replayed} change(s) from ${loaded.length} diff(s), root=${this.stateTree.getRoot().slice(0, 16)}…`);
     } catch (error) {
       // Ignore load errors
     }
@@ -112,7 +142,7 @@ export class StateMachine extends EventEmitter {
     if (!this._dbOpen) return;
     
     try {
-      await this.db.put(`diff:${diff.txId}`, JSON.stringify({
+      await this.db.put(this._diffKey(diff), JSON.stringify({
         txId: diff.txId,
         changes: diff.changes,
         timestamp: diff.timestamp
@@ -153,12 +183,21 @@ export class StateMachine extends EventEmitter {
   //
   // REPLACE, don't skip: re-applying a txId with different changes is a legitimate later state for that key
   // and the disk already resolves it that way. Skipping would leave the array disagreeing with the tree.
+  //
+  // INDEXED BY CONTENT IDENTITY, NOT BY TX ID, so the in-memory set matches the durable one key-for-key. Two
+  // submissions of the same anchor carry different tx ids and are the SAME state change; keying either side
+  // by the tx id makes them two of everything. See StateDiff.identity().
   _recordDiff(diff) {
-    const at = this._diffIndex.get(diff.txId);
-    if (at === undefined) { this._diffIndex.set(diff.txId, this.diffs.length); this.diffs.push(diff); return true; }
+    const id = diff.identity();
+    const at = this._diffIndex.get(id);
+    if (at === undefined) { this._diffIndex.set(id, this.diffs.length); this.diffs.push(diff); return true; }
     this.diffs[at] = diff;
     return false;
   }
+
+  // The one place a diff's durable key is spelled. Every writer goes through it, or the re-key sweep in
+  // _loadDiffs is fighting a writer that still uses the block id.
+  _diffKey(diff) { return `diff:${diff.identity()}`; }
 
   _stateChangesFor(block) {
     const tx = block?.tx;
@@ -208,7 +247,7 @@ export class StateMachine extends EventEmitter {
         // StateDiff.serialize() ALREADY returns a JSON string — wrapping it in JSON.stringify again
         // double-encodes, so _loadDiffs parses back a string instead of an object and `changes` comes out
         // undefined, silently replaying nothing. Store the serialized form directly.
-        try { await this.db.put(`diff:${block.id}`, diff.serialize()); }
+        try { await this.db.put(this._diffKey(diff), diff.serialize()); }
         catch { /* in-memory fallback */ }
       }
     } catch (error) {
@@ -252,7 +291,7 @@ export class StateMachine extends EventEmitter {
         this._recordDiff(diff);
         for (const [key, val] of Object.entries(changes)) await this.stateTree.insert(key, val);
         if (this._dbOpen !== false) {
-          try { await this.db.put(`diff:${block.id}`, diff.serialize()); } catch { /* in-memory fallback */ }
+          try { await this.db.put(this._diffKey(diff), diff.serialize()); } catch { /* in-memory fallback */ }
         }
         out.applied++;
       } catch { out.failed++; }
@@ -273,6 +312,18 @@ export class StateMachine extends EventEmitter {
     await this.stateTree.clear();
     this.diffs = [];
     this._diffIndex.clear();
+    // ⛔ THE DURABLE ROWS COME TOO. Clearing `this.diffs` in memory while 92,505 `diff:` rows stay on disk is
+    // not an authoritative rebuild — it is one that lasts until the next boot reads them back. The tree's
+    // `state:` keyspace is cleared above for exactly this reason; the diff keyspace is the same commitment
+    // written twice, and leaving half of it behind is what made the canonical set un-adoptable across a
+    // restart. The blocks themselves are untouched in the ledger: backfillFromLedger regenerates local
+    // history on demand, and the canonical rows are re-persisted below.
+    if (this._dbOpen) {
+      try {
+        if (typeof this.db.clear === 'function') await this.db.clear({ gte: 'diff:', lt: 'diff:\xFF' });
+        else for await (const [k] of this.db.iterator({ gte: 'diff:', lt: 'diff:\xFF' })) { try { await this.db.del(k); } catch { /* */ } }
+      } catch { /* best-effort */ }
+    }
     // ⛔ RECORD A DIFF FOR EVERY ANCHOR APPLIED, or applied_tx_count IS ZERO BY CONSTRUCTION. This loop wrote
     // straight into the tree and never touched `this.diffs`, which it had just emptied — and
     // getStatistics().totalTransactions is transactionLog.length + diffs.length. So the moment a node runs the
@@ -288,7 +339,9 @@ export class StateMachine extends EventEmitter {
         const key = `anchor:${a.event}:${a.hash}`;
         const value = { ts: a.ts ?? null };
         await this.stateTree.insert(key, value);
-        this._recordDiff(new StateDiff(key, { [key]: value }));
+        const diff = new StateDiff(key, { [key]: value });
+        this._recordDiff(diff);
+        if (this._dbOpen) { try { await this.db.put(this._diffKey(diff), diff.serialize()); } catch { /* in-memory fallback */ } }
         out.applied++;
       } catch { out.skipped++; }
     }
