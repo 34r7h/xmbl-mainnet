@@ -11,6 +11,7 @@ import { identify } from '@libp2p/identify';
 import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { dcutr } from '@libp2p/dcutr';
 import { multiaddr } from '@multiformats/multiaddr';
+import { FaultTolerance } from '@libp2p/interface';
 import { EventEmitter } from 'events';
 import { PeerDiscovery } from './discovery.js';
 import { PubSubManager } from './pubsub.js';
@@ -113,6 +114,15 @@ export class XNNode extends EventEmitter {
     // KNOWN relay candidate by construction, so listen on its /p2p-circuit directly: libp2p then keeps that
     // reservation refreshed itself, and a seed that runs no relay server just fails the reservation
     // harmlessly. Self is filtered the same way discovery.bootstrap does it.
+    // ⛔ ELECT BEFORE THE SEED CIRCUITS ARE ADDED, AND ONLY ON THIS NODE'S OWN ADDRESSES. Measured in prod
+    // 2026-09-15: computing this over the full `listen` array AFTER appending `<seed>/p2p-circuit` made a
+    // NAT'd laptop read the SEED's public ip out of its own reservation address and elect ITSELF as the
+    // relay server — "[xn] circuit-relay SERVER enabled (self-elected: public address
+    // /ip4/173.255.233.69/.../p2p-circuit)" on a box behind 192.168.1.77. A relay address describes the
+    // RELAY, never the reserving node, so it can never be evidence about this box.
+    const ownAddrs = [...announce, ...listen];
+    const publicAddrs = ownAddrs.filter(isPublicMultiaddr);
+
     const seeds = Array.isArray(this.options.bootstrap) ? this.options.bootstrap.filter(Boolean) : [];
     for (const seed of seeds) {
       const circuit = `${String(seed).replace(/\/+$/, '')}/p2p-circuit`;
@@ -127,7 +137,6 @@ export class XNNode extends EventEmitter {
     // SELF-ELECTING RELAY SERVER (see isPublicMultiaddr above). '1' forces on, '0' forces off, and a box
     // that can already be dialed elects itself — so the mesh has a relay the moment one public node exists,
     // instead of the moment somebody remembers to touch a marker file.
-    const publicAddrs = [...announce, ...listen].filter(isPublicMultiaddr);
     const relayServer = process.env.XMBL_RELAY_SERVER === '1'
       || (process.env.XMBL_RELAY_SERVER !== '0' && publicAddrs.length > 0);
     if (relayServer) {
@@ -142,6 +151,13 @@ export class XNNode extends EventEmitter {
         ...(announce.length ? { announce } : {}),
       },
       transports: [tcp(), wssHttpPathWebSockets(), circuitRelayTransport({ discoverRelays: 1 })],
+      // ⛔ A RESERVATION THAT FAILS MUST NOT KILL THE NODE. libp2p's default FATAL_ALL treats ANY listen
+      // address it cannot bind as fatal, and `<seed>/p2p-circuit` above is a listen address whose success
+      // depends on a REMOTE box running a relay server. Measured in prod 2026-09-15: every node died at boot
+      // with "Some configured addresses failed to be listened on" and crash-looped through its restart
+      // budget — the fleet went from 3 nodes up to 0. NO_FATAL keeps the addresses this node CAN bind and
+      // logs the rest, which is the only correct behaviour for an address that is a request to a peer.
+      transportManager: { faultTolerance: FaultTolerance.NO_FATAL },
       connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
       peerDiscovery: [mdns()],
