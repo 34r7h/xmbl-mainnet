@@ -337,7 +337,15 @@ export class Ledger extends EventEmitter {
     uniq.sort((x, y) => (x.hash < y.hash ? -1 : x.hash > y.hash ? 1 : (x.event < y.event ? -1 : x.event > y.event ? 1 : 0)));
     for (const a of uniq) {
       this._anchorKeys.add(`${a.event}:${a.hash}`);
-      const tx = { type: 'anchor', event: a.event, hash: a.hash, ts: a.ts ?? 0 };
+      // CARRY THE MINED TYPE IDENTITY THROUGH THE REBUILD. An anchor is a type-7 datum whose xid/nonce the
+      // broker mined at submit time; the xid chains to the prior anchor, so it is NOT a pure function of this
+      // set and this node cannot re-derive it. Dropping it here would rebuild every anchor as an untyped
+      // datum again — the exact defect this replaced (MEASURED before the fix: 21540/21540 blocks on a real
+      // ledger carried no xid and no nonce). Handed over in the canonical set, it is reproduced verbatim, so
+      // the rebuild stays byte-identical across nodes. Rows anchored before the identity existed have neither
+      // field and are rebuilt exactly as they were — never back-mined into a chain position nobody recorded.
+      const tx = { type: 'anchor', event: a.event, hash: a.hash, ts: a.ts ?? 0,
+                   ...(a.xid ? { xid: a.xid, nonce: a.nonce } : {}) };
       const block = Block.fromTransaction(tx);
       // Pin the block timestamp to the anchor ts (a BigInt, as the rest of the ledger expects for its
       // validator-average math) so cube placement is identical across nodes instead of falling back to a

@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "index.js",
   "description": "XMBL Command Line",
@@ -15,9 +15,9 @@
     "ws": "^8.18.3",
     "@xmbl/identity": "^0.1.2",
     "@xmbl/networking": "^0.1.1",
-    "@xmbl/cubic-ledger": "^0.1.1",
+    "@xmbl/cubic-ledger": "^0.1.2",
     "@xmbl/state-machine": "^0.1.2",
-    "@xmbl/consensus": "^0.1.1",
+    "@xmbl/consensus": "^0.1.2",
     "@xmbl/storage-compute": "^0.1.2"
   },
   "devDependencies": {

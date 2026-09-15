@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "index.js",
   "license": "MIT",
@@ -16,8 +16,8 @@
     ".": "./index.js"
   },
   "dependencies": {
-    "@xmbl/consensus": "^0.1.1",
-    "@xmbl/cubic-ledger": "^0.1.1",
+    "@xmbl/consensus": "^0.1.2",
+    "@xmbl/cubic-ledger": "^0.1.2",
     "@xmbl/identity": "^0.1.2",
     "@xmbl/networking": "^0.1.1",
     "@xmbl/state-machine": "^0.1.2",
