@@ -296,6 +296,32 @@ export class Ledger extends EventEmitter {
   // xvsm.rebuildFromCanonical, extended from the verkle STATE root to the CUBE LEDGER.
   async rebuildFromAnchors(anchors) {
     const list = Array.isArray(anchors) ? anchors : [];
+    // 0. RESCUE WHAT THE ANCHOR SET CANNOT RE-DERIVE, BEFORE THE WIPE.
+    //
+    // ⛔ THIS FUNCTION DESTROYED VALUE TRANSACTIONS EVERY 90 SECONDS. Step 1 clears the whole `block:`
+    // keyspace and step 2 rebuilds it from the broker's canonical ANCHORS — so any block that is not an
+    // anchor had no source to come back from and was simply gone. MEASURED on this node 2026-09-15: 14,890
+    // block rows, of which 249 were type-6 value txs (`tx`), none of them in the canonical set. The
+    // convergence timer calls this every ~90s. SirKit measured the ledger from the outside over the same day:
+    // 17,901 block rows / 51M on disk at 10:16Z, 4,149 at 16:04Z, 6,740 at 17:04Z — a truncate-and-regrow, not
+    // compaction, with nothing logged by the node or the coordinator to say a row had been deleted.
+    //
+    // A canonical rebuild is allowed to discard a DIVERGENT chain. It is not allowed to discard state the
+    // canonical set does not describe: the broker's anchor set contains anchors and nothing else, so every
+    // utxo, identity, contract, token and type-6 tx this node holds is outside it by construction. Those are
+    // re-admitted below, in deterministic id order after the anchors, so two nodes holding the same canonical
+    // set and the same local txs still rebuild to the same chain.
+    const preserved = [];
+    if (this._dbOpen) {
+      try {
+        for await (const [, value] of this.db.iterator({ gte: 'block:', lt: 'block;' })) {
+          let raw; try { raw = JSON.parse(value.toString()); } catch { continue; }
+          if (!raw || !raw.tx || raw.tx.type === 'anchor') continue;
+          try { preserved.push(Block.deserialize(value.toString())); } catch { /* unreadable row, leave it */ }
+        }
+      } catch { /* no blocks yet */ }
+      preserved.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    }
     // 1. WIPE — in-memory + persisted. Nothing of the old divergent chain survives.
     this.blocks = new Map();
     this.cubes = new Map();
@@ -355,6 +381,15 @@ export class Ledger extends EventEmitter {
       this.blocks.set(block.id, block);
       this._membershipPool.push(block);
     }
+    // 2b. RE-ADMIT the rescued non-anchor blocks. They are appended AFTER the anchors and in id order, so the
+    //     rebuilt chain stays a pure function of (canonical set, local non-anchor set) rather than of the
+    //     order rows happened to come off disk.
+    for (const block of preserved) {
+      if (this.blocks.has(block.id)) continue;
+      this.blocks.set(block.id, block);
+      this._membershipPool.push(block);
+      if (this._dbOpen) { try { await this.db.put(`block:${block.id}`, block.serialize()); } catch { /* in-memory fallback */ } }
+    }
     // 3. Seal every complete 9-block face deterministically. Loop because a future _sealReadyFaces may seal one
     //    face per call; today it drains the whole pool in one pass, so the second iteration returns 0 and stops.
     let faces = 0, guard = 0;
@@ -367,6 +402,7 @@ export class Ledger extends EventEmitter {
     return {
       anchors: uniq.length,
       blocks: this.blocks.size,
+      preserved: preserved.length,
       faces_sealed: faces,
       cubes: this.cubes.size,
       pooled: this._membershipPool.length,
