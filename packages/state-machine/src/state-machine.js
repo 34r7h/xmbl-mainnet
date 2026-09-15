@@ -273,10 +273,22 @@ export class StateMachine extends EventEmitter {
     await this.stateTree.clear();
     this.diffs = [];
     this._diffIndex.clear();
+    // ⛔ RECORD A DIFF FOR EVERY ANCHOR APPLIED, or applied_tx_count IS ZERO BY CONSTRUCTION. This loop wrote
+    // straight into the tree and never touched `this.diffs`, which it had just emptied — and
+    // getStatistics().totalTransactions is transactionLog.length + diffs.length. So the moment a node runs the
+    // convergence primitive, the number the whole fleet reads as "is this node applying anything" resets to 0
+    // and STAYS 0 no matter how many anchors it applied. MEASURED 2026-09-15: this node held a correct root
+    // over 3,941 applied anchors and published applied_tx_count 0; across the fleet 42 of 46 reporting nodes
+    // read 0, and a design ruling was written on the premise that 41 of them had "applied nothing". They had.
+    // The diff is not bookkeeping — it is the same StateDiff the block path records, keyed by the anchor's own
+    // content, so a rebuild and a live apply of the same anchor upsert to ONE row rather than two.
     for (const a of list) {
       if (!a || !a.event || !a.hash) { out.skipped++; continue; }
       try {
-        await this.stateTree.insert(`anchor:${a.event}:${a.hash}`, { ts: a.ts ?? null });
+        const key = `anchor:${a.event}:${a.hash}`;
+        const value = { ts: a.ts ?? null };
+        await this.stateTree.insert(key, value);
+        this._recordDiff(new StateDiff(key, { [key]: value }));
         out.applied++;
       } catch { out.skipped++; }
     }
