@@ -524,6 +524,20 @@ continue-on-error, and in the release workflow before any publish).
       `XMBL_SUPERVISED=1`), respawn itself when unsupervised, after the ordinary shutdown released pidfile,
       socket, machine lock and stores. `XMBL_OTA=0` disables the loop; the proof is reported regardless.
       — *bin/xmbl-node.js; release.js (updateCommand, OTA_EXIT_CODE)*
+- [x] **THE CANONICAL FEED IS REBUILDABLE AND THE REBUILD CONVERGES — measured on the LIVE broker 2026-09-16.**
+      `GET /api/v1/xmbl/anchors/canonical?from_epoch=1` serves the epoch-scoped, confirmed set: 20 rows, 20
+      typed, 20 carrying `prior`, 0 untyped, with `type_epoch` recorded (first typed anchor 07:52:35Z). Fed to
+      the real `Ledger.rebuildFromAnchors` — the code `rebuild_ledger` calls — TWICE, on two independent
+      ledgers, the second in REVERSED arrival order: both rebuilt 20/20, 0 untyped, 0 rejected, sealed 2 faces
+      into 1 cube of 18 blocks, and both produced set_digest 9093792ad91b3e96… and block_digest
+      d833fd8888… — identical. That is the convergence proof the coordinated rebuild needs, taken before the
+      rollout rather than after. The default feed still serves all 4008 rows, of which 3991 are pre-epoch
+      history whose xid was never minted and cannot be back-mined: a rebuild over the DEFAULT feed produces an
+      empty chain (0 rebuilt, 3991 untyped, 17 rejected — measured), so the rollout must use `?from_epoch=1`.
+      The rebuild is CONTENT-only, not continuity: a `prior` naming an anchor outside the set is a correct
+      value and rebuilds, so the broker's head-advance-at-mint does not block it (it does mean the pointer
+      chain is non-contiguous and nothing can audit an anchor's ancestry). — *broker deploys 4a1e942, c3f8ea8,
+      6015c98; measured against cubic-ledger/src/ledger.js rebuildFromAnchors*
 - [ ] **The broker enforces it fleet-wide** — handoff-claude's: a node whose signed `chain` claim carries
       `versions.core` below npm latest, or a `build` digest that is not the published release's, is suspended
       at the broker (no chain blocks, no anchors accepted) until its next claim proves the latest; the bundle
