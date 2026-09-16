@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import { collectEarnings } from './earnings.js';
 import { sign, VERSION as IDENTITY_VERSION } from '@xmbl/identity';   // the ONE signature seam — a chain claim the broker can verify is signed HERE or nowhere
 import { VERSION as NETWORKING_VERSION } from '@xmbl/networking';
-import { VERSION as CUBIC_LEDGER_VERSION } from '@xmbl/cubic-ledger';
+import { VERSION as CUBIC_LEDGER_VERSION, validateXid, micromineTx } from '@xmbl/cubic-ledger';
 import { VERSION as STATE_MACHINE_VERSION } from '@xmbl/state-machine';
 import { VERSION as CONSENSUS_VERSION } from '@xmbl/consensus';
 import { VERSION as STORAGE_COMPUTE_VERSION } from '@xmbl/storage-compute';
@@ -26,6 +26,22 @@ const RUNNING_VERSIONS = Object.freeze({
   'storage-compute': STORAGE_COMPUTE_VERSION,
   'zero-knowledge': ZERO_KNOWLEDGE_VERSION,
 });
+
+// WHAT THIS LEDGER DOES WITH AN UNTYPED ANCHOR — ASKED OF THE RUNNING CODE, not of a version string. The
+// coordinator needs to know, BEFORE it hands over a feed, whether this node's rebuild requires every anchor to
+// carry a micromined xid: hand a typed-only node the default canonical feed (~3,990 rows that predate typing
+// and can never be back-mined) and it rebuilds to an EMPTY chain — measured, 0 of 4008. A version read cannot
+// answer it safely: the coordinator's own on-disk probe takes a min across install dirs and reads 0.1.9 while
+// the process runs 0.1.11, i.e. INVERTED polarity at exactly the moment it matters (during an OTA). So the
+// answer is taken by RUNNING the check once, at load, against both a typed and an untyped anchor.
+const TYPED_ANCHOR_POLICY = (() => {
+  const hash = createHash('sha256').update('ledger-capability-probe').digest('hex');
+  const bare = { type: 'anchor', event: 'capability.probe', hash, ts: 0 };
+  let refuses_untyped = false, accepts_typed = false;
+  try { validateXid(bare); } catch (e) { refuses_untyped = e && e.code === 'UNTYPED'; }
+  try { accepts_typed = validateXid(micromineTx({ ...bare })) === true; } catch { accepts_typed = false; }
+  return Object.freeze({ refuses_untyped, accepts_typed });
+})();
 
 // THE VERSION PROOF (operator, 2026-09-16: every node must PROVE it runs the latest version or be suspended).
 // A version string can be typed; this cannot: a sha-256 over the bytes of every @xmbl module this process
@@ -355,6 +371,23 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
             evicts_invalid_for_good: typeof core.xclt.evict === 'function', // 0.1.9+: an invalid tx is refused across restarts
             content_addressed_block_ids: semverGte(v, '0.1.9'),
             rekeys_legacy_rows_on_boot: semverGte(v, '0.1.11'),
+            // ⚠ A SECOND VETO, and the one that decides WHICH FEED may be handed to this node. true = this
+            // ledger refuses an anchor with no verifiable xid, so `rebuild_ledger` MUST be driven from the
+            // broker's epoch-scoped, typed set (?from_epoch=1). Driving it from the default feed on a node
+            // that answers true wipes the chain to empty — measured: 0 of 4008 rebuilt, 3991 untyped, 17
+            // rejected. Feature-detected from the running code (TYPED_ANCHOR_POLICY), never from a disk
+            // version, because the coordinator's on-disk read has inverted polarity during an OTA.
+            requires_typed_anchors: TYPED_ANCHOR_POLICY.refuses_untyped && TYPED_ANCHOR_POLICY.accepts_typed,
+            // The rebuild REPORTS what it refused — {untyped, rejected} come back in the rebuild_ledger reply —
+            // so a coordinator that hands over the wrong feed sees it in the counts instead of a silent wipe.
+            rebuild_counts_untyped: rescues,
+            // The rebuild re-mines {from:[prior],to:[hash],how:'anchor'} and accepts when the xid matches: a
+            // `prior` naming an anchor outside the set is a correct value. Continuity is NOT required, so the
+            // broker's head-advance-at-mint does not block a rebuild. Order of arrival cannot change the result.
+            rebuild_is_content_addressed: rescues,
+            // apply_canonical reads only {event, hash, ts} and leaves the block store untouched, so it is safe
+            // on ANY feed, typed or not — the correct holding pattern while a fleet is mid-rollout.
+            apply_canonical_accepts_untyped: typeof core.xvsm?.rebuildFromCanonical === 'function',
           },
         };
       }

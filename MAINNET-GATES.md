@@ -538,6 +538,19 @@ continue-on-error, and in the release workflow before any publish).
       value and rebuilds, so the broker's head-advance-at-mint does not block it (it does mean the pointer
       chain is non-contiguous and nothing can audit an anchor's ancestry). — *broker deploys 4a1e942, c3f8ea8,
       6015c98; measured against cubic-ledger/src/ledger.js rebuildFromAnchors*
+- [x] **THE NODE SAYS WHICH FEED IT MAY BE HANDED — `ledger_capabilities.requires_typed_anchors`.** The
+      coordinator disarmed its automatic `rebuild_ledger` (handoff 08ed182) because a disk version read has
+      INVERTED polarity during an OTA: its probe takes a min across install dirs and reports 0.1.9 while the
+      process already runs 0.1.11, so a disk-gated feed pick would hand a typed-only node the default 4008-row
+      feed and wipe its chain. The node now answers from the RUNNING code: a load-time probe validates one
+      typed and one untyped anchor through the loaded validator, and `requires_typed_anchors` is true only when
+      it refuses the untyped one AND accepts the typed one. Alongside it, `rebuild_counts_untyped` (a wrong
+      feed appears in the counts, never as a silent wipe), `rebuild_is_content_addressed` (a `prior` outside the
+      set is a valid value — continuity is not required) and `apply_canonical_accepts_untyped`. MEASURED on one
+      node through the real socket: rebuild on an untyped feed rebuilds 0 of 3 and reports 3 untyped; on a typed
+      feed rebuilds 3 of 3 with 0 rejected; `apply_canonical` applies all 3 untyped rows, leaves the block store
+      byte-identical and lands on the same root in either order. — *control-socket.js TYPED_ANCHOR_POLICY;
+      ledger-capabilities.test.mjs (11/11)*
 - [ ] **The broker enforces it fleet-wide** — handoff-claude's: a node whose signed `chain` claim carries
       `versions.core` below npm latest, or a `build` digest that is not the published release's, is suspended
       at the broker (no chain blocks, no anchors accepted) until its next claim proves the latest; the bundle
