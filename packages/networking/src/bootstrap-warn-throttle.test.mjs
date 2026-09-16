@@ -26,7 +26,15 @@ function unreachableNode() {
 async function runAttempts(n, retryMs) {
   const prevWarn = console.warn, prevErr = console.error, prevLog = console.log;
   let unreachableLines = 0, giveUpLines = 0;
-  console.warn = (m) => { if (String(m).includes('unreachable (attempt')) unreachableLines++; };
+  let pastBudgetRatioLines = 0;
+  console.warn = (m) => {
+    const t = String(m);
+    if (!t.includes('unreachable (attempt')) return;
+    unreachableLines++;
+    // A counter printed past its own denominator is the tell that the loop outlived its bound.
+    const m2 = /attempt (\d+)\/(\d+)/.exec(t);
+    if (m2 && Number(m2[1]) > Number(m2[2])) pastBudgetRatioLines++;
+  };
   console.error = (m) => { if (String(m).includes('have not answered in')) giveUpLines++; };
   console.log = () => {};
   mock.timers.enable({ apis: ['setInterval'] });
@@ -42,7 +50,7 @@ async function runAttempts(n, retryMs) {
     mock.timers.reset();
     console.warn = prevWarn; console.error = prevErr; console.log = prevLog;
   }
-  return { unreachableLines, giveUpLines };
+  return { unreachableLines, giveUpLines, pastBudgetRatioLines };
 }
 
 test('a permanently dead seed stops writing one line per attempt once the retry budget is spent', async () => {
@@ -60,6 +68,10 @@ test('a permanently dead seed stops writing one line per attempt once the retry 
   // be able to see that the node is still isolated.
   assert.ok(r.unreachableLines > 0, 'still reports, just not every tick');
   assert.strictEqual(r.giveUpLines, 1, 'the loud give-up is said exactly once, not repeated');
+  // The original line read "attempt 206/40". A ratio past its own denominator says the loop outlived the
+  // bound that was supposed to stop it — a different fault from the volume, and the one a reader who only
+  // counts lines would leave behind.
+  assert.strictEqual(r.pastBudgetRatioLines, 0, 'never print attempt N/MAX with N > MAX');
 
   delete process.env.XN_BOOTSTRAP_RETRY_MS;
   delete process.env.XN_BOOTSTRAP_MAX_TRIES;

@@ -91,9 +91,18 @@ export class PeerDiscovery {
           // is the same defect as not logging at all — the evidence exists and cannot be found. After the
           // budget is spent the loop keeps watching (a seed that returns must still reconnect), but it says so
           // once per QUIET_EVERY attempts and carries the real attempt count so nothing looks like it stopped.
+          //
+          // ⛔ AND DO NOT PRINT A RATIO PAST ITS OWN DENOMINATOR. The old line read
+          // "unreachable (attempt 206/40)" — a counter 166 past the budget that was supposed to bound it.
+          // That is the tell, and it is a different fault from the volume: a reader who sees only "too many
+          // lines" fixes the verbosity and leaves a loop that has outlived its own bound looking like a bug.
+          // The loop being unbounded IS deliberate (a seed that comes back must reconnect), so the honest
+          // rendering is to stop pretending there is a budget left and say what the loop is actually doing.
           if (tries <= MAX_TRIES || tries % QUIET_EVERY === 0) {
-            const suffix = tries > MAX_TRIES ? ` — still watching, ${QUIET_EVERY} attempt(s) since the last line` : '';
-            console.warn(`[xn] bootstrap: seed ${addr} unreachable (attempt ${tries}/${MAX_TRIES}): ${error?.message || error}${suffix}`);
+            const where = tries <= MAX_TRIES
+              ? `attempt ${tries}/${MAX_TRIES}`
+              : `attempt ${tries}, retry budget spent — watching for recovery, next line in ${QUIET_EVERY} attempt(s)`;
+            console.warn(`[xn] bootstrap: seed ${addr} unreachable (${where}): ${error?.message || error}`);
           }
         }
       }
