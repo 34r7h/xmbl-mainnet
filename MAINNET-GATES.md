@@ -556,6 +556,19 @@ continue-on-error, and in the release workflow before any publish).
       outside Electron. — *scripts/run-node-tests.mjs; packages/{cli,desktop-app}/jest-suite.test.mjs;
       desktop-app/main/main.js, __mocks__/electron.cjs, jest.config.cjs*
 
+- [x] **A REBUILD THAT WOULD EMPTY THE CHAIN IS REFUSED — the race no restart ordering can close.** The
+      coordinator's feed gate lives in the RUNNING coordinator process, so a coordinator still holding old
+      code, or restarted after a node's OTA rather than before it, drives the default 4008-row feed into a
+      typed-only node. Nothing in the 0.1.11 roll restarts a coordinator — `xmbl-node`'s OTA restarts ITSELF
+      (exit 75 under a supervisor, self-respawn otherwise) — so ordering is a promise made outside this repo.
+      The node no longer depends on it: `rebuildFromAnchors` now does a DRY PASS before deleting anything and
+      refuses when the offered set would rebuild to ZERO blocks while the ledger holds some, returning
+      `refused: 'would-empty-the-chain'` with the counts and the fix named; `rebuild_ledger` answers `ok:false`.
+      The rule is narrow — a rebuild that legitimately SHRINKS a divergent chain still runs, and an empty node
+      is never refused. PROVEN ON THE LIVE FEEDS: a node holding the 20-block epoch chain was handed the
+      broker's default feed (3991 untyped, 17 rejected, 0 would rebuild) and kept all 20 blocks and its cube.
+      — *cubic-ledger/src/ledger.js; core/control-socket.js; rebuild-refusal.test.mjs (13/13)*
+
 ## Rollout policy (operator, 2026-09-16): every node, latest version or suspended, updated over the air
 
 - [x] **A node PROVES the version it runs.** `status` and the SIGNED `chain` claim carry `versions` (what the

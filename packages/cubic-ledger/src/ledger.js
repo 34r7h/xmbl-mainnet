@@ -375,6 +375,39 @@ export class Ledger extends EventEmitter {
   // xvsm.rebuildFromCanonical, extended from the verkle STATE root to the CUBE LEDGER.
   async rebuildFromAnchors(anchors) {
     const list = Array.isArray(anchors) ? anchors : [];
+
+    // ⛔ 0a. A REBUILD THAT WOULD EMPTY THE CHAIN IS REFUSED, AND NOTHING IS TOUCHED.
+    //
+    // This is a DRY PASS over the set before a single row is deleted. Every anchor is typed by its xid now, so
+    // a canonical set minted before typing rebuilds to NOTHING — measured on the live broker's default feed:
+    // 0 of 4008 rebuilt, 3991 untyped, 17 rejected. The wipe used to run first regardless, so handing an old
+    // feed to a typed-only node destroyed its chain and honestly reported the zero afterwards. That cannot be
+    // left to the caller's version: a coordinator process still holding pre-gate code, or restarted in the
+    // wrong order during an OTA roll, would drive exactly that call. So the NODE refuses it. The rule is
+    // deliberately narrow — it only refuses when the rebuild would produce no blocks at all while this ledger
+    // still holds some. A canonical rebuild that legitimately SHRINKS a divergent chain is untouched, which is
+    // the whole point of the primitive.
+    const held = this.blocks.size + (Array.isArray(this._membershipPool) ? this._membershipPool.length : 0);
+    if (held > 0) {
+      let wouldRebuild = 0, dryUntyped = 0, dryRejected = 0;
+      const dryKeys = new Set();
+      for (const a of list) {
+        if (!a || !a.event || !a.hash) continue;
+        const k = `${a.event}:${a.hash}`;
+        if (dryKeys.has(k)) continue;
+        dryKeys.add(k);
+        if (typeof a.xid !== 'string' || !a.xid) { dryUntyped++; continue; }
+        const probe = { type: 'anchor', event: a.event, hash: a.hash, ts: a.ts ?? 0, xid: a.xid, nonce: a.nonce, prior: typeof a.prior === 'string' ? a.prior : undefined };
+        if (probe.prior === undefined) delete probe.prior;
+        try { Block.fromTransaction(probe); wouldRebuild++; } catch { dryRejected++; }
+      }
+      if (wouldRebuild === 0) {
+        const reason = `refusing to rebuild: the ${list.length} anchor(s) offered rebuild to 0 blocks (${dryUntyped} untyped, ${dryRejected} rejected) while this ledger holds ${held} — that is a wipe, not a rebuild. This node requires anchors typed by their xid; ask the broker for the epoch-scoped feed (?from_epoch=1) or check ledger_capabilities.requires_typed_anchors first.`;
+        console.warn(`[XCLT] ${reason}`);
+        return { refused: 'would-empty-the-chain', reason, requested: list.length, would_rebuild: 0, untyped: dryUntyped, rejected: dryRejected, blocks_held: held, anchors: [], faces_sealed: 0, wiped: 0, cubes: this.cubes.size };
+      }
+    }
+
     // 0. RESCUE WHAT THE ANCHOR SET CANNOT RE-DERIVE, BEFORE THE WIPE.
     //
     // ⛔ THIS FUNCTION DESTROYED VALUE TRANSACTIONS EVERY 90 SECONDS. Step 1 clears the whole `block:`

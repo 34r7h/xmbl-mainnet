@@ -291,6 +291,10 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         const anchors = Array.isArray(req.anchors) ? req.anchors : [];
         if (!anchors.length) return { ok: false, error: 'rebuild_ledger requires anchors[]' };
         const ledger = await core.xclt.rebuildFromAnchors(anchors);
+        // A REFUSED REBUILD IS NOT A SUCCESSFUL ONE. The ledger refuses a set that would empty the chain and
+        // touches nothing; say so with ok:false and the counts, so a coordinator driving the wrong feed fixes
+        // the feed instead of reading a 0 as "the chain converged".
+        if (ledger && ledger.refused) return { ok: false, error: ledger.reason, ...ledger };
         let state_root = null;
         if (core.xvsm && typeof core.xvsm.rebuildFromCanonical === 'function') {
           try { const s = await core.xvsm.rebuildFromCanonical(anchors); state_root = s && s.state_root; } catch { /* state parity is best-effort */ }
