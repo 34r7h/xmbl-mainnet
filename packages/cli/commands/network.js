@@ -1,5 +1,9 @@
 import { Command } from 'commander';
 
+// RESULTS GO TO STDOUT, AND ONLY RESULTS. Library logs (module rehydration, ingress-guard lines) are routed to
+// stderr by index.js, so a caller can `JSON.parse(stdout)` without stripping noise that arrives after the reply.
+const out = (s) => process.stdout.write(String(s) + '\n');
+
 export function createNetworkCommand(xn) {
   const networkCmd = new Command('network');
 
@@ -25,7 +29,7 @@ export function createNetworkCommand(xn) {
         await node.start();
         nodeStartTime = Date.now();
         const addresses = node.getAddresses();
-        console.log(JSON.stringify({
+        out(JSON.stringify({
           started: true,
           peerId: node.getPeerId().toString(),
           addresses: addresses.map(a => a.toString())
@@ -47,7 +51,7 @@ export function createNetworkCommand(xn) {
 
       try {
         const uptime = nodeStartTime ? Date.now() - nodeStartTime : 0;
-        console.log(JSON.stringify({
+        out(JSON.stringify({
           started: node.isStarted(),
           peerId: node.getPeerId()?.toString(),
           addresses: node.getAddresses().map(a => a.toString()),
@@ -70,7 +74,7 @@ export function createNetworkCommand(xn) {
 
       try {
         const peers = node.getConnectedPeers ? node.getConnectedPeers() : [];
-        console.log(JSON.stringify({ peers: peers.map(p => p.toString()) }));
+        out(JSON.stringify({ peers: peers.map(p => p.toString()) }));
       } catch (error) {
         console.error('Error getting peers:', error.message);
         process.exit(1);
@@ -90,7 +94,7 @@ export function createNetworkCommand(xn) {
         await node.stop();
         node = null;
         nodeStartTime = null;
-        console.log(JSON.stringify({ stopped: true }));
+        out(JSON.stringify({ stopped: true }));
       } catch (error) {
         console.error('Error stopping node:', error.message);
         process.exit(1);
@@ -113,7 +117,7 @@ export function createNetworkCommand(xn) {
         await node.start();
         nodeStartTime = Date.now();
         const addresses = node.getAddresses();
-        console.log(JSON.stringify({
+        out(JSON.stringify({
           restarted: true,
           peerId: node.getPeerId().toString(),
           addresses: addresses.map(a => a.toString())

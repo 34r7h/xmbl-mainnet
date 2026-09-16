@@ -1,6 +1,10 @@
 import { Command } from 'commander';
 import { EventEmitter } from 'events';
 
+// RESULTS GO TO STDOUT, AND ONLY RESULTS. Library logs (module rehydration, ingress-guard lines) are routed to
+// stderr by index.js, so a caller can `JSON.parse(stdout)` without stripping noise that arrives after the reply.
+const out = (s) => process.stdout.write(String(s) + '\n');
+
 export function createMonitorCommand(xclt, xpc, xsc) {
   const monitorCmd = new Command('monitor');
 
@@ -22,28 +26,30 @@ export function createMonitorCommand(xclt, xpc, xsc) {
             process.exit(1);
           }
           const ledger = new xclt.Ledger();
+          if (typeof ledger.ready === 'function') await ledger.ready();
           const handler = (tx) => {
             if (streaming) {
-              console.log(JSON.stringify({ type: 'tx', data: tx }));
+              out(JSON.stringify({ type: 'tx', data: tx }));
             }
           };
           ledger.on('transaction:added', handler);
           eventHandlers.push({ emitter: ledger, event: 'transaction:added', handler });
-          console.log(JSON.stringify({ status: 'Monitoring transactions' }));
+          out(JSON.stringify({ status: 'Monitoring transactions' }));
         } else if (streamType === 'blocks') {
           if (!xclt || !xclt.Ledger) {
             console.error('Error: XCLT module not available');
             process.exit(1);
           }
           const ledger = new xclt.Ledger();
+          if (typeof ledger.ready === 'function') await ledger.ready();
           const handler = (block) => {
             if (streaming) {
-              console.log(JSON.stringify({ type: 'block', data: block }));
+              out(JSON.stringify({ type: 'block', data: block }));
             }
           };
           ledger.on('block:added', handler);
           eventHandlers.push({ emitter: ledger, event: 'block:added', handler });
-          console.log(JSON.stringify({ status: 'Monitoring blocks' }));
+          out(JSON.stringify({ status: 'Monitoring blocks' }));
         } else if (streamType === 'consensus') {
           if (!xpc || !xpc.ConsensusWorkflow) {
             console.error('Error: XPC module not available');
@@ -52,14 +58,14 @@ export function createMonitorCommand(xclt, xpc, xsc) {
           const workflow = new xpc.ConsensusWorkflow();
           const handler = (update) => {
             if (streaming) {
-              console.log(JSON.stringify({ type: 'consensus', data: update }));
+              out(JSON.stringify({ type: 'consensus', data: update }));
             }
           };
           workflow.on('raw_tx:added', handler);
           workflow.on('tx:finalized', handler);
           eventHandlers.push({ emitter: workflow, event: 'raw_tx:added', handler });
           eventHandlers.push({ emitter: workflow, event: 'tx:finalized', handler });
-          console.log(JSON.stringify({ status: 'Monitoring consensus' }));
+          out(JSON.stringify({ status: 'Monitoring consensus' }));
         } else {
           console.error('Error: Invalid stream type. Use: tx, blocks, consensus');
           process.exit(1);

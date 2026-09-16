@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeAll, afterAll } from '@jest/globals';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { Identity } from '../../identity/src/identity.js';
-import { KeyManager } from '../../identity/src/key-manager.js';
+import { Identity } from '@xmbl/identity';
+import { KeyManager } from '@xmbl/identity';
 import fs from 'fs/promises';
 import path from 'path';
 

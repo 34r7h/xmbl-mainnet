@@ -1,6 +1,19 @@
 import { Command } from 'commander';
 import fs from 'fs/promises';
 
+// RESULTS GO TO STDOUT, AND ONLY RESULTS. Library logs (module rehydration, ingress-guard lines) are routed to
+// stderr by index.js, so a caller can `JSON.parse(stdout)` without stripping noise that arrives after the reply.
+const out = (s) => process.stdout.write(String(s) + '\n');
+
+// A named subcommand GROUP on `parent`, created once and reused, so `xmbl ledger tx add` and `xmbl ledger tx list`
+// share one `tx` group. (`.command('tx add')` does NOT do this: commander reads `add` as a required positional
+// argument, and the action then receives the word where it expects its options.)
+function group(parent, name) {
+  const existing = parent.commands.find((c) => c.name() === name);
+  return existing || parent.command(name);
+}
+
+
 export function createStorageCommand(xsc) {
   const storageCmd = new Command('storage');
 
@@ -25,15 +38,15 @@ export function createStorageCommand(xsc) {
           const shardId = await node.storeShard(shard);
           shardIds.push(shardId);
         }
-        console.log(JSON.stringify({ shardIds, shards: shards.length, parity: parity.length }));
+        out(JSON.stringify({ shardIds, shards: shards.length, parity: parity.length }));
       } catch (error) {
         console.error('Error storing data:', error.message);
         process.exit(1);
       }
     });
 
-  storageCmd
-    .command('node status')
+  group(storageCmd, 'node')
+    .command('status')
     .description('Show storage node status')
     .action(async () => {
       if (!xsc || !xsc.StorageNode) {
@@ -43,7 +56,7 @@ export function createStorageCommand(xsc) {
 
       try {
         const node = new xsc.StorageNode();
-        console.log(JSON.stringify({
+        out(JSON.stringify({
           capacity: node.getCapacity(),
           used: node.getUsed(),
           available: node.getCapacity() - node.getUsed()
@@ -54,8 +67,8 @@ export function createStorageCommand(xsc) {
       }
     });
 
-  storageCmd
-    .command('pricing storage')
+  group(storageCmd, 'pricing')
+    .command('storage')
     .description('Calculate storage price')
     .requiredOption('--size <bytes>', 'Size in bytes')
     .option('--utilization <0-1>', 'Utilization factor', '0.5')
@@ -68,7 +81,7 @@ export function createStorageCommand(xsc) {
       try {
         const pricing = new xsc.MarketPricing();
         const price = pricing.calculateStoragePrice(parseInt(options.size), parseFloat(options.utilization));
-        console.log(JSON.stringify({ size: options.size, utilization: options.utilization, price }));
+        out(JSON.stringify({ size: options.size, utilization: options.utilization, price }));
       } catch (error) {
         console.error('Error calculating price:', error.message);
         process.exit(1);

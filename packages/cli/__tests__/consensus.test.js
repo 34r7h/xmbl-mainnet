@@ -1,18 +1,39 @@
-import { describe, test, expect } from '@jest/globals';
+import { describe, test, expect, beforeAll, afterAll } from '@jest/globals';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import fs from 'fs/promises';
 
 const execAsync = promisify(exec);
+const testKeyDir = './test-keys-consensus';
 
 describe('Consensus Commands', () => {
-  test('should submit transaction to mempool', async () => {
+  beforeAll(async () => {
+    await fs.mkdir(testKeyDir, { recursive: true });
+    await execAsync(`node index.js identity create --name submitter --key-dir ${testKeyDir}`);
+  });
+  afterAll(async () => {
+    try { await fs.rm(testKeyDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+  });
+
+  test('should submit a SIGNED transaction to mempool', async () => {
     const tx = { type: 'utxo', to: 'bob', amount: 100 };
     const { stdout } = await execAsync(
-      `node index.js consensus submit --tx '${JSON.stringify(tx)}' --leader leader1`
+      `node index.js consensus submit --tx '${JSON.stringify(tx)}' --leader leader1 --key submitter --key-dir ${testKeyDir}`
     );
     const result = JSON.parse(stdout.trim());
+    expect(result.ok).toBe(true);
     expect(result).toHaveProperty('rawTxId');
     expect(result.rawTxId).toBeTruthy();
+  });
+
+  test('an UNSIGNED transaction is refused at ingress, and the CLI says so (exit 1, ok:false)', async () => {
+    const tx = { type: 'utxo', to: 'bob', amount: 100 };
+    await expect(execAsync(`node index.js consensus submit --tx '${JSON.stringify(tx)}' --leader leader1`))
+      .rejects.toMatchObject({ code: 1 });
+    const { stdout } = await execAsync(`node index.js consensus submit --tx '${JSON.stringify(tx)}' --leader leader1`).catch((e) => e);
+    const result = JSON.parse(stdout.trim());
+    expect(result.ok).toBe(false);
+    expect(result.rawTxId).toBeNull();
   });
 
   test('should get mempool statistics', async () => {

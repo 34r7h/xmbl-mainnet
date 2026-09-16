@@ -37,20 +37,24 @@ console.log = () => {}; // Suppress during module loading
 let xid, xclt, xpc, xn, xvsm, xsc;
 
 try {
-  xid = await import('../identity/index.js');
-  xclt = await import('../cubic-ledger/index.js');
-  xpc = await import('../consensus/index.js');
-  xn = await import('../networking/index.js');
-  xvsm = await import('../state-machine/index.js');
-  xsc = await import('../storage-compute/index.js');
+  // By PACKAGE NAME, never by monorepo-relative path: the published @xmbl/cli resolves these from its own
+  // dependencies, and inside this repo the workspace links point them at packages/*.
+  xid = await import('@xmbl/identity');
+  xclt = await import('@xmbl/cubic-ledger');
+  xpc = await import('@xmbl/consensus');
+  xn = await import('@xmbl/networking');
+  xvsm = await import('@xmbl/state-machine');
+  xsc = await import('@xmbl/storage-compute');
   
-  // Restore console.log after modules loaded
-  console.log = originalLog;
+  // Modules are loaded. From here on, library console.log (mempool rehydration, ingress-guard verdicts, sweep
+  // notices) goes to STDERR: the modules emit it asynchronously, so it used to land AFTER a command's JSON
+  // reply and break every caller that parsed stdout. Commands print their results via process.stdout.write.
+  console.log = (...args) => console.error(...args);
 } catch (error) {
   // Restore console.log before error
   console.log = originalLog;
   console.error('Failed to load XMBL modules:', error.message);
-  console.error('Ensure all XMBL modules (xid, xclt, xpc, xn, xvsm, xsc) are available.');
+  console.error('Ensure the @xmbl/* protocol packages this CLI depends on are installed.');
   process.exit(1);
 }
 

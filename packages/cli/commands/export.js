@@ -1,6 +1,10 @@
 import { Command } from 'commander';
 import { writeFileSync } from 'fs';
 
+// RESULTS GO TO STDOUT, AND ONLY RESULTS. Library logs (module rehydration, ingress-guard lines) are routed to
+// stderr by index.js, so a caller can `JSON.parse(stdout)` without stripping noise that arrives after the reply.
+const out = (s) => process.stdout.write(String(s) + '\n');
+
 export function createExportCommand(xclt, xvsm) {
   const exportCmd = new Command('export');
 
@@ -18,6 +22,7 @@ export function createExportCommand(xclt, xvsm) {
 
       try {
         const ledger = new xclt.Ledger();
+        if (typeof ledger.ready === 'function') await ledger.ready();
         const cubes = await ledger.getCubes();
         const transactions = [];
         
@@ -40,7 +45,7 @@ export function createExportCommand(xclt, xvsm) {
 
         if (options.format === 'json') {
           writeFileSync(options.output, JSON.stringify(limited, null, 2));
-          console.log(JSON.stringify({ exported: limited.length, format: 'json', file: options.output }));
+          out(JSON.stringify({ exported: limited.length, format: 'json', file: options.output }));
         } else if (options.format === 'csv') {
           const headers = ['id', 'type', 'from', 'to', 'amount', 'timestamp'];
           const rows = limited.map(tx => [
@@ -53,7 +58,7 @@ export function createExportCommand(xclt, xvsm) {
           ]);
           const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
           writeFileSync(options.output, csv);
-          console.log(JSON.stringify({ exported: limited.length, format: 'csv', file: options.output }));
+          out(JSON.stringify({ exported: limited.length, format: 'csv', file: options.output }));
         } else {
           console.error('Error: Invalid format. Use: json, csv');
           process.exit(1);
@@ -86,7 +91,7 @@ export function createExportCommand(xclt, xvsm) {
 
         if (options.format === 'json') {
           writeFileSync(options.output, JSON.stringify(stateData, null, 2));
-          console.log(JSON.stringify({ exported: true, format: 'json', file: options.output }));
+          out(JSON.stringify({ exported: true, format: 'json', file: options.output }));
         } else {
           console.error('Error: Invalid format. Use: json');
           process.exit(1);

@@ -1,5 +1,9 @@
 import { Command } from 'commander';
 
+// RESULTS GO TO STDOUT, AND ONLY RESULTS. Library logs (module rehydration, ingress-guard lines) are routed to
+// stderr by index.js, so a caller can `JSON.parse(stdout)` without stripping noise that arrives after the reply.
+const out = (s) => process.stdout.write(String(s) + '\n');
+
 export function createTxCommand(xid, xclt, xpc, xn) {
   const txCmd = new Command('tx');
 
@@ -26,7 +30,7 @@ export function createTxCommand(xid, xclt, xpc, xn) {
         tx.from = options.from;
       }
       
-      console.log(JSON.stringify(tx, null, 2));
+      out(JSON.stringify(tx, null, 2));
     });
 
   txCmd
@@ -48,7 +52,7 @@ export function createTxCommand(xid, xclt, xpc, xn) {
         const identity = await keyManager.loadIdentity(options.key, options.password);
         const signed = await identity.signTransaction(tx);
         // Output compact JSON for easier piping
-        console.log(JSON.stringify(signed));
+        out(JSON.stringify(signed));
       } catch (error) {
         console.error('Error signing transaction:', error.message);
         process.exit(1);
@@ -70,8 +74,8 @@ export function createTxCommand(xid, xclt, xpc, xn) {
         const tx = JSON.parse(options.tx);
         const workflow = new xpc.ConsensusWorkflow({ xid, xclt, xn });
         const rawTxId = await workflow.submitTransaction(options.leader, tx);
-        console.log('Transaction submitted');
-        console.log(`raw_tx_id: ${rawTxId}`);
+        out('Transaction submitted');
+        out(`raw_tx_id: ${rawTxId}`);
       } catch (error) {
         console.error('Error submitting transaction:', error.message);
         process.exit(1);

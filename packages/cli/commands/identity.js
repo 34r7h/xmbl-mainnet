@@ -1,5 +1,9 @@
 import { Command } from 'commander';
 
+// RESULTS GO TO STDOUT, AND ONLY RESULTS. Library logs (module rehydration, ingress-guard lines) are routed to
+// stderr by index.js, so a caller can `JSON.parse(stdout)` without stripping noise that arrives after the reply.
+const out = (s) => process.stdout.write(String(s) + '\n');
+
 export function createIdentityCommand(xid) {
   const identityCmd = new Command('identity');
 
@@ -20,7 +24,7 @@ export function createIdentityCommand(xid) {
         const keyManager = new xid.KeyManager(options.keyDir);
         const name = options.name || `identity_${Date.now()}`;
         await keyManager.saveIdentity(name, identity, options.password);
-        console.log(JSON.stringify({
+        out(JSON.stringify({
           name,
           address: identity.address,
           publicKey: identity.publicKey
@@ -44,7 +48,7 @@ export function createIdentityCommand(xid) {
       try {
         const keyManager = new xid.KeyManager(options.keyDir);
         const identities = await keyManager.listIdentities();
-        console.log(JSON.stringify(identities));
+        out(JSON.stringify(identities));
       } catch (error) {
         console.error('Error listing identities:', error.message);
         process.exit(1);
@@ -64,7 +68,7 @@ export function createIdentityCommand(xid) {
       try {
         const keyManager = new xid.KeyManager(options.keyDir);
         const identity = await keyManager.loadIdentity(name);
-        console.log(JSON.stringify({
+        out(JSON.stringify({
           name,
           address: identity.address,
           publicKey: identity.publicKey
@@ -93,7 +97,7 @@ export function createIdentityCommand(xid) {
         const messageBytes = new TextEncoder().encode(options.message);
         // Route through the ONE signer seam, not the primitive directly.
         const signature = await xid.Signer.sign(messageBytes, identity.privateKey);
-        console.log(JSON.stringify({ message: options.message, signature }));
+        out(JSON.stringify({ message: options.message, signature }));
       } catch (error) {
         console.error('Error signing message:', error.message);
         process.exit(1);
@@ -116,7 +120,7 @@ export function createIdentityCommand(xid) {
         const messageBytes = new TextEncoder().encode(options.message);
         // Route through the ONE signer seam, not the primitive directly.
         const isValid = await xid.Signer.verify(messageBytes, options.signature, options.publicKey);
-        console.log(JSON.stringify({ valid: isValid }));
+        out(JSON.stringify({ valid: isValid }));
       } catch (error) {
         console.error('Error verifying signature:', error.message);
         process.exit(1);
