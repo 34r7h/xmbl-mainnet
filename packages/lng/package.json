@@ -9,6 +9,13 @@
     "./package.json": "./package.json"
   },
   "browser": "./dist/lng.browser.js",
+  "files": [
+    "index.js",
+    "src",
+    "dist",
+    "build-browser.mjs",
+    "CHANGELOG.md"
+  ],
   "license": "MIT",
   "publishConfig": {
     "access": "public"
