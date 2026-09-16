@@ -238,6 +238,25 @@ reads red even though npm succeeded. **Unblocks with:** a crates.io token in the
 `CARGO_REGISTRY_TOKEN` repo secret, then `gh run rerun <id> --failed`. Nothing else about the crate job
 is wrong — it compiled and packaged `xmbl-identity v0.1.11` before the token check.
 
+**The published artifacts were then checked by RUNNING them, not by reading the registry.** A scratch
+install of `@xmbl/core@latest` from npm — nothing from this checkout — booted its `xmbl-node` bin and
+answered over its own control socket:
+
+```
+status.versions  core 0.1.11, identity 0.1.11, networking 0.1.11, cubic-ledger 0.1.11,
+                 state-machine 0.1.11, consensus 0.1.11, storage-compute 0.1.11, zero-knowledge 0.1.11
+status.build     ac0f97e0f3861b4353984f50808d1f2fd540c410a8cc77ada1b56bee4d41dc15
+status.suspended null
+status.ota       running 0.1.11, latest 0.1.11 (fetched from registry.npmjs.org), behind false
+```
+
+So the tarballs carry `release.js`, `bin/xmbl-node.js` and the control socket; the version proof works
+off the published bytes; the OTA loop reached the real registry, agreed with itself and did NOT suspend.
+That last line matters — it is the check that publishing 0.1.11 does not stop a node that is already on
+it. (The boot needed `XMBL_ALLOW_COLOCATED_NODES=1`, because the machine lock correctly refused while the
+handoff slim node held it; the scratch node ran with every role false, no bootstrap peers and loopback
+only, and was stopped afterwards.)
+
 **Remaining proof:** crates.io shows 0.1.11 for all eight.
 
 ### B9. MAYO-cube — MAYO on the cubic coordinate system (from A1)
