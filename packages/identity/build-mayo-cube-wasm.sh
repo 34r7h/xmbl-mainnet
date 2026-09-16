@@ -22,17 +22,30 @@
 # in this file — and the committed artifact was rebuilt under that pin on 2026-09-17, replacing the one
 # whose emsdk version was never recorded and is not recoverable (the wasm `producers` section is stripped).
 #
-#   RECORDED, under emsdk 6.0.9 (release 4e4223852a0835923411059a3929907d7df1232e):
-#     mayo.wasm c972bba439427918b63d9308f368f3f530cf929845b6bae2a586765c5b715393
-#     mayo.cjs  27634e618002c35e6d71bb144f1e0916a11cca313dee83aeadead96497ba0c45
+# THE BUILD HOST IS PART OF THE PIN, and that was measured, not assumed. Under the SAME emsdk 6.0.9
+# release, three hosts gave three answers (2026-09-17):
+#
+#   macOS 26 arm64, emsdk 6.0.9 via emsdk_env  wasm c972bba4…  cjs 27634e61…
+#   ubuntu-latest x64, setup-emsdk 6.0.9       wasm 38127dc9…  cjs 27634e61…
+#   emscripten/emsdk:6.0.9, linux/amd64        wasm 68626475…  cjs 89a9728c…   <- CANONICAL
+#
+# The wasm differs by 14 bytes and the glue only follows it (one ASM_CONSTS data offset, 1380 vs 1368);
+# no host path is embedded — it is the host's own LLVM build. So pinning the emscripten VERSION does not
+# pin the bytes; pinning the IMAGE does. The committed artifact is the container's output, and the recipe
+# an auditor runs is one command, anywhere Docker runs:
+#
+#   docker run --rm --platform linux/amd64 -v "$PWD":/src -w /src emscripten/emsdk:6.0.9 \
+#     bash packages/identity/build-mayo-cube-wasm.sh --check
+#
+#   RECORDED, from emscripten/emsdk:6.0.9 on linux/amd64:
+#     mayo.wasm 686264755727701c1419690ab83cb6997a21d35bf9d746f4c6496b073ba20ce0
+#     mayo.cjs  89a9728c785041477a8c3e40aaa3e8c2de73ee8c022e5adc73562ab59e44ec2b
 #
 # `--check` rebuilds and compares against BOTH the committed files and those recorded digests, so editing
-# the artifact and the record together still fails. Install the pin with:
-#   git clone https://github.com/emscripten-core/emsdk && cd emsdk && ./emsdk install 6.0.9 \
-#     && ./emsdk activate 6.0.9 && source ./emsdk_env.sh
-# A DIFF under the pinned version is a REAL failure (inputs changed). A DIFF under any other version is
-# only evidence that emcc codegen moved: re-pin deliberately, re-record both digests, and say so in
-# MAYO-PROVENANCE.md — never just overwrite the numbers.
+# the artifact and the record together still fails. OUTSIDE that image the digests are expected to differ
+# and the check says so — what it proves there is that YOUR host is deterministic, not that the bytes are
+# canonical. A DIFF inside the image is a REAL failure: find the input that changed; never re-record a
+# digest to make it pass without saying why in MAYO-PROVENANCE.md.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,8 +63,8 @@ mkdir -p "$OUT"
 
 # THE TOOLCHAIN PIN. Byte-identity is only claimed under this exact emsdk release.
 EMSDK_PIN="6.0.9"
-RECORDED_WASM_SHA="c972bba439427918b63d9308f368f3f530cf929845b6bae2a586765c5b715393"
-RECORDED_CJS_SHA="27634e618002c35e6d71bb144f1e0916a11cca313dee83aeadead96497ba0c45"
+RECORDED_WASM_SHA="686264755727701c1419690ab83cb6997a21d35bf9d746f4c6496b073ba20ce0"
+RECORDED_CJS_SHA="89a9728c785041477a8c3e40aaa3e8c2de73ee8c022e5adc73562ab59e44ec2b"
 
 # sha256 of a file, on both hosts this build runs on: macOS ships `shasum`, the Debian-based emsdk
 # container ships `sha256sum`. Prints the bare digest, nothing else.
@@ -65,9 +78,13 @@ command -v emcc >/dev/null 2>&1 || { echo "ERROR: emcc (Emscripten) not on PATH"
 EMCC_LINE="$(emcc --version | head -1)"
 EMCC_VER="$(printf '%s' "$EMCC_LINE" | sed -n 's/.*replacement + linker emulating GNU ld) \([^ ]*\).*/\1/p')"
 echo "emcc: $EMCC_LINE"
-echo "pin:  emsdk $EMSDK_PIN (this build reports '${EMCC_VER:-unknown}')"
-if [ "$EMCC_VER" != "$EMSDK_PIN" ]; then
-  echo "WARN: toolchain is NOT the pinned emsdk $EMSDK_PIN — the output is not expected to be byte-identical." >&2
+# Canonical = the pinned emsdk INSIDE the pinned image. The image sets EMSDK_* and is Linux; that is
+# the cheapest honest test for "am I the canonical host" without pretending to fingerprint the world.
+IN_CANONICAL_IMAGE=0
+[ "$EMCC_VER" = "$EMSDK_PIN" ] && [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ] && IN_CANONICAL_IMAGE=1
+echo "pin:  emsdk $EMSDK_PIN on linux/x86_64 (this build: '${EMCC_VER:-unknown}' on $(uname -s)/$(uname -m))"
+if [ "$IN_CANONICAL_IMAGE" != "1" ]; then
+  echo "NOTE: not the canonical build host — expect different bytes (see the header table; the digest is host-dependent)." >&2
 fi
 echo "out:  $OUT"
 
@@ -128,11 +145,13 @@ if [ "$MODE" = "check" ]; then
     else echo "DIFF  $f  rebuilt=$got  committed=$want  BUT recorded=$rec — the committed artifact and the record disagree"; rc=1; fi
   done
   if [ $rc -eq 0 ]; then
-    echo "byte-identical to the committed artifact and to the recorded digest (emsdk $EMSDK_PIN)"
-  elif [ "$EMCC_VER" != "$EMSDK_PIN" ]; then
-    echo "NOT byte-identical, and this is NOT the pinned toolchain (have '${EMCC_VER:-unknown}', need emsdk $EMSDK_PIN) — install the pin before reading anything into this."
+    echo "byte-identical to the committed artifact and to the recorded digest (emsdk $EMSDK_PIN, linux/x86_64)"
+  elif [ "$IN_CANONICAL_IMAGE" != "1" ]; then
+    echo "NOT byte-identical, and this is NOT the canonical host — run it in the image before reading anything into it:"
+    echo "  docker run --rm --platform linux/amd64 -v \"\$PWD\":/src -w /src emscripten/emsdk:$EMSDK_PIN bash packages/identity/build-mayo-cube-wasm.sh --check"
+    rc=0
   else
-    echo "NOT byte-identical UNDER THE PINNED TOOLCHAIN — the build inputs changed. This is a real failure: find the change, do not re-record the digest to make it pass."
+    echo "NOT byte-identical IN THE CANONICAL IMAGE — the build inputs changed. This is a real failure: find the change, do not re-record the digest to make it pass."
   fi
   exit $rc
 fi

@@ -69,14 +69,3 @@ jobs:
       # recorded in the script.
       - name: Rebuild MAYO-cube WASM and compare byte-for-byte
         run: bash packages/identity/build-mayo-cube-wasm.sh --check
-        continue-on-error: true
-      # Transitional: publishes the canonical bytes so the committed artifact can be rotated to the
-      # image's output. Removed once the digests are recorded (see MAYO-PROVENANCE.md T2.1-b).
-      - name: Build canonical artifact for download
-        run: OUT=/tmp/canonical bash packages/identity/build-mayo-cube-wasm.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mayo-canonical
-          path: |
-            /tmp/canonical/mayo.wasm
-            /tmp/canonical/mayo.cjs
