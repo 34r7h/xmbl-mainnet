@@ -69,6 +69,38 @@ export class Identity {
     };
   }
 
+  // DOES THIS KEYPAIR ACTUALLY WORK? signingStatus() above answers "are the three fields present",
+  // which is the condition the chain signing gate reads — and it is NOT enough.
+  //
+  // ⛔ THE FAILURE THIS CATCHES. An xmbl address is derived from the PUBLIC key, and the signed statement
+  // carries that same address, so a node holding a publicKey and a privateKey FROM DIFFERENT KEYPAIRS
+  // passes every present-field check, signs happily, and publishes a statement whose address resolves
+  // perfectly and whose signature cannot verify. The broker's refusal reason for exactly that shape is
+  // `bad_signature` (as opposed to `address_mismatch`), and it drops the chain block, so the node appears
+  // up, healthy, fully-roled and silent. MEASURED 2026-09-16 from the broker log, two live nodes:
+  //   chain claim REFUSED ... reason=bad_signature claimed_address=xmb7be56708a951a91a504a1003b23a3b244ba685a8
+  //   chain claim REFUSED ... reason=bad_signature claimed_address=xmba330f3963537db5ed751fc435f29e4fe0ae6e439
+  // Reproduced here: sign with one identity's secret, present another's public key — verify false, while
+  // the address the statement carries still resolves to that public key. Nothing on the node could tell.
+  //
+  // This does a REAL round trip through the same seam the chain claim uses, so it fails exactly when the
+  // broker would. Async because the signer loads a WASM artifact. Returns the sync status plus the verdict.
+  async verifySigning() {
+    const base = this.signingStatus();
+    if (!base.can_sign) return { ...base, keypair_consistent: null, reason: 'cannot sign: missing ' + base.missing.join(', ') };
+    try {
+      const probe = `xmbl-signing-self-test:${this.address}`;
+      const sig = await signerSign(probe, this.privateKey, this.scheme);
+      const ok = await signerVerify(probe, sig, this.publicKey, this.scheme);
+      return ok
+        ? { ...base, keypair_consistent: true, reason: null }
+        : { ...base, can_sign: false, keypair_consistent: false,
+            reason: 'publicKey and privateKey are not from the same keypair — signatures will be refused as bad_signature while the address still resolves' };
+    } catch (e) {
+      return { ...base, can_sign: false, keypair_consistent: false, reason: `signing self-test threw: ${e.message}` };
+    }
+  }
+
   /**
    * Create a new identity with generated keypair
    * @returns {Promise<Identity>} New identity instance

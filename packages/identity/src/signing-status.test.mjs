@@ -33,3 +33,36 @@ test('signingStatus never returns key material', async () => {
   assert.ok(!blob.includes(id.privateKey), 'private key must not appear');
   assert.ok(!blob.includes(id.publicKey), 'public key must not appear');
 });
+
+// verifySigning() — the check that catches what signingStatus() cannot.
+test('a crossed keypair reports can_sign FALSE even though every field is present', async () => {
+  const a = await Identity.create();
+  const b = await Identity.create();
+  // The exact shape the broker refuses as bad_signature: the address resolves to the public key it
+  // carries, and the signature was made by a different secret.
+  const crossed = new Identity(a.publicKey, b.privateKey, a.scheme);
+  assert.strictEqual(crossed.address, a.address, 'the address still resolves — that is why this hid');
+  assert.strictEqual(crossed.signingStatus().can_sign, true, 'the present-field check cannot see it');
+
+  const v = await crossed.verifySigning();
+  assert.strictEqual(v.keypair_consistent, false);
+  assert.strictEqual(v.can_sign, false, 'the deep check must override the shallow one');
+  assert.match(v.reason, /not from the same keypair/);
+});
+
+test('a real keypair passes the round trip', async () => {
+  const id = await Identity.create();
+  const v = await id.verifySigning();
+  assert.strictEqual(v.keypair_consistent, true);
+  assert.strictEqual(v.can_sign, true);
+  assert.strictEqual(v.reason, null);
+});
+
+test('verifySigning on a verify-only identity says why, without attempting a signature', async () => {
+  const full = await Identity.create();
+  const vo = Identity.fromPublicKey(full.publicKey);
+  const v = await vo.verifySigning();
+  assert.strictEqual(v.can_sign, false);
+  assert.strictEqual(v.keypair_consistent, null, 'null = not tested, distinct from false = tested and broken');
+  assert.match(v.reason, /missing privateKey/);
+});
