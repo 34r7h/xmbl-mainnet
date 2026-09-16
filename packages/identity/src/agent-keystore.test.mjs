@@ -214,7 +214,12 @@ ok('THE SANDBOX IS NOT THE OPERATOR’S ~/.handoff',
   const ident = await loadAgentIdentity(id, OPTS);
   const serialized = JSON.stringify(rec);
   ok('THE SECRET IS NOT IN THE PUBLISHED RECORD', !serialized.includes(ident.privateKey));
-  ok('...nor is any part of the encrypted envelope', !serialized.includes('secret') && !serialized.includes('ct'));
+  // Asserted on the KEYS, not on substrings: a base64 public key can contain any letter pair by chance,
+  // and `serialized.includes('ct')` duly went red the first time a key happened to contain it. The claim
+  // being made is "no envelope field rides along", and that is a statement about the record's shape.
+  ok('...nor is any part of the encrypted envelope',
+     ['secret_key_encrypted', 'salt', 'iv', 'tag', 'ct', 'created_at', 'version']
+       .every((k) => !(k in rec)));
 
   ok('an agent with no keystore is an error, not an empty record',
      await threw(() => getPublicRecord('never-created', OPTS), /no xmbl.json/));
