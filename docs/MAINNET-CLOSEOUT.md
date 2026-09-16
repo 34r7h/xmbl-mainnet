@@ -168,6 +168,9 @@ version pinned in the script and in CI, into its own artifact; `wasm-schemes.js`
 with both schemes loaded.
 
 ### B10. Typed-by-xid protocol + rollout policy — DONE 2026-09-16 (operator directives)
+Content-addressed admission included: stage 1 reads tokens.json `authority`, so an unsigned type-7 anchor
+from the node-less broker is admitted on its xid (measured: a live core returned a rawTxId where it returned
+null before), while unsigned value types still reject.
 Every tx typed by its xid (tokens.json codes, `micromineTx`, untyped rows deleted, anchors carry `prior`),
 consensus validates in order (can-happen → xid → placement), content-only block hashes, version proof +
 self-suspension + OTA in `@xmbl/core`. What remains is the consumer side, sent to handoff-claude: `prior`

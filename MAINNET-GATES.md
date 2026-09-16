@@ -380,6 +380,20 @@ continue-on-error, and in the release workflow before any publish).
       re-mined without it; sent to handoff-claude as a fleet-contract requirement together with the canonical
       feed carrying xid + nonce + prior. — *cubic-ledger/tokens.json; transaction-validator.js; block.js;
       ledger.js; consensus/validate.js; ingress-guard.test.mjs (+7 refusals); content-id-rekey-on-boot.test.mjs*
+- [x] **AUTHORIZATION IS READ FROM THE TYPE TABLE — "signed by a sender, OR content-addressed" (operator).**
+      tokens.json now carries `authority` per type: `content-addressed` for type 6 and type 7, `signed` for the
+      other five; `authorityOf()` / `contentAddressedTypes()` export it and stage 1 reads it instead of testing
+      `tx.type === 'tx'`. MEASURED 2026-09-16 before the fix, on the real ingress: a correctly typed broker
+      anchor whose xid verifies was refused `REJECT [can-happen] unsigned` — so every anchor the fleet produces
+      died at the first door and "0 untyped anchors" was unreachable. An ANCHOR is a pointer to a digest: it
+      moves no value, its body is {from:[prior],to:[hash],how:'anchor'}, and the broker that mints it is
+      node-less and custodial, so no end user ever signs one. Its authority IS its xid, re-derived at stage 2 —
+      an untyped, forged or prior-less anchor is still refused. The exemption is EXACTLY {anchor, tx}, asserted
+      against the table; an unsigned utxo / identity / state_diff still rejects at stage 1. Proven by outcome,
+      not by shape: a live XMBLCore returned rawTxId f0391afa… for an unsigned broker anchor whose user does
+      not resolve, where it previously returned null ("rejected at ingress"). — *tokens.json (authority,
+      authorityRule, 1.2.0); transaction-validator.js; consensus/validate.js; workflow.js `_isContentAddressed`;
+      ingress-guard.test.mjs (45 checks)*
 - [x] **THE ORDER OF CONSENSUS VALIDATION (operator, 2026-09-16): 1. can the tx happen, 2. is the xid correct,
       3. is the geometric placement right.** `consensus/validate.js` names the stages: `validateCanHappen`
       (shape via `validateShape`, authorization — signed by a sender or content-addressed —, a value that can

@@ -2,7 +2,7 @@ import { Mempool } from './mempool.js';
 import { ValidationTaskManager } from './validation-tasks.js';
 import { EventEmitter } from 'events';
 import { createHash } from 'crypto';
-import { verifyMicromine, type6TxBody } from '@xmbl/cubic-ledger';   // content-addressing: the ONLY admissible proof an unsigned type-6 carries
+import { verifyMicromine, type6TxBody, authorityOf, validateXid } from '@xmbl/cubic-ledger';   // content-addressing: the ONLY admissible proof an unsigned type-6 or type-7 carries
 import { validateForConsensus } from './validate.js';                 // THE ORDER: 1. can it happen  2. is the xid correct  3. (seal/adopt) placement
 
 export class ConsensusWorkflow extends EventEmitter {
@@ -132,6 +132,17 @@ export class ConsensusWorkflow extends EventEmitter {
     try { return verifyMicromine(type6TxBody(txData), txData.nonce, txData.xid, 6); } catch { return false; }
   }
 
+  // EVERY content-addressed type, read from the type table — type 6 above, and the type-7 ANCHOR whose authority
+  // is its xid over {from:[prior],to:[hash],how:'anchor'}. The narrow type-6-only form left the anchor, the one
+  // datum the fleet actually produces, refused as "user unresolvable" at the third guard even once stage 1
+  // admitted it: an anchor's `from` is set to the SIGNING NODE's address, which resolves, but a node-less
+  // broker's does not. validateXid IS the check — a forged or untyped anchor still fails it.
+  _isContentAddressed(txData) {
+    if (this._isContentAddressedType6(txData)) return true;
+    if (!txData || authorityOf(txData.type) !== 'content-addressed') return false;
+    try { validateXid(txData); return true; } catch { return false; }
+  }
+
   // INGRESS GUARD — reject what the chain can never use, admit everything else.
   //
   // ⛔ THE PREVIOUS VERSION DROPPED EVERY type:'anchor'. The line `if (!txData || txData.type !== 'anchor')
@@ -217,8 +228,9 @@ export class ConsensusWorkflow extends EventEmitter {
     // null for every one of them and can never mean anything else for this type. Under user-as-validator the
     // premise fails too: such a tx is validated as a content-addressed record, not by resolving its payer.
     // The exemption is exactly as narrow as the one above: it costs the same two things, listed at
-    // _isContentAddressedType6, and nothing more.
-    if (this._isContentAddressedType6(txData)) return true;
+    // _isContentAddressedType6, and nothing more. Generalised 2026-09-16 to every content-addressed type so the
+    // type-7 anchor is not refused here after stage 1 admits it.
+    if (this._isContentAddressed(txData)) return true;
     const from = txData && txData.from;
     if (!from) return true;                                              // no claimed user: other guards own this
     try { return !!this.getPublicKeyByAddress(from); } catch { return true; }

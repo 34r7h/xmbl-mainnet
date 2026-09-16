@@ -23,7 +23,7 @@
 import { ConsensusWorkflow } from './workflow.js';
 import assert from 'node:assert';
 import { createHash } from 'node:crypto';
-import { micromineTx, micromine, type6TxBody } from '@xmbl/cubic-ledger';
+import { micromineTx, micromine, type6TxBody, authorityOf, contentAddressedTypes } from '@xmbl/cubic-ledger';
 
 let pass = 0;
 const check = (n, c) => { assert.ok(c, n); console.log('  ok  ', n); pass++; };
@@ -93,6 +93,49 @@ const mined6 = () => { const t = { chain: 'xmbl', from: ['a'], to: ['b'], asset:
   const w = mk();
   check('XPC_INGRESS_GUARD=0 admits even an unsigned anchor (rollback)', w._admitToPool('nodeA', { type: 'anchor' }) === true);
   delete process.env.XPC_INGRESS_GUARD;
+}
+
+// (e) CONTENT-ADDRESSED ADMISSION (operator: "signed by a sender, OR content-addressed"; measured 2026-09-16).
+// The broker that mints the fleet's anchors is NODE-LESS and CUSTODIAL: its type-7 pointer is authorized by its
+// xid, not by an end-user signature. Before this, stage 1 refused it as "unsigned" and every typed anchor died
+// at the door — "0 untyped anchors" was unreachable no matter what the broker did.
+{
+  const w = mk();
+  const unsignedAnchor = micromineTx({ type: 'anchor', event: 'task.created', hash: digest('h9'), ts: 1 });
+  check('ADMITS an UNSIGNED anchor whose xid verifies (the node-less broker\'s only shape)', w._admitToPool('broker', unsignedAnchor) === true);
+  const chained = micromineTx({ type: 'anchor', event: 'task.verified', hash: digest('h10'), ts: 2, prior: unsignedAnchor.xid });
+  check('ADMITS an unsigned anchor chained to a prior xid', w._admitToPool('broker', chained) === true);
+  check('ADMITS an unsigned type-6 (unchanged)', w._admitToPool('broker', mined6()) === true);
+
+  // The exemption is EXACTLY the two content-addressed types and nothing else — asserted against the type table.
+  assert.deepStrictEqual(contentAddressedTypes(), ['anchor', 'tx'], 'content-addressed set must be exactly {anchor, tx}');
+  check('the content-addressed set is exactly {anchor, tx} (2 of 7 types)', contentAddressedTypes().length === 2);
+  for (const t of ['utxo', 'identity', 'token_creation', 'contract', 'state_diff']) {
+    check(`authorityOf(${t}) is 'signed'`, authorityOf(t) === 'signed');
+  }
+  check('still REJECTS an unsigned utxo (value moves only on a signature)',
+    w._admitToPool('attacker', typed({ type: 'utxo', from: 'a', to: 'b', amount: '1000000' })) === false);
+  check('still REJECTS an unsigned identity tx', w._admitToPool('attacker', typed({ type: 'identity', publicKey: 'pk', signature: 'sg', from: 'a' })) === false);
+  check('still REJECTS an unsigned state_diff', w._admitToPool('attacker', typed({ type: 'state_diff', function: 'f', args: [], from: 'a' })) === false);
+  check('still REJECTS an UNTYPED anchor (no xid) even though its type is content-addressed',
+    w._admitToPool('broker', { type: 'anchor', event: 'e', hash: digest('h11'), ts: 3 }) === false);
+  check('still REJECTS a FORGED anchor xid (body changed after mining)',
+    w._admitToPool('broker', { ...unsignedAnchor, hash: digest('tampered') }) === false);
+  check('still REJECTS an anchor with no `prior` — the pointer body cannot be re-mined (what the wire must carry)',
+    w._admitToPool('broker', (() => { const t = { ...unsignedAnchor }; delete t.prior; return t; })()) === false);
+}
+
+// (f) THE OUTCOME THE BROKER MEASURES: xpc.submitTransaction returns a rawTxId, not null, for an unsigned anchor
+// whose user is unresolvable — all three guards, not just the first.
+{
+  const w = mk();
+  w.getPublicKeyByAddress = () => null;   // node-less custodial broker: nothing resolves
+  const a = micromineTx({ type: 'anchor', event: 'task.created', hash: digest('h12'), ts: 4 });
+  const rawTxId = await w.submitTransaction('broker', a);
+  check('submitTransaction ADMITS the unsigned anchor (returns a rawTxId, not the null that meant "rejected at ingress")',
+    typeof rawTxId === 'string' && rawTxId.length > 0);
+  const bad = await w.submitTransaction('attacker', typed({ type: 'utxo', from: 'a', to: 'b', amount: '5' }));
+  check('submitTransaction still returns null for an unsigned utxo', bad === null);
 }
 
 console.log(`\nPASS — ${pass} checks\n`);

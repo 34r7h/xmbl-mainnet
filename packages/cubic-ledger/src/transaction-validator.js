@@ -38,6 +38,18 @@ export function typeCodeOf(type) {
   return t.code;
 }
 
+/** How a tokens.json type is authorized: 'signed' (sig + sender) or 'content-addressed' (its xid IS its authority). */
+export function authorityOf(type) {
+  const t = loadTokenTypes()[type];
+  return (t && t.authority) || 'signed';   // an unknown type is never content-addressed
+}
+
+/** Every tokens.json type whose authority is its xid rather than a signature. */
+export function contentAddressedTypes() {
+  const types = loadTokenTypes();
+  return Object.keys(types).filter((k) => types[k].authority === 'content-addressed').sort();
+}
+
 /** The tokens.json type an xid's prefix signifies, or null (not an xid, or a datum kind that is not a chain tx). */
 export function typeOfXid(xid) {
   if (typeof xid !== 'string' || !XID_RE.test(xid)) return null;
