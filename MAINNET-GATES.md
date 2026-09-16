@@ -23,6 +23,10 @@ continue-on-error, and in the release workflow before any publish).
       self-claim was **removed**. — *curve-source.js*
 - [ ] ⛔ AUDIT — MAYO is an **unaudited fork**. Pin the exact upstream commit, get the WASM
       build reproducible, and obtain third-party review of the port before value depends on it.
+      **Two of the three are done:** the upstream pin is recorded (T2.1-a, PQCMayo/MAYO-C
+      `4b7cd94c…`, one explained line of divergence — T2.1-c) and the build reproduces
+      byte-for-byte in a pinned container with CI enforcing it (T2.1-b, closed 2026-09-17).
+      What remains is the part this repo cannot do: **a third party reviewing the port**.
 - [ ] ⛔ AUDIT — the **cubic-curve construction** (Cubic-SIG / Cubic-KEM, curves derived from
       the cube-of-cubes ledger) is novel and has **no external cryptanalysis**. No mainnet
       value may bind to it until audited. Until then it is classical-only (Shor-vulnerable) or
@@ -500,7 +504,13 @@ continue-on-error, and in the release workflow before any publish).
 ## Cross-cutting (all modules)
 
 - [ ] ⛔ AUDIT — one external security review of the protocol as a whole before mainnet.
-- [ ] Reproducible builds for the WASM artifacts (`mayo.wasm`) pinned to source commits.
+- [x] Reproducible builds for the WASM artifacts (`mayo.wasm`) pinned to source commits. Closed
+      2026-09-17: the committed `mayo.wasm`/`mayo.cjs` are rebuilt byte-for-byte from the vendored C
+      by `emscripten/emsdk:6.0.9` on linux/amd64 — one docker command, recorded digests
+      `68626475…`/`89a9728c…`, and a CI job that fails on any difference. The artifact that shipped
+      before could never have matched: its toolchain was never recorded and is unreadable from the
+      binary (`producers` stripped), so it was rotated onto the canonical build — 78/78 after.
+      — *packages/identity/MAYO-PROVENANCE.md T2.1-b; build-mayo-cube-wasm.sh; .github/workflows/ci.yml*
 - [x] The eight Rust crates are primitive stubs (11 unit tests); they had to reach parity with the
       JS reference **or** be labeled non-production in their crate docs before crates.io consumers
       rely on them. Closed via the label branch: every crate's `src/lib.rs` carries a crate-level
@@ -677,28 +687,31 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
       @ `4b7cd94c96b9522864efe40c6ad1fa269584a807`, MAYO_1 `opt` param set, verified against the live
       upstream (39/40 files of the compiled `src/`+`include/` subtree byte-identical), vendored inventory
       documented. *(blocks T2.1-b, T2.1-c)*
-- [ ] **T2.1-b** — reproducible `mayo.wasm` build. DONE: `build-mayo-cube-wasm.sh` pins all build INPUTS
-      (sources/defines/flags/exports) + `--check` mode; rebuild passes the identity suite (functional
-      equivalence, 5/5) and its sha is recorded. The shipped artifact's emsdk version is not recorded and
-      not recoverable (wasm `producers` section stripped), so a rebuild under the drifted toolchain is not
-      byte-identical. DECIDED 2026-09-16 (operator): the shipped baseline is NOT rotated and the lost emsdk
-      is NOT hunted — MAYO is to be adapted to the XMBL cubic coordinate system (the `'mayo-cube'` scheme
-      slot in `wasm-schemes.js`) to reduce its computation requirements; that build pins its emsdk from its
-      first commit, and T2.1-b closes when `build-mayo-cube-wasm.sh --check` matches its recorded sha
-      (MAYO-PROVENANCE.md T2.1-b; docs/MAINNET-CLOSEOUT.md A1 / B9). **Spec-first half authored 2026-09-16
-      as whitepaper §7** with the cost measured rather than asserted (`profile-mayo-cost.sh`):
-      `mayo_expand_pk` is **85.7% of verify**, `mayo_expand_sk` **72.6% of sign**, so every insertion point
-      that is not the P1/P2 expansion is bounded at ≤14.3% / ≤27.4% — and the one that IS the expansion
-      would assert that 144,495 bytes of GF(16) public-matrix entries generated from public, low-entropy,
-      signer-influenceable coordinates stay indistinguishable from uniform (open assumptions M2/M3, §6).
-      Two assumption-free wins were measured on the way: `signer.js` loads a FRESH WASM module inside both
-      `sign()` and `verify()` (load 1.270 ms vs 0.725 ms of actual verification — **44% of every
-      `signer.js` verify is module instantiation**; the ContractHost crypto ABI does NOT pay this, it
-      loads once per `host.call` in its `init` hook), and an already-expanded public key makes a repeat
-      verify 7.0× cheaper. The ratio instrument is `packages/identity/bench-mayo-schemes.mjs` (baseline 1.00×, both
-      tags on one artifact). Build side is separately unready: `emcc` here self-reports `4.0.24-git`, a
-      snapshot rather than a pinnable release, and `--check` has one recorded sha for one artifact with no
-      notion of which scheme it is checking (§7.6).
+- [x] **T2.1-b** — reproducible `mayo.wasm` build. **CLOSED 2026-09-17.** `build-mayo-cube-wasm.sh`
+      pins the inputs (sources/defines/flags/exports) AND the environment, because the environment
+      turned out to be half the answer: at one emsdk release (6.0.9) macOS/arm64, ubuntu/x64 and the
+      `emscripten/emsdk:6.0.9` image each emit a different `mayo.wasm` (14 bytes; the glue follows by
+      one data offset; no host path is embedded — it is the host's LLVM build). The image on
+      linux/amd64 is therefore canonical, its digests are recorded in the script
+      (`68626475…` / `89a9728c…`), `--check` compares the rebuild against the committed files AND
+      those digests, and CI runs it inside the image as a hard gate. The previously shipped artifact
+      (`e20b15f0…`) was rotated out: its toolchain was never recorded and cannot be read back
+      (`producers` section stripped), so no rebuild could have matched it — the rotation is the only
+      thing that could make "rebuild it yourself" true. Functional evidence after the rotation:
+      `npm run test:protocol` 78/78, keygen/sign/verify unchanged at 1420 B pk / 454 B sig.
+      **Spec-first half authored 2026-09-16 as whitepaper §7**, with the cost measured rather than
+      asserted (`profile-mayo-cost.sh`): `mayo_expand_pk` is **85.7% of verify**, `mayo_expand_sk`
+      **72.6% of sign**, so every insertion point that is not the P1/P2 expansion is bounded at
+      ≤14.3% / ≤27.4% — and the one that IS the expansion would assert that 144,495 bytes of GF(16)
+      public-matrix entries generated from public, low-entropy, signer-influenceable coordinates stay
+      indistinguishable from uniform (open assumptions M2/M3, §6). Two assumption-free wins were
+      measured on the way: `signer.js` loads a FRESH WASM module inside both `sign()` and `verify()`
+      (load 1.270 ms vs 0.725 ms of actual verification — **44% of every `signer.js` verify is module
+      instantiation**; the ContractHost crypto ABI does NOT pay this, it loads once per `host.call` in
+      its `init` hook), and an already-expanded public key makes a repeat verify 7.0× cheaper. The
+      ratio instrument is `packages/identity/bench-mayo-schemes.mjs` (baseline 1.00×, both tags on one
+      artifact). B9(2) — whether MAYO-cube becomes a separate fork — is unaffected by this closure:
+      it now inherits a build that already reproduces, and only needs its own recorded digest.
 - [x] **T2.1-c** — MAYO fork-vs-upstream diff explained: exactly one file differs (`fips202.h` `shake256`
       `int`→`void`, matching upstream's own `void` definition — a stale-forward-declaration build fix, zero
       algorithm change). Committed as `packages/identity/mayo-cube/mayo-fork.diff`; rationale in

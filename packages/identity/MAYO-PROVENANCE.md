@@ -105,6 +105,132 @@ diff -rq packages/identity/mayo-cube/include /tmp/mayo-up/include # identical
 
 ---
 
+## T2.1-b — reproducible build (status: **CLOSED 2026-09-17 — the committed binary rebuilds
+byte-for-byte from the vendored C, and CI fails if it ever stops doing so**)
+
+The build is `packages/identity/build-mayo-cube-wasm.sh`. It pins every build **input**:
+the exact source set, the defines (`-DMAYO_VARIANT=MAYO_1 -DMAYO_BUILD_TYPE_OPT`, and
+critically *not* `ENABLE_PARAMS_DYNAMIC` — `mayo.h` tests it with `#ifdef`, so even
+`=0` would switch on the dynamic MAX-size path and mismatch the static MAYO_1 buffers),
+the include paths, the emcc flags, and the exported symbols + runtime methods the glue
+resolves. It now also pins the **toolchain and the host**, which is what byte-identity
+actually required.
+
+### Reproduce it yourself — one command, no local toolchain
+
+```sh
+docker run --rm --platform linux/amd64 -v "$PWD":/src -w /src emscripten/emsdk:6.0.9 \
+  bash packages/identity/build-mayo-cube-wasm.sh --check
+```
+
+Expected output: `OK` for both files and `byte-identical to the committed artifact and to the
+recorded digest`. This is the same command CI runs on every push (`.github/workflows/ci.yml`,
+job **MAYO WASM artifact reproduces byte-for-byte**, no `continue-on-error`).
+
+**Canonical digests** — `emscripten/emsdk:6.0.9` on `linux/amd64`:
+
+```
+mayo.wasm  686264755727701c1419690ab83cb6997a21d35bf9d746f4c6496b073ba20ce0
+mayo.cjs   89a9728c785041477a8c3e40aaa3e8c2de73ee8c022e5adc73562ab59e44ec2b
+```
+
+Verify the committed bytes match: `shasum -a 256 packages/identity/mayo-cube/mayo.{wasm,cjs}`.
+`--check` compares the rebuild against **both** the committed files and these recorded digests,
+so editing the artifact and the record together still fails.
+
+### What the auditor should know about how this was pinned
+
+**The emscripten version alone does not pin the bytes — the host does too.** Measured
+2026-09-17, same emsdk 6.0.9 release (`4e4223852a0835923411059a3929907d7df1232e`), same script,
+three hosts:
+
+| host | mayo.wasm | mayo.cjs |
+|---|---|---|
+| macOS 26 / arm64, emsdk via `emsdk_env.sh` | `c972bba4…` | `27634e61…` |
+| ubuntu-latest / x64, `setup-emsdk@v14` | `38127dc9…` | `27634e61…` |
+| **`emscripten/emsdk:6.0.9`, linux/amd64** | **`68626475…`** | **`89a9728c…`** |
+
+The wasm differs by 14 bytes; the glue only follows it (one `ASM_CONSTS` data offset, 1380 vs
+1368). No host path is embedded in either file — the difference is the host's own LLVM build. So
+the canonical build is the **image**, and the recorded digests are its output.
+
+Determinism was checked before anything was recorded: two builds into different directories on
+the same host are byte-identical (checked on macOS under both the old Homebrew toolchain and the
+pinned emsdk), so the digest identifies the environment, not the run.
+
+### The rotation, and why it was the only way
+
+The artifact that shipped until 2026-09-17 (`e20b15f0…` / `b8783ff8…`) was emitted by a toolchain
+nobody recorded, and it is **not recoverable from the binary**: both the shipped and every rebuilt
+wasm have their `producers` and `target_features` custom sections stripped
+(`WebAssembly.Module.customSections(m, "producers")` → empty), so no rebuild could ever have
+matched it. The drift was visible in the glue — the old `mayo.cjs` used minified single-letter
+wasm export names (`f`, `g`, `h`, …) where every current toolchain emits full names.
+
+On 2026-09-16 the operator chose neither hunting the lost emsdk nor rotating; on **2026-09-17 the
+operator directed that the rebuild be proven**, so option 2 was taken: the committed artifact is
+now the canonical container build, and `e20b15f0…` is retired. The rotated binary is the one the
+suites run against — `npm run test:protocol` **78/78**, and keygen/sign/verify unchanged at
+**1420 B** public key / **454 B** signature (`node packages/identity/bench-mayo-schemes.mjs`).
+
+### If `--check` ever reports DIFF
+
+Inside the canonical image, a DIFF means a build **input** changed: find the change. Do not
+re-record a digest to make it pass. A deliberate re-pin (new emsdk, new base image) is allowed but
+must rebuild, re-record **both** digests, and say so here. Outside the image the digests are
+expected to differ; the script says so and exits 0, because what it proves there is that your host
+is deterministic, not that your bytes are canonical.
+
+## T2.1-c — the single fork divergence, explained
+
+Across the 40 files of the compiled `src/`+`include/` subtree, **39 are byte-identical
+to upstream `4b7cd94…` and exactly 1 differs** — `src/common/fips202.h`:
+
+```diff
+--- upstream  src/common/fips202.h
++++ vendored  src/common/fips202.h
+@@ -6,7 +6,7 @@
+ #include <stddef.h>
+
+ int shake128(unsigned char *output, size_t outputByteLen, const unsigned char *input, size_t inputByteLen);
+-int shake256(unsigned char *output, size_t outputByteLen, const unsigned char *input, size_t inputByteLen);
++void shake256(unsigned char *output, size_t outputByteLen, const unsigned char *input, size_t inputByteLen);
+```
+
+**Why this is safe — it is a build-correctness fix, not a crypto change.** The header
+in upstream `4b7cd94…` *declares* `int shake256(...)`, but the *definition* in
+`fips202.c` is `void shake256(...)` — a stale forward declaration in upstream itself.
+Both trees define it as `void`:
+
+```
+$ grep -nE '^(void|int) *shake256\(' src/common/fips202.c        # vendored
+134:void shake256(uint8_t *output, size_t outlen, ...
+890:void shake256(uint8_t *output, size_t outlen, ...
+# identical in upstream 4b7cd94 at the same lines
+```
+
+Under Emscripten's `wasm-ld` the mismatched declaration/definition types are linked
+with only a warning (`function signature mismatch: shake256 … (…)->i32 … vs …->void`),
+and the resulting call-site type confusion **traps at runtime** (`RuntimeError:
+unreachable` inside `keygen`). It reproduces identically against *untouched* upstream
+built with the same toolchain, so it is upstream's latent bug, not something vendoring
+introduced. The fork corrects only the forward declaration to match the real
+implementation; **the function body is untouched — zero algorithm/behavior change.**
+
+The authoritative diff is committed next to the vendored source as
+[`mayo-cube/mayo-fork.diff`](./mayo-cube/mayo-fork.diff).
+
+Reproduce the whole-tree comparison yourself:
+
+```bash
+git clone https://github.com/PQCMayo/MAYO-C /tmp/mayo-up
+git -C /tmp/mayo-up checkout 4b7cd94c96b9522864efe40c6ad1fa269584a807
+diff -rq packages/identity/mayo-cube/src /tmp/mayo-up/src        # only fips202.h differs
+diff -rq packages/identity/mayo-cube/include /tmp/mayo-up/include # identical
+```
+
+---
+
 ## T2.1-b — reproducible build (status: **inputs pinned + functional equivalence proven;
 byte-identity NOT yet achieved — decision taken 2026-09-16, below**)
 

@@ -22,10 +22,14 @@ geometry behind `CubicCurveSource` (block coordinates, plane normals, the derive
 block) — **to reduce its computation requirements**. That is the `'mayo-cube'` scheme slot in
 `packages/identity/src/wasm-schemes.js`, which today still resolves to the baseline artifact
 ("seams now, MAYO math later").
-**What follows.** The shipped `mayo.wasm` (`e20b15f0…`) is not rotated; it stays the baseline
-`'mayo'` scheme until the adapted build lands. The byte-reproducibility requirement (T2.1-b)
-transfers to the adapted build, which pins its Emscripten version in its first commit, so "can you
-rebuild the bytes you ship?" is answered yes from day one. The adapted scheme is a new construction
+**What follows.** ~~The shipped `mayo.wasm` (`e20b15f0…`) is not rotated~~ — **superseded
+2026-09-17 on the operator's instruction to prove the rebuild.** It was rotated, because it could
+not be proved any other way: that artifact's toolchain was never recorded and is unreadable from
+the binary (`producers` stripped), so no rebuild could ever match it. The baseline `'mayo'` scheme
+now serves the canonical container build (`emscripten/emsdk:6.0.9` on linux/amd64, wasm
+`68626475…`, cjs `89a9728c…`), which reproduces byte-for-byte under one docker command with CI
+failing on any difference — T2.1-b is CLOSED. The adapted build inherits that, so "can you rebuild
+the bytes you ship?" is already answered yes, for the baseline as well as for the fork. The adapted scheme is a new construction
 and joins the cubic-curve ⛔ external review — it cannot become a mainnet signer on the existing
 MAYO review alone. Work item: **B9**.
 
@@ -355,10 +359,13 @@ unchanged). What §7 establishes, by measurement rather than assertion
   contract verifies in that call shares it. Caching the module, and the expanded public key per
   signer, bounds a repeat-signer verification at 1.294 ms → 0.088 ms with no new construction and no
   external review.
-- **Part (2) is blocked on provenance anyway.** `emcc` here self-reports `4.0.24-git` (a snapshot,
-  not a pinnable release) while the package manager says 5.0.0, and `--check` already reports DIFF
-  against the shipped artifact (documented T2.1-b). A second artifact needs a pinned emsdk commit,
-  a recorded sha *per scheme*, and a `--check` that knows which scheme it is checking.
+- **Part (2) is no longer blocked on provenance.** It was: `emcc` on this box self-reports
+  `4.0.24-git`, a snapshot with no pinnable release, and `--check` reported DIFF against the shipped
+  artifact. Fixed 2026-09-17 — the build is pinned to `emscripten/emsdk:6.0.9` on linux/amd64 (the
+  HOST is part of the pin: at one emsdk release, macOS/arm64, ubuntu/x64 and the image each emit a
+  different wasm), the committed artifact was rotated onto the image's output, and CI re-derives it
+  on every push. What part (2) still needs is the small part: a recorded digest *per scheme* and a
+  `--check` that knows which scheme it is checking.
 
 **The decision the operator owns:** whether MAYO-cube proceeds into external review as a new
 construction (7.2.2, the only route to real CPU savings, carrying M2/M3), or whether A1's goal —
