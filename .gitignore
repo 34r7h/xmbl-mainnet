@@ -33,3 +33,6 @@ release-artifacts/
 coverage/
 *.log
 .npmrc
+
+# V8 coverage output — the raw input to scripts/coverage-report.mjs, regenerated on every measured run
+.coverage/
