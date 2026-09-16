@@ -692,9 +692,10 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
       would assert that 144,495 bytes of GF(16) public-matrix entries generated from public, low-entropy,
       signer-influenceable coordinates stay indistinguishable from uniform (open assumptions M2/M3, §6).
       Two assumption-free wins were measured on the way: `signer.js` loads a FRESH WASM module inside both
-      `sign()` and `verify()` (load 1.270 ms vs 0.725 ms of actual verification — **44% of every public
-      verify is module instantiation**), and an already-expanded public key makes a repeat verify 7.0×
-      cheaper. The ratio instrument is `packages/identity/bench-mayo-schemes.mjs` (baseline 1.00×, both
+      `sign()` and `verify()` (load 1.270 ms vs 0.725 ms of actual verification — **44% of every
+      `signer.js` verify is module instantiation**; the ContractHost crypto ABI does NOT pay this, it
+      loads once per `host.call` in its `init` hook), and an already-expanded public key makes a repeat
+      verify 7.0× cheaper. The ratio instrument is `packages/identity/bench-mayo-schemes.mjs` (baseline 1.00×, both
       tags on one artifact). Build side is separately unready: `emcc` here self-reports `4.0.24-git`, a
       snapshot rather than a pinnable release, and `--check` has one recorded sha for one artifact with no
       notion of which scheme it is checking (§7.6).

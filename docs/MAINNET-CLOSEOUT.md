@@ -224,9 +224,12 @@ unchanged). What §7 establishes, by measurement rather than assertion
 - **A bigger, assumption-free number was found while measuring.** `signer.js` calls
   `MAYOWasm.load()` inside both `sign()` and `verify()` — a fresh WASM module per call. Measured:
   load 1.270 ms, `verifySync` on a loaded module 0.725 ms, public `verify()` 1.294 ms. **44% of
-  every public verification is module instantiation**; the exported API costs **1.8×** the
-  verification it performs. Caching the module, and the expanded public key per signer, bounds a
-  repeat-signer verification at 1.294 ms → 0.088 ms with no new construction and no external review.
+  every `signer.js` verification is module instantiation**; that exported API costs **1.8×** the
+  verification it performs. It is the identity API's lifecycle, NOT the on-chain path — the
+  ContractHost crypto ABI loads one module per `host.call` in its `init` hook and every signature a
+  contract verifies in that call shares it. Caching the module, and the expanded public key per
+  signer, bounds a repeat-signer verification at 1.294 ms → 0.088 ms with no new construction and no
+  external review.
 - **Part (2) is blocked on provenance anyway.** `emcc` here self-reports `4.0.24-git` (a snapshot,
   not a pinnable release) while the package manager says 5.0.0, and `--check` already reports DIFF
   against the shipped artifact (documented T2.1-b). A second artifact needs a pinned emsdk commit,

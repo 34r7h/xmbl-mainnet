@@ -566,11 +566,20 @@ choices:
 **(a) Stop re-deriving what does not change.** Two layers of this, both measured:
 
 *The WASM module itself.* `MAYOWasm.load()` instantiates a fresh module — its own doc says
-"a fresh module per call" — and `signer.js` calls it inside **both** `sign()` and `verify()`.
-Measured: `MAYOWasm.load()` 1.270 ms; `verifySync` on an already-loaded module 0.725 ms; the
-public `verify()` 1.294 ms. So **44% of every public verification is module instantiation**,
-and the exported API costs **1.8×** the verification it performs. This is a lifecycle choice,
-not a cryptographic one, and it is the largest single number in this section.
+"a fresh module per call" — and `signer.js` calls it inside **both** `sign()` (`src/signer.js:81`)
+and `verify()` (`:104`). Measured: `MAYOWasm.load()` 1.270 ms; `verifySync` on an already-loaded
+module 0.725 ms; the public `verify()` 1.294 ms. So **44% of every `signer.js` verification is
+module instantiation**, and that exported API costs **1.8×** the verification it performs. This is
+a lifecycle choice, not a cryptographic one, and it is the largest single number in this section.
+
+*Which callers actually pay it.* `signer.js`'s `sign`/`verify` pay it on every call. The on-chain
+path does **not**: `HOST_ABI_CRYPTO_INIT_SOURCE` (`packages/contracts/src/xcl/abi.js:234`) loads
+one module in the host's async `init` hook and binds `verifySync` against it, and `contract-host.js`
+composes that hook into a single `init` that runs **once per guest instantiation** — i.e. once per
+`host.call`, and only when the guest declared `env.xmbl_mayo_verify`. Every signature a contract
+verifies inside one call shares that one load. So this finding is a fix to the identity API's
+lifecycle, not to the ContractHost crypto ABI, which is already correct at the call site that
+carries fleet traffic.
 
 *The expanded public key.* Of the verification itself, 0.524 ms of 0.612 ms is re-deriving a
 value that depends only on the signer's `seed_pk`. A verifier that keeps the expanded key

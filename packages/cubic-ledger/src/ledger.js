@@ -281,8 +281,12 @@ export class Ledger extends EventEmitter {
       }
     }
     
-    // EVICTED MEANS EVICTED. Checked before anything else so a tx this node has already rejected costs one
-    // set lookup and touches neither the validator nor the disk.
+    // EVICTED MEANS EVICTED. Checked before anything else so a tx this node has already rejected by its own
+    // identity — content key or xid — costs one set lookup and touches neither the validator nor the disk.
+    // A FORGERY IS DELIBERATELY NOT IN THIS SET under any key it can present: it is evicted under
+    // `forged:<sha256 of its own bytes>` (see _forgedKey), which by construction cannot be recognised without
+    // hashing the body. So a resubmitted forgery is refused by the VALIDATOR, one stage later, not here —
+    // that is the price of never letting a forgery hold a key that belongs to the datum it impersonates.
     const ckey = contentKey(tx);
     const xkey = tx && typeof tx.xid === 'string' ? `xid:${tx.xid}` : null;
     if ((ckey && this._evicted.has(ckey)) || (xkey && this._evicted.has(xkey))) return { pooled: this._membershipPool.length, sealedFaces: 0, evicted: true };

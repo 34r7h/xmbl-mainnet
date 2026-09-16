@@ -30,11 +30,14 @@ async function measure(scheme) {
   t = process.hrtime.bigint();     for (let i = 0; i < N; i++) await m.sign(MSG, kp.privateKey);      const sign = ms(t) / N;
   t = process.hrtime.bigint();     for (let i = 0; i < N; i++) m.verifySync(MSG, sig, kp.publicKey);  const verify = ms(t) / N;
 
-  // The wrapper hands back base64, so these are WIRE bytes, not the raw MAYO_1 sizes (cpk 1420, csk 24,
-  // sig 454). Both are reported: the ratio is what matters and base64 does not change it.
-  const raw = (x) => Math.floor((typeof x === 'string' ? x.length : x.length) * 3 / 4);
-  return { scheme, keygen, sign, verify, pkBytes: kp.publicKey.length, skBytes: kp.privateKey.length,
-           sigBytes: sig.length, pkRaw: raw(kp.publicKey), sigRaw: raw(sig) };
+  // The wrapper hands back base64, so `.length` is WIRE characters, not the raw MAYO_1 sizes (cpk 1420,
+  // csk 24, sig 454). Both are reported: the ratio is what matters and the encoding does not change it.
+  // DECODE rather than scaling by 3/4 — that overshoots by the padding count (1422/456 instead of
+  // 1420/454), and the raw sizes are the figure the spec cites.
+  const raw = (x) => (typeof x === 'string' ? Buffer.from(x, 'base64').length : x.length);
+  return { scheme, keygen, sign, verify,
+           pkB64: kp.publicKey.length, skB64: kp.privateKey.length, sigB64: sig.length,
+           pkBytes: raw(kp.publicKey), skBytes: raw(kp.privateKey), sigBytes: raw(sig) };
 }
 
 const pad = (s, w) => String(s).padStart(w);
@@ -57,8 +60,8 @@ if (base && cube) {
   console.log(`\nTHE DELIVERABLE — 'mayo-cube' / 'mayo' (lower is better):`);
   console.log(`  sign    ${f3(cube.sign / base.sign)}×`);
   console.log(`  verify  ${f3(cube.verify / base.verify)}×`);
-  console.log(`  pk      ${f3(cube.pkBytes / base.pkBytes)}×   (${cube.pkBytes} vs ${base.pkBytes} base64 bytes; ~${cube.pkRaw} vs ~${base.pkRaw} raw)`);
-  console.log(`  sig     ${f3(cube.sigBytes / base.sigBytes)}×   (${cube.sigBytes} vs ${base.sigBytes} base64 bytes; ~${cube.sigRaw} vs ~${base.sigRaw} raw)`);
+  console.log(`  pk      ${f3(cube.pkBytes / base.pkBytes)}×   (${cube.pkBytes} vs ${base.pkBytes} bytes; ${cube.pkB64} vs ${base.pkB64} base64 chars)`);
+  console.log(`  sig     ${f3(cube.sigBytes / base.sigBytes)}×   (${cube.sigBytes} vs ${base.sigBytes} bytes; ${cube.sigB64} vs ${base.sigB64} base64 chars)`);
   const same = cube.pkBytes === base.pkBytes && cube.sigBytes === base.sigBytes;
   if (same) console.log(`\n  NOTE: both tags resolve to the SAME artifact today (wasm-schemes.js), so a ratio near 1.00 is\n        measurement noise, not a result. This is the baseline the adapted build has to beat.`);
 }
