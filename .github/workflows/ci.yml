@@ -50,14 +50,23 @@ jobs:
         continue-on-error: true
 
   wasm:
-    name: MAYO WASM artifact builds
+    name: MAYO WASM artifact reproduces byte-for-byte
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # THE PIN. emcc codegen is version-specific, so the version is the gate: this must stay
+      # equal to EMSDK_PIN in packages/identity/build-mayo-cube-wasm.sh. Bumping it WILL change
+      # the digest — that is a deliberate re-pin (rebuild, re-record, explain in MAYO-PROVENANCE.md),
+      # never a silent edit.
       - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.9
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Build MAYO-cube WASM
-        working-directory: packages/identity
-        run: npm run build:wasm --if-present
+      # HARD GATE (T2.1-b). Rebuilds the signing artifact from the vendored C on a DIFFERENT host
+      # and operating system than the one that committed it, and fails unless the bytes match the
+      # committed mayo.wasm/mayo.cjs and the digests recorded in the script. An auditor reviewing
+      # the C can run the same two commands and get the same binary.
+      - name: Rebuild MAYO-cube WASM and compare byte-for-byte
+        run: bash packages/identity/build-mayo-cube-wasm.sh --check

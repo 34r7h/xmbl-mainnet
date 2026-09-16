@@ -17,12 +17,22 @@
 # artifact, so a casual "does it still build" must never silently overwrite them. Rotating the binary is
 # an explicit --install (or OUT=mayo-cube/) — see MAYO-PROVENANCE.md (T2.1-b) for the operator decision.
 #
-# Reproducibility note: emcc codegen is toolchain-version-specific, so byte-identity requires the SAME
-# emsdk version that produced the shipped artifact (its version is NOT recoverable — the wasm `producers`
-# section is stripped). This script pins the build INPUTS (sources, defines, flags, exports); pin the emsdk
-# version in CI to pin the OUTPUT. The reproducibility gate verifies the rebuilt artifact (a) matches the
-# recorded sha256 under the pinned toolchain, and always (b) passes the identity suite — functional
-# equivalence — so a toolchain bump is caught as a sha change, reviewed, and re-pinned.
+# Reproducibility: emcc codegen is toolchain-version-specific, so byte-identity needs the toolchain PINNED
+# as well as the inputs. Both are pinned here now — EMSDK_PIN below, and the sources/defines/flags/exports
+# in this file — and the committed artifact was rebuilt under that pin on 2026-09-17, replacing the one
+# whose emsdk version was never recorded and is not recoverable (the wasm `producers` section is stripped).
+#
+#   RECORDED, under emsdk 6.0.9 (release 4e4223852a0835923411059a3929907d7df1232e):
+#     mayo.wasm c972bba439427918b63d9308f368f3f530cf929845b6bae2a586765c5b715393
+#     mayo.cjs  27634e618002c35e6d71bb144f1e0916a11cca313dee83aeadead96497ba0c45
+#
+# `--check` rebuilds and compares against BOTH the committed files and those recorded digests, so editing
+# the artifact and the record together still fails. Install the pin with:
+#   git clone https://github.com/emscripten-core/emsdk && cd emsdk && ./emsdk install 6.0.9 \
+#     && ./emsdk activate 6.0.9 && source ./emsdk_env.sh
+# A DIFF under the pinned version is a REAL failure (inputs changed). A DIFF under any other version is
+# only evidence that emcc codegen moved: re-pin deliberately, re-record both digests, and say so in
+# MAYO-PROVENANCE.md — never just overwrite the numbers.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,8 +48,19 @@ esac
 OUT="${OUT:-$(mktemp -d "${TMPDIR:-/tmp}/mayo-build.XXXXXX")}"
 mkdir -p "$OUT"
 
+# THE TOOLCHAIN PIN. Byte-identity is only claimed under this exact emsdk release.
+EMSDK_PIN="6.0.9"
+RECORDED_WASM_SHA="c972bba439427918b63d9308f368f3f530cf929845b6bae2a586765c5b715393"
+RECORDED_CJS_SHA="27634e618002c35e6d71bb144f1e0916a11cca313dee83aeadead96497ba0c45"
+
 command -v emcc >/dev/null 2>&1 || { echo "ERROR: emcc (Emscripten) not on PATH" >&2; exit 1; }
-echo "emcc: $(emcc --version | head -1)"
+EMCC_LINE="$(emcc --version | head -1)"
+EMCC_VER="$(printf '%s' "$EMCC_LINE" | sed -n 's/.*replacement + linker emulating GNU ld) \([^ ]*\).*/\1/p')"
+echo "emcc: $EMCC_LINE"
+echo "pin:  emsdk $EMSDK_PIN (this build reports '${EMCC_VER:-unknown}')"
+if [ "$EMCC_VER" != "$EMSDK_PIN" ]; then
+  echo "WARN: toolchain is NOT the pinned emsdk $EMSDK_PIN — the output is not expected to be byte-identical." >&2
+fi
 echo "out:  $OUT"
 
 # MAYO_1 opt (portable) source set — NO AVX2/NEON (WASM target), NO CTR-DRBG (system randombytes uses the
@@ -88,15 +109,22 @@ echo "built: $OUT/mayo.cjs $OUT/mayo.wasm"
 if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$OUT/mayo.wasm" "$OUT/mayo.cjs"; fi
 
 if [ "$MODE" = "check" ]; then
-  echo "--- reproducibility check vs committed artifact ---"
+  echo "--- reproducibility check vs committed artifact AND recorded digest ---"
   rc=0
   for f in mayo.wasm mayo.cjs; do
+    case "$f" in mayo.wasm) rec="$RECORDED_WASM_SHA" ;; *) rec="$RECORDED_CJS_SHA" ;; esac
     got="$(shasum -a 256 "$OUT/$f" | awk '{print $1}')"
     want="$(shasum -a 256 "$SRC/$f" | awk '{print $1}')"
-    if [ "$got" = "$want" ]; then echo "OK    $f  $got";
-    else echo "DIFF  $f  rebuilt=$got  committed=$want"; rc=1; fi
+    if [ "$got" = "$want" ] && [ "$got" = "$rec" ]; then echo "OK    $f  $got"
+    elif [ "$got" != "$want" ]; then echo "DIFF  $f  rebuilt=$got  committed=$want"; rc=1
+    else echo "DIFF  $f  rebuilt=$got  committed=$want  BUT recorded=$rec — the committed artifact and the record disagree"; rc=1; fi
   done
-  [ $rc -eq 0 ] && echo "byte-identical to the committed artifact" \
-                || echo "NOT byte-identical (expected under a drifted emsdk — see MAYO-PROVENANCE.md T2.1-b; functional equivalence is checked by the identity suite)"
+  if [ $rc -eq 0 ]; then
+    echo "byte-identical to the committed artifact and to the recorded digest (emsdk $EMSDK_PIN)"
+  elif [ "$EMCC_VER" != "$EMSDK_PIN" ]; then
+    echo "NOT byte-identical, and this is NOT the pinned toolchain (have '${EMCC_VER:-unknown}', need emsdk $EMSDK_PIN) — install the pin before reading anything into this."
+  else
+    echo "NOT byte-identical UNDER THE PINNED TOOLCHAIN — the build inputs changed. This is a real failure: find the change, do not re-record the digest to make it pass."
+  fi
   exit $rc
 fi
