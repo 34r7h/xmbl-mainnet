@@ -12,11 +12,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Level } from 'level';
-import { Ledger, Block, contentKey } from '../index.js';
+import { Ledger, Block, contentKey, micromineTx } from '../index.js';
 
 const digest = (label) => createHash('sha256').update(label).digest('hex');
-const ANCHOR_A = { type: 'anchor', event: 'task.created', hash: digest('a'), ts: '2026-07-08T22:54:11.727Z' };
-const ANCHOR_B = { type: 'anchor', event: 'task.verified', hash: digest('b'), ts: '2026-07-09T10:00:00.000Z' };
+// typed, as every tx is (2026-09-16): the xid is the type-7 pointer identity the broker mines
+const ANCHOR_A = micromineTx({ type: 'anchor', event: 'task.created', hash: digest('a'), ts: '2026-07-08T22:54:11.727Z' });
+const ANCHOR_B = micromineTx({ type: 'anchor', event: 'task.verified', hash: digest('b'), ts: '2026-07-09T10:00:00.000Z' });
 // what a relaying node used to bake into the id
 const wrap = (tx, i) => ({ ...tx, from: `xmb${i}`, sig: `SIG${i}`, validationTimestamp: `17894709711160000${i}`, id: `submitter-${i}` });
 // the PRE-content-id derivation: sha256 of the whole serialized tx, first 16 hex
@@ -31,52 +32,63 @@ const rowsOf = async (db) => {
 const boot = async (dir) => { const led = new Ledger({ dbPath: dir }); await led.ready(); return led; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test('envelope-keyed rows are re-keyed to content ids on the next boot, once', async () => {
+test('envelope-keyed rows are re-keyed to content ids on the next boot, once — and untyped rows are deleted', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'xclt-rekey-'));
   try {
     // Seed a store the way a pre-content-id node left it: anchor A under THREE envelope ids, anchor B under one,
-    // and an identity tx (no content address) that must be left exactly as found.
+    // a TYPED identity tx under an envelope id (re-keyed like any other content), and one UNTYPED anchor row —
+    // what every row written before the type rule looks like — which must be deleted, not evicted.
     const seed = new Level(dir, { valueEncoding: 'utf8' });
     await seed.open();
     const legacy = [wrap(ANCHOR_A, 1), wrap(ANCHOR_A, 2), wrap(ANCHOR_A, 3), wrap(ANCHOR_B, 1)];
     for (const tx of legacy) await seed.put(`block:${legacyId(tx)}`, legacyRow(tx));
-    const identityTx = { type: 'identity', publicKey: 'pk', signature: 'sg', timestamp: 1 };
+    const identityTx = micromineTx({ type: 'identity', publicKey: 'pk', signature: 'sg', timestamp: 1 });
     await seed.put(`block:${legacyId(identityTx)}`, legacyRow(identityTx));
-    await seed.put('pool:membership', JSON.stringify(legacy.map(legacyId)));
-    assert.strictEqual((await rowsOf(seed)).length, 5, 'seeded rows');
+    const untypedAnchor = { type: 'anchor', event: 'task.created', hash: digest('u'), ts: '2026-07-01T00:00:00.000Z', from: 'xmb9', sig: 'SIG9' };
+    await seed.put(`block:${legacyId(untypedAnchor)}`, legacyRow(untypedAnchor));
+    await seed.put('pool:membership', JSON.stringify([...legacy, identityTx, untypedAnchor].map(legacyId)));
+    assert.strictEqual((await rowsOf(seed)).length, 6, 'seeded rows');
     await seed.close();
 
-    // FIRST BOOT: converges.
-    let led = await boot(dir);
+    // FIRST BOOT: converges, and says what it deleted.
+    let led = new Ledger({ dbPath: dir });
+    let rehydrated = new Promise((r) => led.once('pools:rehydrated', r));
+    await led.ready();
+    let info = await rehydrated;
+    assert.strictEqual(info.untyped, 1, 'the untyped row is counted');
     let rows = await rowsOf(led.db);
-    const addressed = rows.filter((r) => contentKey(r.row.tx) !== null);
-    const unaddressed = rows.filter((r) => contentKey(r.row.tx) === null);
     assert.strictEqual(rows.length, 3, `expected 3 rows after boot (A, B, identity), got ${rows.length}`);
-    assert.strictEqual(addressed.length, 2, 'one row per anchor');
-    assert.strictEqual(unaddressed.length, 1, 'the identity row is left alone');
-    for (const r of addressed) {
+    assert.ok(rows.every((r) => contentKey(r.row.tx) !== null), 'every surviving row is content-addressed');
+    for (const r of rows) {
       assert.strictEqual(r.key, Block.fromTransaction(r.row.tx).id, `row ${r.key} is keyed by its content id`);
       assert.strictEqual(r.row.id, r.key, 'the stored block carries its content id');
     }
-    assert.deepStrictEqual(addressed.map((r) => contentKey(r.row.tx)).sort(), [contentKey(ANCHOR_A), contentKey(ANCHOR_B)].sort());
+    assert.deepStrictEqual(rows.map((r) => contentKey(r.row.tx)).sort(), [contentKey(ANCHOR_A), contentKey(ANCHOR_B), contentKey(identityTx)].sort());
+    assert.ok(!rows.some((r) => r.row.tx.hash === untypedAnchor.hash), 'the untyped anchor row is gone');
+    assert.ok(!led._evicted.has(contentKey(untypedAnchor)), 'deleted, NOT evicted — its typed successor is welcome');
     // the pool re-derived from the survivors, not the stale envelope ids
-    assert.strictEqual(led._membershipPool.length, 2, 'pool holds the two survivors');
+    assert.strictEqual(led._membershipPool.length, 3, 'pool holds the three survivors');
     assert.ok(led._membershipPool.every((b) => b.id === Block.fromTransaction(b.tx).id), 'pool ids are content ids');
     assert.ok(led._anchorKeys.has(contentKey(ANCHOR_A)) && led._anchorKeys.has(contentKey(ANCHOR_B)), 'dedup set rebuilt');
     // a re-submission of the collapsed anchor is a duplicate, not a fourth row
     const dup = await led.addTransaction(wrap(ANCHOR_A, 9));
     assert.strictEqual(dup.duplicate, true);
-    assert.strictEqual((await rowsOf(led.db)).length, 3, 'still 3 rows after a resubmission');
+    // the untyped anchor's TYPED successor is admitted (same event:hash, now with its identity)
+    const typedSuccessor = micromineTx({ type: 'anchor', event: untypedAnchor.event, hash: untypedAnchor.hash, ts: untypedAnchor.ts });
+    const adm = await led.addTransaction(typedSuccessor);
+    assert.ok(adm.id && !adm.evicted && !adm.duplicate, 'typed successor of a deleted untyped row is admitted');
+    assert.strictEqual((await rowsOf(led.db)).length, 4, '3 survivors + the typed successor');
     await led.db.close();
 
     // SECOND BOOT: nothing to do, and it says so.
     led = new Ledger({ dbPath: dir });
-    const rehydrated = new Promise((r) => led.once('pools:rehydrated', r));
+    rehydrated = new Promise((r) => led.once('pools:rehydrated', r));
     await led.ready();
-    const info = await rehydrated;
+    info = await rehydrated;
     assert.strictEqual(info.legacyKeyed, 0, 'no envelope-keyed rows remain');
+    assert.strictEqual(info.untyped, 0, 'no untyped rows remain');
     assert.strictEqual(info.rekey, null, 'compaction did not run');
-    assert.strictEqual((await rowsOf(led.db)).length, 3);
+    assert.strictEqual((await rowsOf(led.db)).length, 4);
     await led.db.close();
   } finally {
     await sleep(20);
@@ -90,7 +102,8 @@ test('a legacy row the current rule refuses is evicted during convergence, never
     const seed = new Level(dir, { valueEncoding: 'utf8' });
     await seed.open();
     // the fabricated anchor from the 2026-09-16 audit: a label where a digest belongs, signed and sealed anyway
-    const bad = wrap({ type: 'anchor', event: 'proof.mined', hash: 'proofofmined-1789450900844', ts: '2026-09-15T00:00:00.000Z' }, 1);
+    // (typed — micromining does not judge the hash; the SHAPE rule does, and it is what evicts a label-for-a-digest)
+    const bad = wrap(micromineTx({ type: 'anchor', event: 'proof.mined', hash: 'proofofmined-1789450900844', ts: '2026-09-15T00:00:00.000Z' }), 1);
     const good = wrap(ANCHOR_A, 1);
     await seed.put(`block:${legacyId(bad)}`, legacyRow(bad));
     await seed.put(`block:${legacyId(good)}`, legacyRow(good));

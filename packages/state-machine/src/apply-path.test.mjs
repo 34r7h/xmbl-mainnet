@@ -11,6 +11,7 @@
 //   node vendor/xmbl-node/state-machine/src/apply-path.test.mjs
 import { StateMachine } from './state-machine.js';
 import { Ledger } from '../../cubic-ledger/src/ledger.js';
+import { micromineTx } from '../../cubic-ledger/src/transaction-validator.js';
 import { createHash } from 'node:crypto';
 import { rm, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -27,9 +28,9 @@ const eq = (a, b, what) => { if (a !== b) throw new Error(`${what}: expected ${b
 // Nine anchor txs seal exactly one face under the hash-sorted partition (9 blocks per face). An anchor's
 // `hash` is a sha-256 digest by contract (cubic-ledger validateTransaction refuses anything else), so the
 // fixture mines a real digest per tag rather than a padded label.
-const anchors = (n, tag) => Array.from({ length: n }, (_, i) => ({
+const anchors = (n, tag) => Array.from({ length: n }, (_, i) => micromineTx({
   type: 'anchor', event: 'task.created', hash: createHash('sha256').update(`${tag}-${i}`).digest('hex'), ts: 1_700_000_000_000 + i,
-}));
+}));   // typed: every tx carries its xmbl type as a micromined xid
 
 const fresh = async () => {
   const dir = await mkdtemp(join(tmpdir(), 'xvsm-apply-'));

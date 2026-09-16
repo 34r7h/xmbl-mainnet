@@ -9,7 +9,7 @@
 import assert from 'node:assert';
 import { ComputeRuntime } from '@xmbl/storage-compute';
 import { VerkleStateTree, StateMachine } from '@xmbl/state-machine';
-import { Block } from '@xmbl/cubic-ledger';
+import { Block, micromineTx } from '@xmbl/cubic-ledger';
 import { ContractHost, InMemoryState, contractCoordinates, contractId, utxoKey, spendKey } from './index.js';
 import { compile } from '@xmbl/lng';
 import {
@@ -646,7 +646,7 @@ await check('utxo: two independent hosts fed the same transfer converge to one r
 await check('utxo: a contract spends a LEDGER-PRODUCED key (real Block + StateMachine derivation)', async () => {
   // The key is not fabricated: Block.fromTransaction content-addresses the utxo tx (id = its hash),
   // and StateMachine._stateChangesFor is the real mapping a node runs to place it in the Verkle tree.
-  const utxoTx = { type: 'utxo', from: 'alice', to: 'bob', amount: 100, timestamp: 1 };
+  const utxoTx = micromineTx({ type: 'utxo', from: 'alice', to: 'bob', amount: 100, timestamp: 1 });   // typed by its xid
   const block = Block.fromTransaction(utxoTx);
   const changes = StateMachine.prototype._stateChangesFor.call(null, block);
   const key = Object.keys(changes)[0];

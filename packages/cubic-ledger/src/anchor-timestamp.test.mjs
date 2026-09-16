@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { anchorTimestampNanos, blockTimestampNanos, Ledger } from '../index.js';
+import { anchorTimestampNanos, blockTimestampNanos, Ledger, micromineTx } from '../index.js';
 
 // The broker's canonical feed sends `ts` as an ISO string. Number("2026-07-08T22:54:11.727Z") is NaN,
 // and the old line `BigInt(Math.max(0, Math.floor(Number(a.ts) || 0)))` turned that into 0n — measured
@@ -35,11 +35,12 @@ test('rebuildFromAnchors pins every rebuilt block to the anchor time, not to 0',
   try {
     const led = new Ledger({ dbPath: dir });
     if (typeof led.ready === 'function') await led.ready();
+    // typed canonical rows, as the feed must carry them: {xid, nonce, prior} mined per anchor
     const anchors = [
       { event: 'task.created',        hash: 'a'.repeat(64), ts: '2026-07-08T22:54:11.727Z' },
       { event: 'value.transfer',      hash: 'b'.repeat(64), ts: '2026-08-01T00:00:00.000Z' },
       { event: 'settlement.executed', hash: 'c'.repeat(64), ts: '2026-09-16T03:10:32.424Z' }
-    ];
+    ].map((a) => { const t = micromineTx({ type: 'anchor', ...a }); return { ...a, xid: t.xid, nonce: t.nonce, prior: t.prior }; });
     await led.rebuildFromAnchors(anchors);
     const got = [...led.blocks.values()].filter(b => b.tx?.type === 'anchor');
     assert.strictEqual(got.length, 3);
@@ -84,7 +85,8 @@ test('a rebuild does not re-time the blocks it rescues', async () => {
       { id: 'deadbeefdeadbeef', tx, hash: 'd'.repeat(64), digitalRoot: 0, location: null }));
 
     const before = Date.now();
-    await led.rebuildFromAnchors([{ event: 'task.created', hash: 'a'.repeat(64), ts: '2026-07-08T22:54:11.727Z' }]);
+    const one = micromineTx({ type: 'anchor', event: 'task.created', hash: 'a'.repeat(64), ts: '2026-07-08T22:54:11.727Z' });
+    await led.rebuildFromAnchors([{ event: one.event, hash: one.hash, ts: one.ts, xid: one.xid, nonce: one.nonce, prior: one.prior }]);
     const b = led.blocks.get('deadbeefdeadbeef');
     assert.ok(b, 'the value tx was not preserved');
     assert.strictEqual(b.timestamp, 1789470971116000000n);

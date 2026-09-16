@@ -20,6 +20,9 @@
 // local path, a synced block whose submitter key does not resolve is REJECTED. Failing open is defensible for
 // locally-submitted txs; for remote input it is indefensible.
 import { createHash } from 'crypto';
+import { consensusBody } from './block.js';
+import { validateXid } from './transaction-validator.js';
+import { verifyPlacement } from './deterministic-placement.js';
 
 export const TOPIC_DIGEST = 'sync:digest';
 export const TOPIC_LIST = 'sync:list';
@@ -41,10 +44,12 @@ export function setDigest(cubes) {
   return createHash('sha256').update(rows.join('|')).digest('hex');
 }
 
-// Canonical tx hash — must match Block.fromTransaction, which is BigInt-safe.
+// Canonical tx hash — must match Block.fromTransaction: sha256 of the consensus body, which is the tx's xid
+// (content-only, envelope-free — the reason two nodes holding the same typed set seal the same cubes). A tx with
+// no xid has no hash at all, so an untyped block can never verify.
 function txHash(tx) {
-  const s = JSON.stringify(tx, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
-  return createHash('sha256').update(s).digest('hex');
+  const body = consensusBody(tx);
+  return body === null ? null : createHash('sha256').update(body).digest('hex');
 }
 
 /**
@@ -65,12 +70,21 @@ export function verifyCube(payload, expectedId, opts = {}) {
       if (!b || typeof b.hash !== 'string' || !/^[0-9a-f]{64}$/.test(b.hash)) return R('bad block hash');
       if (!b.tx || typeof b.tx !== 'object') return R('block has no tx');
       if (txHash(b.tx) !== b.hash) return R(`block hash does not match its tx (${b.hash.slice(0, 12)})`);
+      // STAGE 2, unconditionally: the hash is content-only (sha256 of the xid), so the xid — which micromines the
+      // body — is what binds the body to the hash. A member whose body was tampered, or whose xid carries the
+      // wrong type, is refused here whatever the caller passed in opts.
+      try { validateXid(b.tx); } catch (e) { return R(`member tx failed its xid (${b.hash.slice(0, 12)}): ${e.message}`); }
       hashes.push(b.hash);
     }
     const root = faceRootOf(hashes);
     if (typeof face.merkleRoot === 'string' && face.merkleRoot !== root) return R('face merkleRoot mismatch');
     roots.push(root);
   }
+
+  // STAGE 3 (operator, 2026-09-16): the geometric placement is re-derived from content and compared with any
+  // claim the payload carries — after the hashes (stage 2's content identity) and before adoption.
+  const placed = verifyPlacement({ faces });
+  if (!placed.ok) return R(`placement: ${placed.reason}`);
 
   const id = cubeIdOf(roots);
   if (expectedId && id !== expectedId) return R(`cube id mismatch: computed ${id}, asked for ${expectedId}`);

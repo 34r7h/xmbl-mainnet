@@ -196,3 +196,49 @@ export function placeLevel(containers, opts = {}) {
   const { cubes, pending: pendingFaces } = placeCubes(faces, { ...opts, level });
   return { cubes, faces, pendingMembers, pendingFaces, level };
 }
+
+// ---- STAGE 3 OF CONSENSUS VALIDATION: THE GEOMETRIC PLACEMENT (operator, 2026-09-16) --------------------
+// Consensus validates in this order: 1. can the tx happen (shape), 2. is the xid correct, 3. is the placement
+// right. Placement is a pure function of content: a block's position is its rank in the hash order of its face's
+// nine, and a face's index in its cube is the rank of its merkle root among the cube's three (the rule
+// cube-sync's planAdoption and the Face/Cube sealing apply). So a validator RE-DERIVES both from the payload
+// and refuses a face or cube whose claimed placement differs. Claims are read from `block.position`,
+// `block.location.{position,faceIndex}` and `face.faceIndex`; a payload that claims nothing is checked for
+// internal consistency only (9 distinct hashes per face, 3 distinct roots per cube).
+export function verifyPlacement(payload) {
+  const R = (reason) => ({ ok: false, reason });
+  if (!payload || typeof payload !== 'object') return R('no payload');
+  const faces = Array.isArray(payload.faces) ? payload.faces : (Array.isArray(payload.blocks) || Array.isArray(payload.members)) ? [payload] : null;
+  if (!faces || faces.length === 0) return R('no faces');
+  if (faces.length !== 1 && faces.length !== CUBE_SLOTS) return R(`a cube has ${CUBE_SLOTS} faces, got ${faces.length}`);
+  const derived = [];
+  for (const [fi, face] of faces.entries()) {
+    const blocks = Array.isArray(face.blocks) ? face.blocks
+      : Array.isArray(face.members) ? face.members.map((m) => ({ ...(m.member || {}), position: m.position })) : null;
+    if (!blocks || blocks.length !== FACE_SIZE) return R(`face ${fi} is not ${FACE_SIZE} blocks`);
+    const keys = blocks.map((b) => (b && typeof b.hash === 'string' ? b.hash : b && typeof b.id === 'string' ? b.id : null));
+    if (keys.some((k) => k === null)) return R(`face ${fi}: a block has no hash`);
+    if (new Set(keys).size !== FACE_SIZE) return R(`face ${fi}: duplicate block`);
+    const order = [...keys].sort();
+    const positions = [];
+    for (const [bi, b] of blocks.entries()) {
+      const rank = order.indexOf(keys[bi]);
+      const claimed = b.position !== undefined ? b.position : b.location && b.location.position !== undefined ? b.location.position : undefined;
+      if (claimed !== undefined && Number(claimed) !== rank) return R(`face ${fi}: block ${keys[bi].slice(0, 12)} claims position ${claimed}, its hash ranks ${rank}`);
+      positions.push(rank);
+    }
+    derived.push({ root: faceRootOf(keys), positions, claimedIndex: face.faceIndex !== undefined ? face.faceIndex : face.index !== undefined && faces.length === CUBE_SLOTS ? face.index : undefined,
+                   blockFaceClaims: blocks.map((b) => (b.location && b.location.faceIndex !== undefined ? b.location.faceIndex : undefined)) });
+  }
+  if (faces.length === CUBE_SLOTS) {
+    const roots = derived.map((d) => d.root);
+    if (new Set(roots).size !== CUBE_SLOTS) return R('duplicate face in cube');
+    const rank = new Map([...roots].sort().map((r, i) => [r, i]));
+    for (const [fi, d] of derived.entries()) {
+      d.faceIndex = rank.get(d.root);
+      if (d.claimedIndex !== undefined && Number(d.claimedIndex) !== d.faceIndex) return R(`face ${fi} claims index ${d.claimedIndex}, its root ranks ${d.faceIndex}`);
+      for (const c of d.blockFaceClaims) if (c !== undefined && Number(c) !== d.faceIndex) return R(`face ${fi}: a block claims faceIndex ${c}, the face ranks ${d.faceIndex}`);
+    }
+  }
+  return { ok: true, faces: derived.map((d) => ({ root: d.root, faceIndex: d.faceIndex, positions: d.positions })) };
+}

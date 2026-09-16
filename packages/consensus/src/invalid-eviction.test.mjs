@@ -8,12 +8,13 @@
 import { ConsensusWorkflow } from './workflow.js';
 import assert from 'node:assert';
 import { createHash } from 'node:crypto';
+import { micromineTx } from '@xmbl/cubic-ledger';
 
 let pass = 0, fail = 0;
 const check = async (n, f) => { try { await f(); console.log(`  ok   ${n}`); pass++; } catch (e) { console.log(`  FAIL ${n}\n       ${e.message}`); fail++; } };
 const mk = () => new ConsensusWorkflow({});
 const digest = (label) => createHash('sha256').update(String(label)).digest('hex');   // an anchor hash is a sha-256 digest by contract
-const SIGNED = { type: 'anchor', event: 'e', hash: digest('h'), from: 'xmbStale', sig: 'SIG' };
+const SIGNED = { ...micromineTx({ type: 'anchor', event: 'e', hash: digest('h'), ts: 1 }), from: 'xmbStale', sig: 'SIG' };   // typed, as every tx is
 
 console.log('\n1. predicate is fork-safe — false whenever invalidity cannot be PROVEN');
 await check('unsigned tx -> false (presence guard handles it, not this)', async () => {

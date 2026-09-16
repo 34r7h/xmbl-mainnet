@@ -20,7 +20,7 @@
 import assert from 'node:assert';
 import { ComputeRuntime } from '@xmbl/storage-compute';
 import { StateMachine } from '@xmbl/state-machine';
-import { Ledger } from '@xmbl/cubic-ledger';
+import { Ledger, micromineTx } from '@xmbl/cubic-ledger';
 import { ContractHost, utxoKey, spendKey } from './index.js';
 import { TRANSFER, RECIP } from './utxo-fixtures.mjs';
 import { rm, mkdtemp } from 'node:fs/promises';
@@ -36,9 +36,9 @@ const ZERO = '0'.repeat(64);
 
 // Nine utxo txs seal exactly one face (9 blocks/face). The SET is identical on every node; the
 // timestamps are fixed so the content-addressed ids (and thus the sealed set) are identical too.
-const UTXO_SET = Array.from({ length: 9 }, (_, i) => ({
+const UTXO_SET = Array.from({ length: 9 }, (_, i) => micromineTx({
   type: 'utxo', from: `payer${i}`, to: `payee${i}`, amount: 100 + i, timestamp: 1_700_000_000_000 + i,
-}));
+}));   // typed: every tx carries its xmbl type as a micromined xid
 
 const bootNode = async (label) => {
   const dir = await mkdtemp(join(tmpdir(), `xmbl-node-${label}-`));

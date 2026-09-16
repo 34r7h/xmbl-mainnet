@@ -4,9 +4,10 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Ledger, Block, consensusBody, contentKey } from '../index.js';
+import { Ledger, Block, consensusBody, contentKey, micromineTx } from '../index.js';
 
-const ANCHOR = { type: 'anchor', event: 'task.created', hash: 'a'.repeat(64), ts: '2026-07-08T22:54:11.727Z' };
+// typed, as every tx is: the xid is the type-7 pointer identity the broker mines
+const ANCHOR = micromineTx({ type: 'anchor', event: 'task.created', hash: 'a'.repeat(64), ts: '2026-07-08T22:54:11.727Z' });
 // what a node adds on the way past: relayer, signature, its own validator's clock, its submitter's id
 const ENVELOPED = { ...ANCHOR, from: 'xmbA', sig: 'SIG', validationTimestamp: '1789470971116000000',
                     id: 'whatever', agent: 'someagent', agent_xmbl_address: 'xmbZ' };
@@ -15,18 +16,26 @@ test('the same anchor has ONE id however it was wrapped, ordered or timed', () =
   const bare = Block.fromTransaction(ANCHOR).id;
   assert.strictEqual(Block.fromTransaction(ENVELOPED).id, bare);
   // key order and a numeric ts for the same instant must not change it either
-  const reordered = { hash: ANCHOR.hash, type: 'anchor', ts: Date.parse(ANCHOR.ts), event: ANCHOR.event };
+  const reordered = { hash: ANCHOR.hash, type: 'anchor', ts: Date.parse(ANCHOR.ts), event: ANCHOR.event, nonce: ANCHOR.nonce, xid: ANCHOR.xid, prior: ANCHOR.prior };
   assert.strictEqual(Block.fromTransaction(reordered).id, bare);
+  // and the id IS the xid's content id: every tx is typed by its xid
+  assert.ok(consensusBody(ANCHOR).includes('"xid":"' + ANCHOR.xid + '"') && consensusBody(ANCHOR).includes('"event":"task.created"'), 'an anchor body binds its xid AND its event/ts');
+  assert.ok(ANCHOR.xid.startsWith('07'), 'an anchor is a type-7 pointer');
 });
 
-test('block.hash is still the whole-tx hash — peers verify adopted cubes with it', () => {
-  const txHash = (tx) => createHash('sha256')
-    .update(JSON.stringify(tx, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))).digest('hex');
-  for (const tx of [ANCHOR, ENVELOPED]) {
-    assert.strictEqual(Block.fromTransaction(tx).hash, txHash(tx));
-  }
-  // and the envelope still changes the hash, which is exactly why it must not reach the id
-  assert.notStrictEqual(Block.fromTransaction(ANCHOR).hash, Block.fromTransaction(ENVELOPED).hash);
+test('block.hash is CONTENT-ONLY — the envelope no longer moves it, so every node seals the same cubes', () => {
+  const contentHash = (tx) => createHash('sha256').update(consensusBody(tx)).digest('hex');
+  for (const tx of [ANCHOR, ENVELOPED]) assert.strictEqual(Block.fromTransaction(tx).hash, contentHash(tx));
+  // the relayer, the signature, the validator clock and the submitter id used to change the hash and therefore
+  // the face a block sorted into; now two honest nodes holding the same typed set hash — and place — identically
+  assert.strictEqual(Block.fromTransaction(ANCHOR).hash, Block.fromTransaction(ENVELOPED).hash);
+  assert.strictEqual(Block.fromTransaction(ANCHOR).id, Block.fromTransaction(ANCHOR).hash.slice(0, 16));
+});
+
+test('an UNTYPED anchor has no identity and is refused (not evicted)', () => {
+  const { xid, nonce, prior, ...untyped } = ANCHOR;
+  assert.strictEqual(consensusBody(untyped), null);
+  assert.throws(() => Block.fromTransaction(untyped), (e) => e.code === 'UNTYPED');
 });
 
 test('a type-6 value tx is addressed by its mined xid, not by its envelope', () => {

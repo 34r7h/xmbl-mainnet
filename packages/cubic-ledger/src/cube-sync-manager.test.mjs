@@ -1,6 +1,8 @@
 // SyncManager wiring: two in-process nodes on a fake mesh must converge. Test 0 is the control — if they were
 // already identical, "converged" would prove nothing.
 import { createHash } from 'crypto';
+import { micromineTx } from './transaction-validator.js';
+import { consensusBody } from './block.js';
 import assert from 'assert';
 import { CubeSyncManager } from './cube-sync-manager.js';
 import { faceRootOf, cubeIdOf, cubeRootOf, setDigest } from './cube-sync.js';
@@ -8,7 +10,7 @@ import { EventEmitter } from 'events';
 
 let pass = 0, fail = 0;
 const check = async (n, f) => { try { await f(); console.log(`  ok   ${n}`); pass++; } catch (e) { console.log(`  FAIL ${n}\n       ${e.message}`); fail++; } };
-const txHash = (tx) => createHash('sha256').update(JSON.stringify(tx)).digest('hex');
+const txHash = (tx) => createHash('sha256').update(consensusBody(tx)).digest('hex');   // content-only: sha256 of the consensus body
 
 // A fake floodsub: publish delivers to every OTHER node subscribed to the topic.
 class Bus {
@@ -39,7 +41,7 @@ function seedCube(ledger, salt) {
   for (let f = 0; f < 3; f++) {
     const blocks = [];
     for (let i = 0; i < 9; i++) {
-      const tx = { type: 'anchor', event: 'e', hash: createHash('sha256').update(`h${salt}${f}${i}`).digest('hex'), from: 'xmbA', sig: 'S' };
+      const tx = { ...micromineTx({ type: 'anchor', event: 'e', hash: createHash('sha256').update(`h${salt}${f}${i}`).digest('hex'), ts: 1 }), from: 'xmbA', sig: 'S' };
       blocks.push({ hash: txHash(tx), tx });
     }
     faces.push({ root: faceRootOf(blocks.map(b => b.hash)), blocks });

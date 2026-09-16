@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { calculateDigitalRoot, calculateDigitalRootFromHash } from './digital-root.js';
-import { validateTransaction } from './transaction-validator.js';
+import { validateTransaction, XID_RE } from './transaction-validator.js';
 import { calculateAbsoluteCoords, calculateVector, calculateFractalAddress } from './geometry.js';
 import { anchorTimestampNanos } from './timestamps.js';
 
@@ -19,20 +19,20 @@ import { anchorTimestampNanos } from './timestamps.js';
 //
 // Returns null for a tx with no defined content address; such a block keeps the whole-tx hash as before.
 export function consensusBody(tx) {
+  // EVERY TRANSACTION IS TYPED BY ITS XID (transaction-validator.js): the xid is the mined content address of the
+  // type's canonical body, so it is the consensus body of every type. No xid, no identity — the validator has
+  // already refused it; here it simply has no body.
   if (!tx || typeof tx !== 'object') return null;
+  if (typeof tx.xid !== 'string' || !XID_RE.test(tx.xid)) return null;
   if (tx.type === 'anchor') {
-    // fixed key order, and `ts` normalised so an ISO string and the same instant as a number agree
-    return JSON.stringify({
-      type: 'anchor',
-      event: tx.event ?? null,
-      hash: tx.hash ?? null,
-      ts: anchorTimestampNanos(tx.ts).toString()
-    });
+    // The broker's type-7 pointer body commits to {prior, hash} only, while `event` and `ts` steer this chain's
+    // dedup key, state keys and placement time — so the CHAIN's content body binds them too, with a fixed key
+    // order and `ts` normalised (an ISO string and the same instant as a number agree). Still envelope-free:
+    // relayer, signature, validator clock and submitter id never enter it.
+    return JSON.stringify({ type: 'anchor', event: tx.event ?? null, hash: tx.hash ?? null, ts: anchorTimestampNanos(tx.ts).toString(), xid: tx.xid });
   }
-  // A type-6 value tx is already content-addressed: xid micromines the canonical body and
-  // validateTransaction has just verified it. Re-hashing the envelope around it would only undo that.
-  if (tx.type === 'tx' && typeof tx.xid === 'string' && tx.xid) return 'xid:' + tx.xid;
-  return null;
+  // Every other type's canonical body is fully covered by its xid (micromineBody), so the xid is the body.
+  return 'xid:' + tx.xid;
 }
 
 // The block id a consensus body addresses — spelled once, used by Block.fromTransaction and by the ledger's
@@ -43,8 +43,8 @@ export function contentIdOf(body) {
 
 // The dedup key for a transaction: what "the same tx" means on disk and in the pool.
 export function contentKey(tx) {
-  if (tx && tx.type === 'anchor' && tx.event && tx.hash) return `${tx.event}:${tx.hash}`;
-  if (tx && tx.type === 'tx' && tx.xid) return `xid:${tx.xid}`;
+  if (tx && tx.type === 'anchor' && tx.event && tx.hash) return `${tx.event}:${tx.hash}`;   // one anchor event:hash = one block, forever
+  if (tx && typeof tx.xid === 'string' && XID_RE.test(tx.xid)) return `xid:${tx.xid}`;      // every other typed tx: its xid IS its identity
   return null;
 }
 
@@ -97,14 +97,15 @@ export class Block {
     // Validate transaction type
     validateTransaction(tx);
 
-    // Serialize BigInt values before stringifying
-    const serialized = Block._serializeBigInts(tx);
-    const txStr = JSON.stringify(serialized);
-    const hash = createHash('sha256').update(txStr).digest('hex');
-    // The id addresses the CONSENSUS CONTENT, not the envelope the whole-tx hash covers (see
-    // consensusBody above). A tx with no defined content body keeps the old derivation.
+    // CONTENT-ONLY HASH (operator, 2026-09-16 — rolled out to every node with a canonical rebuild). The hash
+    // used to cover the whole envelope (relayer, signature, validator clock), so two honest nodes holding the
+    // identical typed set still sorted their nine-block faces differently and sealed different cubes. Now the
+    // hash is a pure function of the consensus body — the xid — and so is the id (its first 16 hex chars).
+    // cube-sync's verifyCube recomputes exactly this from a block's tx.
     const body = consensusBody(tx);
-    const id = body === null ? hash.substring(0, 16) : contentIdOf(body);
+    if (body === null) throw new Error(`untyped ${tx.type}: no consensus body`);   // unreachable after validateTransaction
+    const hash = createHash('sha256').update(body).digest('hex');
+    const id = hash.substring(0, 16);
     
     // Digital root is no longer used for placement (hash-based sorting instead)
     // Keep for backward compatibility only

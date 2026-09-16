@@ -2,7 +2,8 @@ import { Mempool } from './mempool.js';
 import { ValidationTaskManager } from './validation-tasks.js';
 import { EventEmitter } from 'events';
 import { createHash } from 'crypto';
-import { verifyMicromine, type6TxBody, validateTransaction } from '@xmbl/cubic-ledger';   // content-addressing: the ONLY admissible proof an unsigned type-6 carries; validateTransaction: the ledger's own shape rule, applied at the door
+import { verifyMicromine, type6TxBody } from '@xmbl/cubic-ledger';   // content-addressing: the ONLY admissible proof an unsigned type-6 carries
+import { validateForConsensus } from './validate.js';                 // THE ORDER: 1. can it happen  2. is the xid correct  3. (seal/adopt) placement
 
 export class ConsensusWorkflow extends EventEmitter {
   constructor(options = {}) {
@@ -159,29 +160,15 @@ export class ConsensusWorkflow extends EventEmitter {
     if (this._bannedSubmitters.has(submitterId)) return false;
     if (!txData || typeof txData !== 'object') return false;
 
-    // 1. UNSIGNED -> reject. No signature or no sender means nothing can ever validate it.
-    const signed = typeof txData.sig === 'string' && txData.sig.length > 0
-      && (typeof txData.from === 'string' ? txData.from.length > 0 : Array.isArray(txData.from) && txData.from.length > 0);
-    // NARROWED, not removed (9d80916e): an unsigned datum is still junk UNLESS it is a type-6 whose xid
-    // actually content-addresses its body. Everything else unsigned — anchors, utxos, identity txs, and a
-    // type-6 carrying no xid or a forged one — is refused exactly as before.
-    if (!signed && !this._isContentAddressedType6(txData)) {
-      console.warn(`ingress-guard: REJECT unsigned ${txData.type || 'tx'} from ${submitterId}`);
+    // THE ORDER OF VALIDATION (operator, 2026-09-16): 1. can this transaction happen (shape, authorization, value)
+    // 2. is its xid correct (every tx is typed by its micromined xid) — the first failing stage is the answer and
+    // is named in the refusal. 3., the geometric placement, is checked when a face/cube is sealed or adopted.
+    // ⚠ PRESENCE CHECK ONLY for the signature at this door, never cryptographic verification: an earlier verifying
+    // guard returned false for legitimate identities holding older SPKI-DER keys and blackholed valid anchors.
+    const v = validateForConsensus(txData);
+    if (!v.ok) {
+      console.warn(`ingress-guard: REJECT [${v.stage}] ${txData.type || 'tx'} from ${submitterId}: ${v.reason}`);
       return false;
-    }
-
-    // 1b. AN ANCHOR THE LEDGER WOULD REFUSE IS REFUSED HERE. cubic-ledger's validateTransaction is the one
-    // place the anchor shape rule lives (required fields + a 64-hex sha-256 `hash`); admitting an anchor that
-    // fails it only lets the pool carry a tx to finalization so the ledger can evict it there. Scoped to anchors:
-    // every other type is validated at its own stage (type-6 by content address above, signed types at
-    // completeValidation) and the guard must never re-grow into the verifying ingress that blackholed valid
-    // identities. Same rule, same function, applied at the door instead of after consensus paid for it.
-    if (txData.type === 'anchor') {
-      try { validateTransaction(txData); }
-      catch (e) {
-        console.warn(`ingress-guard: REJECT malformed anchor from ${submitterId}: ${e.message}`);
-        return false;
-      }
     }
 
     if (local) return true;                                                  // local submits are not a flood vector
@@ -809,9 +796,9 @@ export class ConsensusWorkflow extends EventEmitter {
     const processingTx = this.mempool.processingTx.get(validatedHash);
     if (!processingTx) return false;
     
-    // With hash-based sorting, placement is always valid
-    // Blocks are sorted by hash when face has 9 blocks
-    // Faces are sorted by hash when cube has 3 faces
+    // STAGE 3 (the geometric placement) is verified where a face or cube is sealed or adopted — the ledger's
+    // sealAgreedBlocks/_sealReadyFaces and cube-sync's verifyCube re-derive positions from the hash order and
+    // face indices from the root order (cubic-ledger verifyPlacement) and refuse any claim that differs.
     
     // Move to final tx_mempool
     // Keyed by validated hash (tx data + avg timestamp)

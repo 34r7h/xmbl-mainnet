@@ -46,7 +46,9 @@ export function createLedgerCommand(xclt) {
         }
         // Signed transactions from identity.signTransaction() return the full tx with sig;
         // the ledger answers with the block it pooled (id + hash) and the seal outcome.
-        const r = await ledger.addTransaction(tx);
+        // An untyped tx is refused by the ledger (every tx carries its xmbl type as a micromined xid), so the
+        // CLI mines it for the caller when it is not typed yet; a typed one is added exactly as given.
+        const r = await ledger.addTransaction(tx.xid ? tx : xclt.micromineTx(tx));
         out(JSON.stringify({ blockId: r.id ?? null, hash: r.hash ?? null, pooled: r.pooled, sealedFaces: r.sealedFaces, duplicate: !!r.duplicate, evicted: !!r.evicted }));
       } catch (error) {
         console.error('Error adding transaction:', error.message);

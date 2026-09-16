@@ -23,6 +23,7 @@
 import { ConsensusWorkflow } from './workflow.js';
 import assert from 'node:assert';
 import { createHash } from 'node:crypto';
+import { micromineTx, micromine, type6TxBody } from '@xmbl/cubic-ledger';
 
 let pass = 0;
 const check = (n, c) => { assert.ok(c, n); console.log('  ok  ', n); pass++; };
@@ -30,15 +31,32 @@ const mk = () => new ConsensusWorkflow({});
 // An anchor's `hash` is a sha-256 digest by contract (cubic-ledger validateTransaction), so fixtures mine one
 // from a label rather than passing the label itself.
 const digest = (label) => createHash('sha256').update(String(label)).digest('hex');
-const signedAnchor = (h = 'h') => ({ type: 'anchor', event: 'task.created', hash: digest(h), from: 'xmbA', sig: 'SIG' });
+// EVERY TX IS TYPED BY ITS XID (2026-09-16): fixtures mine the type identity the way the broker and the node do.
+const signedAnchor = (h = 'h') => ({ ...micromineTx({ type: 'anchor', event: 'task.created', hash: digest(h), ts: 1 }), from: 'xmbA', sig: 'SIG' });
+const typed = (tx) => micromineTx(tx);
+const mined6 = () => { const t = { chain: 'xmbl', from: ['a'], to: ['b'], asset: 'USDC', amount: '1.50', seq: 1, prev: '', unspent: '' }; const { xid, nonce } = micromine(type6TxBody(t), 6); return { type: 'tx', ...t, xid, nonce }; };
 
 // (a) SIGNED traffic is admitted — including anchors
 {
   const w = mk();
   check('admits a SIGNED anchor (the dominant real traffic)', w._admitToPool('nodeA', signedAnchor()) === true);
-  check('admits a signed type-6 value-tx', w._admitToPool('nodeA', { type: 'tx', chain: 'xmbl', from: ['a'], to: ['b'], asset: 'USDC', amount: '1.50', xid: '06x', nonce: 1, sig: 'S' }) === true);
-  check('admits a signed utxo', w._admitToPool('nodeA', { type: 'utxo', from: 'a', to: 'b', amount: '1', sig: 'S' }) === true);
-  check('admits a signed identity tx', w._admitToPool('nodeA', { type: 'identity', publicKey: 'pk', from: 'a', sig: 'S' }) === true);
+  check('admits a signed type-6 value-tx', w._admitToPool('nodeA', { ...mined6(), sig: 'S' }) === true);
+  check('admits a signed utxo', w._admitToPool('nodeA', { ...typed({ type: 'utxo', from: 'a', to: 'b', amount: '1' }), sig: 'S' }) === true);
+  check('admits a signed identity tx', w._admitToPool('nodeA', { ...typed({ type: 'identity', publicKey: 'pk', signature: 'sg', from: 'a' }), sig: 'S' }) === true);
+}
+
+// (a2) UNTYPED is refused at the door, whatever else it carries — every tx is typed by its xid (stage 2)
+{
+  const w = mk();
+  check('REJECTS a signed utxo with NO xid (untyped)', w._admitToPool('nodeA', { type: 'utxo', from: 'a', to: 'b', amount: '1', sig: 'S' }) === false);
+  check('REJECTS a signed anchor with NO xid (untyped)', w._admitToPool('nodeA', { type: 'anchor', event: 'task.created', hash: digest('u'), ts: 1, from: 'xmbA', sig: 'SIG' }) === false);
+  const a = signedAnchor('p');
+  check('REJECTS a typed anchor whose xid was mined for another body', w._admitToPool('nodeA', { ...a, hash: digest('q') }) === false);
+  check('REJECTS a typed anchor whose prior is missing (its pointer body cannot be re-mined)', w._admitToPool('nodeA', (({ prior, ...rest }) => rest)(a)) === false);
+  const u = typed({ type: 'utxo', from: 'a', to: 'b', amount: '1' });
+  check('REJECTS a utxo whose xid carries another type prefix', w._admitToPool('nodeA', { ...u, xid: '07' + u.xid.slice(2), sig: 'S' }) === false);
+  check('REJECTS a typed utxo whose amount was changed after mining', w._admitToPool('nodeA', { ...u, amount: '2', sig: 'S' }) === false);
+  check('REJECTS a typed, signed utxo whose amount cannot happen (negative) — stage 1 before stage 2', w._admitToPool('nodeA', { ...typed({ type: 'utxo', from: 'a', to: 'b', amount: '-5' }), sig: 'S' }) === false);
 }
 
 // (b) UNSIGNED is rejected regardless of type — this is the actual junk
@@ -51,7 +69,7 @@ const signedAnchor = (h = 'h') => ({ type: 'anchor', event: 'task.created', hash
   check('REJECTS a signed anchor whose hash is a label, not a digest (the ledger rule, applied at the door)', w._admitToPool('nodeA', { type: 'anchor', event: 'proof.mined', hash: 'proofofmined-1789450900844', from: 'a', sig: 'S' }) === false);
   check('REJECTS a signed anchor missing its event (required by tokens.json)', w._admitToPool('nodeA', { type: 'anchor', hash: digest('h'), from: 'a', sig: 'S' }) === false);
   check('REJECTS a null/garbage payload', w._admitToPool('nodeA', null) === false);
-  check('accepts array-form `from` (type-6 shape)', w._admitToPool('nodeA', { type: 'tx', from: ['a'], sig: 'S' }) === true);
+  check('accepts array-form `from` (type-6 shape, typed)', w._admitToPool('nodeA', { ...mined6(), sig: 'S' }) === true);
   check('REJECTS an EMPTY array `from`', w._admitToPool('nodeA', { type: 'tx', from: [], sig: 'S' }) === false);
 }
 
@@ -64,7 +82,7 @@ const signedAnchor = (h = 'h') => ({ type: 'anchor', event: 'task.created', hash
   for (let i = 0; i < 3; i++) check(`signed anchor ${i + 1} admitted (<=MAX)`, w._admitToPool('flooder', signedAnchor('h' + i)) === true);
   check('4th exceeds MAX -> dropped + ban', w._admitToPool('flooder', signedAnchor('h4')) === false);
   check('submitter:banned emitted with reason=flood', banned && banned.submitterId === 'flooder' && banned.reason === 'flood');
-  check('banned submitter dropped even for a valid value-tx', w._admitToPool('flooder', { type: 'tx', from: ['a'], sig: 'S' }) === false);
+  check('banned submitter dropped even for a valid value-tx', w._admitToPool('flooder', { ...mined6(), sig: 'S' }) === false);
   check('a DIFFERENT submitter is unaffected', w._admitToPool('honest', signedAnchor()) === true);
   delete process.env.XPC_JUNK_BAN_MAX;
 }

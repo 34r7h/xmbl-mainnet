@@ -12,6 +12,7 @@ import assert from 'node:assert';
 import { rmSync } from 'node:fs';
 import { Ledger } from './ledger.js';
 import { micromine, type6TxBody } from './micromine.js';
+import { micromineTx } from './transaction-validator.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const countByType = async (db) => {
@@ -29,10 +30,12 @@ test('a canonical rebuild keeps every block the anchor set cannot re-derive', as
   const led = new Ledger({ dbPath: dir });
   for (let i = 0; i < 100 && !led._dbOpen; i++) await sleep(50);
 
-  const anchors = Array.from({ length: 30 }, (_, i) => ({
-    event: 'task.created', hash: createHash('sha256').update(`anchor-${i}`).digest('hex'), ts: 1000 + i,
-  }));
-  for (const a of anchors) await led.addTransaction({ type: 'anchor', event: a.event, hash: a.hash, ts: a.ts });
+  // typed anchors, as the broker mines them: the canonical set hands {xid, nonce, prior} over with each row
+  const anchors = Array.from({ length: 30 }, (_, i) => {
+    const t = micromineTx({ type: 'anchor', event: 'task.created', hash: createHash('sha256').update(`anchor-${i}`).digest('hex'), ts: 1000 + i });
+    return { event: t.event, hash: t.hash, ts: t.ts, xid: t.xid, nonce: t.nonce, prior: t.prior };
+  });
+  for (const a of anchors) await led.addTransaction({ type: 'anchor', ...a });
   for (let i = 0; i < 12; i++) {
     const t = { chain: 'xmbl', from: ['xmbA'], to: ['xmbB'], asset: 'XMBL', amount: 1 + i, seq: i, prev: '', unspent: '' };
     const { xid, nonce } = micromine(type6TxBody(t), 6);

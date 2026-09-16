@@ -28,3 +28,4 @@ export {
 // loaded changes the file, not this constant. Consumed by @xmbl/core's control socket (`status`.versions).
 import { readFileSync as __readPkg } from 'node:fs';
 export const VERSION = JSON.parse(__readPkg(new URL('./package.json', import.meta.url), 'utf8')).version;
+export { validateForConsensus, validateCanHappen, validateXidStage, validatePlacementStage, STAGES } from './src/validate.js';

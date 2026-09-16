@@ -24,7 +24,7 @@
 //   getPublicKeyByAddress); the devnet opts it in, which is why the direct path is what it drives.
 import { EventEmitter } from 'node:events';
 import { Identity } from '../../identity/index.js';
-import { Ledger } from '../../cubic-ledger/index.js';
+import { Ledger, micromineTx } from '../../cubic-ledger/index.js';
 
 export class LocalDevnet extends EventEmitter {
   constructor(options = {}) {
@@ -120,7 +120,8 @@ export class LocalDevnet extends EventEmitter {
       amount,
       timestamp: Date.now(),
     };
-    const signed = await from.signTransaction(tx); // sets from=from.address, adds MAYO sig
+    const typed = micromineTx(tx);                  // the xmbl type: xid micromined over the body, from final
+    const signed = await from.signTransaction(typed); // adds the MAYO sig over everything incl. the xid
     this.metrics.submitted++;
     try {
       const result = await this.ledger.addTransaction(signed);

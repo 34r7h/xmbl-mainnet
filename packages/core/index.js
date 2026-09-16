@@ -1,6 +1,6 @@
 import { Identity } from '@xmbl/identity';
 import { XNNode } from '@xmbl/networking';
-import { Ledger } from '@xmbl/cubic-ledger';
+import { Ledger, micromineTx } from '@xmbl/cubic-ledger';
 import { StateMachine } from '@xmbl/state-machine';
 import { ConsensusWorkflow, ConsensusGossip, ValidationWorker, runValidationRetryTick, SealRoundManager, sealSetHash } from '@xmbl/consensus';
 import { StorageNode, MarketPricing, ComputeNode } from '@xmbl/storage-compute';
@@ -762,7 +762,12 @@ export class XMBLCore {
     // `from`, no xid) KEEP sign+from-overwrite so their derivedAddress===from sig-ownership STILL fires — the
     // security invariant, NOT weakened by an unconditional preserve.
     const contentAddressed = typeof tx?.xid === 'string' && /^0[0-9]/.test(tx.xid) && Array.isArray(tx.from);
-    const submitted = contentAddressed ? tx : await this.xid.signTransaction(tx);
+    // EVERY TRANSACTION IS TYPED BY ITS XID (operator, 2026-09-16): a node-authored tx is micromined AFTER its
+    // `from` is final (the node's own address, which signTransaction also sets) and BEFORE it is signed, so the
+    // signature covers the xid and the xid covers everything but the envelope. A tx that already carries an
+    // xid (a broker-typed anchor, a client that mined its own) is signed as-is — re-mining would move its identity.
+    const typed = contentAddressed || typeof tx?.xid === 'string' ? tx : micromineTx({ ...tx, from: this.xid.address });
+    const submitted = contentAddressed ? typed : await this.xid.signTransaction(typed);
 
     // Submit to consensus under this node's own stable identity (E1 user-as-validator: the leaderId, tracked
     // SEPARATELY from txData.from, so a preserved payer `from` never conflicts with the submitter identity).

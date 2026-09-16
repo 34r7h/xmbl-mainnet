@@ -50,7 +50,10 @@ export function createTxCommand(xid, xclt, xpc, xn) {
         const tx = JSON.parse(options.tx);
         const keyManager = new xid.KeyManager(options.keyDir);
         const identity = await keyManager.loadIdentity(options.key, options.password);
-        const signed = await identity.signTransaction(tx);
+        // Typed BEFORE signed: the xid (the xmbl type, micromined over the body with `from` final) is covered by
+        // the signature; a tx that already carries one is signed as-is.
+        const typed = tx.xid ? tx : xclt.micromineTx({ ...tx, from: identity.address });
+        const signed = await identity.signTransaction(typed);
         // Output compact JSON for easier piping
         out(JSON.stringify(signed));
       } catch (error) {

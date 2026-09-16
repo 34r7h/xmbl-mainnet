@@ -40,7 +40,9 @@ export function createConsensusCommand(xpc, xid, xclt, xn) {
         if (options.key) {
           if (!xid || !xid.KeyManager) { console.error('Error: XID module not available'); process.exit(1); }
           const identity = await new xid.KeyManager(options.keyDir).loadIdentity(options.key, options.password);
-          tx = await identity.signTransaction(tx);
+          // typed (micromined with `from` final) BEFORE signed — the same rule as `tx sign`
+          const typed = tx.xid ? tx : xclt.micromineTx({ ...tx, from: identity.address });
+          tx = await identity.signTransaction(typed);
         }
         if (!workflow) {
           workflow = new xpc.ConsensusWorkflow({ xid, xclt, xn });

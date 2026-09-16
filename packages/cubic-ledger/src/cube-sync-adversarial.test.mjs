@@ -6,13 +6,15 @@
 // no member block, no partial adoption slips into the db. Honest sync still converges (control).
 // Run: node cube-sync-adversarial.test.mjs
 import { createHash } from 'crypto';
+import { micromineTx } from './transaction-validator.js';
+import { consensusBody } from './block.js';
 import assert from 'assert';
 import { CubeSyncManager } from './cube-sync-manager.js';
 import { faceRootOf, cubeIdOf, cubeRootOf } from './cube-sync.js';
 
 let pass = 0, fail = 0;
 const check = async (n, f) => { try { await f(); console.log(`  ok   ${n}`); pass++; } catch (e) { console.log(`  FAIL ${n}\n       ${e.message}`); fail++; } };
-const txHash = (tx) => createHash('sha256').update(JSON.stringify(tx, (_k, v) => typeof v === 'bigint' ? v.toString() : v)).digest('hex');
+const txHash = (tx) => createHash('sha256').update(consensusBody(tx)).digest('hex');   // content-only: sha256 of the consensus body
 
 // Minimal ledger backed by a Map, matching the iterator/put shape CubeSyncManager uses.
 class FakeLedger {
@@ -35,7 +37,7 @@ function makePayload(salt = '') {
   for (let f = 0; f < 3; f++) {
     const blocks = [];
     for (let i = 0; i < 9; i++) {
-      const tx = { type: 'anchor', event: 'e', hash: createHash('sha256').update(`h${salt}${f}${i}`).digest('hex'), from: 'xmbA', sig: 'S' };
+      const tx = { ...micromineTx({ type: 'anchor', event: 'e', hash: createHash('sha256').update(`h${salt}${f}${i}`).digest('hex'), ts: 1 }), from: 'xmbA', sig: 'S' };
       blocks.push({ hash: txHash(tx), tx });
     }
     faces.push({ merkleRoot: faceRootOf(blocks.map(b => b.hash)), blocks });

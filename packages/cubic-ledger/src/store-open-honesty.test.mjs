@@ -9,9 +9,9 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Ledger } from '../index.js';
+import { Ledger, micromineTx } from '../index.js';
 
-const anchor = (label) => ({ type: 'anchor', event: 'task.created', hash: createHash('sha256').update(label).digest('hex'), ts: 1_700_000_000_000 });
+const anchor = (label) => micromineTx({ type: 'anchor', event: 'task.created', hash: createHash('sha256').update(label).digest('hex'), ts: 1_700_000_000_000 });
 
 test('a second ledger on a LOCKED store reports the store unavailable, and the first one keeps its rows', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'xclt-lock-'));

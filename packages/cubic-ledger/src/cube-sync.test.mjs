@@ -1,19 +1,21 @@
 // Cube sync must ACCEPT a truthful cube and REJECT every way a peer can lie. Test 0 is the control: if the
 // happy path did not pass, every rejection below would be vacuous.
 import { createHash } from 'crypto';
+import { micromineTx } from './transaction-validator.js';
+import { consensusBody } from './block.js';
 import assert from 'assert';
 import { verifyCube, planAdoption, diffWanted, faceRootOf, cubeIdOf, cubeRootOf, setDigest } from './cube-sync.js';
 
 let pass = 0, fail = 0;
 const check = (n, f) => { try { f(); console.log(`  ok   ${n}`); pass++; } catch (e) { console.log(`  FAIL ${n}\n       ${e.message}`); fail++; } };
-const txHash = (tx) => createHash('sha256').update(JSON.stringify(tx, (_k, v) => typeof v === 'bigint' ? v.toString() : v)).digest('hex');
+const txHash = (tx) => createHash('sha256').update(consensusBody(tx)).digest('hex');   // content-only: sha256 of the consensus body
 
 function makeCube(salt = '') {
   const faces = [];
   for (let f = 0; f < 3; f++) {
     const blocks = [];
     for (let i = 0; i < 9; i++) {
-      const tx = { type: 'anchor', event: 'task.created', hash: createHash('sha256').update(`h${salt}${f}${i}`).digest('hex'), from: 'xmbA', sig: 'S', validationTimestamp: '1784758606627666688' };
+      const tx = { ...micromineTx({ type: 'anchor', event: 'task.created', hash: createHash('sha256').update(`h${salt}${f}${i}`).digest('hex'), ts: 1 }), from: 'xmbA', sig: 'S', validationTimestamp: '1784758606627666688' };
       blocks.push({ hash: txHash(tx), tx });
     }
     faces.push({ merkleRoot: faceRootOf(blocks.map(b => b.hash)), blocks });

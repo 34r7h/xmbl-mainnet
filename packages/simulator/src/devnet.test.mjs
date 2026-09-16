@@ -9,6 +9,7 @@
 // control so a regression fails loudly.
 import assert from 'node:assert/strict';
 import { LocalDevnet } from './devnet.js';
+import { micromineTx } from '../../cubic-ledger/index.js';
 import { Identity } from '../../identity/index.js';
 import { ConsensusWorkflow } from '../../consensus/index.js';
 
@@ -47,7 +48,7 @@ const ok = (name, cond, detail = '') => {
 
   // NEGATIVE CONTROL — verification is actually ON: a tx tampered after signing is rejected.
   const from = net.identities[0];
-  const signed = await from.signTransaction({ id: 'tamper_1', type: 'utxo', from: from.address, to: net.addressOf(1), amount: 5, timestamp: Date.now() });
+  const signed = await from.signTransaction(micromineTx({ id: 'tamper_1', type: 'utxo', from: from.address, to: net.addressOf(1), amount: 5, timestamp: Date.now() }));
   const tampered = { ...signed, amount: 9999 }; // mutate a signed field
   let threw = '';
   try { await net.ledger.addTransaction(tampered); } catch (e) { threw = e.message; }
@@ -60,7 +61,7 @@ const ok = (name, cond, detail = '') => {
 {
   const net = await new LocalDevnet({ identities: 2 }).start();
   const from = net.identities[0];
-  const signed = await from.signTransaction({ id: 'seam_client_id', type: 'utxo', from: from.address, to: net.addressOf(1), amount: 7, timestamp: Date.now() });
+  const signed = await from.signTransaction(micromineTx({ id: 'seam_client_id', type: 'utxo', from: from.address, to: net.addressOf(1), amount: 7, timestamp: Date.now() }));
 
   // FIX(a): consensus finalizeTransaction now PRESERVES the originator's signed `id`. It used to
   // overwrite it with validatedHash (workflow.js), corrupting the signed message so the ledger's

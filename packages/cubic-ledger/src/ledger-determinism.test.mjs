@@ -6,13 +6,14 @@ import { rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Ledger } from './ledger.js';
+import { micromineTx } from './transaction-validator.js';
 
 let pass = 0, fail = 0;
 const check = async (n, f) => { try { await f(); console.log(`  ok   ${n}`); pass++; } catch (e) { console.log(`  FAIL ${n}\n       ${e.message}`); fail++; } };
 
 const mkTxs = (n) => Array.from({ length: n }, (_, i) => ({
-  type: 'anchor', event: 'task.created', hash: createHash('sha256').update('p' + i).digest('hex'),
-  ts: '2026-08-03T00:00:00Z', from: 'xmbA', sig: 'S', id: 'tx' + i,
+  ...micromineTx({ type: 'anchor', event: 'task.created', hash: createHash('sha256').update('p' + i).digest('hex'), ts: '2026-08-03T00:00:00Z' }),
+  from: 'xmbA', sig: 'S', id: 'tx' + i,
   validationTimestamp: String(1784758606627666688n + BigInt(i)),
 }));
 const shuffle = (a, seed) => { a = [...a]; let s = seed;
@@ -37,7 +38,7 @@ async function run(txs, tag) {
 }
 const digest = (cubes) => createHash('sha256').update(cubes.map(c => `${c.id}:${c.root}`).join('|')).digest('hex');
 
-const TXS = mkTxs(81);
+const TXS = mkTxs(162);   // 18 faces — the per-slot cube assembler needs one face in each of 3 slots
 
 console.log('\n0. control');
 await check('shuffling actually reorders the input', () => {
@@ -66,9 +67,10 @@ await check('reversed input produces an identical cube set', async () => {
 // per-slot cube ordinals apart until no cube could collect 3 faces, and cubes_persisted collapsed from 31 → 0
 // after ~8 rebuilds (measured on prod as cubes_persisted:0 / faces_sealed_since_boot:437, "none finalized").
 console.log('\n2. repeated rebuildFromAnchors -> STABLE persisted cubes (not 0)');
-const mkAnchors = (n) => Array.from({ length: n }, (_, i) => ({
-  event: 'task.created', hash: createHash('sha256').update('a' + i).digest('hex'), ts: 1784758606627 + i,
-}));
+const mkAnchors = (n) => Array.from({ length: n }, (_, i) => {   // typed canonical rows, as the feed must carry them
+  const t = micromineTx({ type: 'anchor', event: 'task.created', hash: createHash('sha256').update('a' + i).digest('hex'), ts: 1784758606627 + i });
+  return { event: t.event, hash: t.hash, ts: t.ts, xid: t.xid, nonce: t.nonce, prior: t.prior };
+});
 await check('cubes_persisted is identical and > 0 across 12 rebuilds', async () => {
   const dir = join(tmpdir(), `led-rebuild-${process.pid}`);
   rmSync(dir, { recursive: true, force: true });

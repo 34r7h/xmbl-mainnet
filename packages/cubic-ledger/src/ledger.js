@@ -6,6 +6,7 @@ import { Cube } from './cube.js';
 import { SuperCube } from './super-cube.js';
 import { sortFacesByHash } from './placement.js';
 import { sealBlocksIntoFaces } from './face-sealing.js';
+import { verifyPlacement } from './deterministic-placement.js';
 import { Level } from 'level';
 import { anchorTimestampNanos, blockTimestampNanos } from './timestamps.js';
 export { anchorTimestampNanos, blockTimestampNanos };
@@ -150,16 +151,56 @@ export class Ledger extends EventEmitter {
   // change the merkle root and fork.
   async _rehydratePools() {
     if (!this._dbOpen) return;
+    // 1. SCAN THE STORE FIRST. Seeds the anchor-dedup set from every block on disk (so a re-submission after a
+    //    restart is still a duplicate), notices rows keyed by something other than their content id (written
+    //    before block ids addressed consensus content), and — EVERY TRANSACTION IS TYPED BY ITS XID (operator,
+    //    2026-09-16) — DELETES every row whose tx carries no micromined xid. MEASURED before the rule: 16,313 of
+    //    17,628 anchors on the audited node were untyped. They are counted (`untyped`) and removed, not evicted:
+    //    the same anchor re-anchored WITH its identity is welcome. One O(blocks) pass; bodies are plain JSON.
+    let legacyKeyed = 0, untyped = 0;
+    const doomed = [];
     try {
-      const raw = await this.db.get('pool:membership');
-      const ids = JSON.parse(raw);
-      const have = new Set(this._membershipPool.map(b => b.id));
-      for (const id of ids) {
-        if (have.has(id)) continue;
-        const b = await this._loadBlock(id);
-        if (b) this._membershipPool.push(b);
+      for await (const [key, value] of this.db.iterator({ gte: 'block:', lt: 'block;' })) {
+        let b; try { b = JSON.parse(value.toString()); } catch { continue; }
+        const tx = b && b.tx;
+        const body = consensusBody(tx);
+        if (body === null) { untyped++; doomed.push(key.toString()); continue; }
+        if (tx && tx.type === 'anchor' && tx.event && tx.hash) this._anchorKeys.add(`${tx.event}:${tx.hash}`);
+        if (key.toString().slice('block:'.length) !== contentIdOf(body)) legacyKeyed++;
       }
-    } catch { /* no saved pool yet */ }
+    } catch { /* no blocks yet */ }
+    for (const key of doomed) { try { await this.db.del(key); } catch { /* gone */ } this.blocks.delete(key.slice('block:'.length)); }
+    if (untyped > 0) console.warn(`[XCLT] boot: deleted ${untyped} untyped block row(s) — every transaction carries its xmbl type as a micromined xid`);
+    // 2. The eviction list. Cheap (one short keyspace) and it is what makes "never seen again" outlive this
+    //    process rather than being a decision the node forgets the moment it restarts.
+    try {
+      for await (const [key] of this.db.iterator({ gte: 'evicted:', lt: 'evicted;' })) {
+        this._evicted.add(key.toString().slice('evicted:'.length));
+      }
+    } catch { /* no evictions yet */ }
+    // 3. CONVERGE THE STORE TO CONTENT IDS, ONCE. Runs only when the scan found a row keyed by an envelope hash,
+    //    so a store that is already content-keyed pays nothing; the second boot finds 0 and skips.
+    let rekey = null;
+    if (legacyKeyed > 0) {
+      try { rekey = await this.compactToContentIds(); }
+      catch (e) { console.warn(`[XCLT] content-id compaction failed, store left as found: ${e?.message || e}`); }
+    }
+    // 4. Restore both v2 pools from what SURVIVED. A member whose body is missing is SKIPPED, never faked — a
+    //    partially-restored face is dropped entirely rather than sealed short, because sealBlocksIntoFaces needs
+    //    exactly 9 and a short face would change the merkle root and fork.
+    if (!rekey) {
+      try {
+        const raw = await this.db.get('pool:membership');
+        const ids = JSON.parse(raw);
+        const have = new Set(this._membershipPool.map(b => b.id));
+        for (const id of ids) {
+          if (have.has(id)) continue;
+          const b = await this._loadBlock(id);
+          if (b) this._membershipPool.push(b);
+        }
+      } catch { /* no saved pool yet */ }
+      if (untyped > 0) await this._persistMembershipPool();   // the pool no longer names the deleted rows
+    }
     try {
       const raw = await this.db.get('pool:pendingfaces');
       const rows = JSON.parse(raw);
@@ -173,38 +214,7 @@ export class Ledger extends EventEmitter {
         if (face && !haveRoots.has(face.getMerkleRoot())) this._pendingCubeFaces.push(face);
       }
     } catch { /* no saved pending faces yet */ }
-    // Seed the anchor-dedup set from every block already on disk, so a re-submission after a restart is still
-    // recognised as a duplicate and does not re-inflate the ledger. One O(blocks) scan at boot; bodies are plain
-    // JSON so no Block instance is built.
-    // The same pass notices rows keyed by something other than their content id — rows written before
-    // block ids addressed consensus content (block.js consensusBody), one per node that relayed the same
-    // anchor and per time it was resubmitted. Cheap to detect here (one hash per addressed row), and the
-    // store is converged ONCE, below, rather than by an operator remembering to run a compaction by hand.
-    let legacyKeyed = 0;
-    try {
-      for await (const [key, value] of this.db.iterator({ gte: 'block:', lt: 'block;' })) {
-        let b; try { b = JSON.parse(value.toString()); } catch { continue; }
-        const tx = b && b.tx;
-        if (tx && tx.type === 'anchor' && tx.event && tx.hash) this._anchorKeys.add(`${tx.event}:${tx.hash}`);
-        const body = consensusBody(tx);
-        if (body !== null && key.toString().slice('block:'.length) !== contentIdOf(body)) legacyKeyed++;
-      }
-    } catch { /* no blocks yet */ }
-    // Load the eviction list. Cheap (one short keyspace) and it is what makes "never seen again" outlive
-    // this process rather than being a decision the node forgets the moment it restarts.
-    try {
-      for await (const [key] of this.db.iterator({ gte: 'evicted:', lt: 'evicted;' })) {
-        this._evicted.add(key.toString().slice('evicted:'.length));
-      }
-    } catch { /* no evictions yet */ }
-    // CONVERGE THE STORE TO CONTENT IDS, ONCE. Runs only when the scan above found a row keyed by an envelope
-    // hash, so a store that is already content-keyed pays nothing; the second boot finds 0 and skips.
-    let rekey = null;
-    if (legacyKeyed > 0) {
-      try { rekey = await this.compactToContentIds(); }
-      catch (e) { console.warn(`[XCLT] content-id compaction failed, store left as found: ${e?.message || e}`); }
-    }
-    this.emit('pools:rehydrated', { pooled: this._membershipPool.length, pendingFaces: this._pendingCubeFaces.length, anchorKeys: this._anchorKeys.size, evicted: this._evicted.size, legacyKeyed, rekey });
+    this.emit('pools:rehydrated', { pooled: this._membershipPool.length, pendingFaces: this._pendingCubeFaces.length, anchorKeys: this._anchorKeys.size, evicted: this._evicted.size, legacyKeyed, untyped, rekey });
   }
 
   /**
@@ -247,7 +257,8 @@ export class Ledger extends EventEmitter {
     // EVICTED MEANS EVICTED. Checked before anything else so a tx this node has already rejected costs one
     // set lookup and touches neither the validator nor the disk.
     const ckey = contentKey(tx);
-    if (ckey && this._evicted.has(ckey)) return { pooled: this._membershipPool.length, sealedFaces: 0, evicted: true };
+    const xkey = tx && typeof tx.xid === 'string' ? `xid:${tx.xid}` : null;
+    if ((ckey && this._evicted.has(ckey)) || (xkey && this._evicted.has(xkey))) return { pooled: this._membershipPool.length, sealedFaces: 0, evicted: true };
     // CONTENT DEDUP: one anchor (event:hash) is one block, forever. A re-submission of an anchor we already
     // hold is a no-op, not a new block — this is what stops the ledger inflating to 3× its real size and the
     // applied counter running to 100k+. Non-anchor txs are unaffected (they carry their own identity).
@@ -262,7 +273,13 @@ export class Ledger extends EventEmitter {
     } catch (error) {
       // An invalid tx is evicted here, at the door, and recorded so it is never examined again. Without the
       // record the same bad tx is re-validated and re-logged on every resubmission for the life of the node.
-      if (ckey) await this.evict(ckey, error.message);
+      // UNTYPED is the one refusal that is NOT an eviction: the datum simply has no identity yet, and the same
+      // anchor (same event:hash) may arrive typed a moment later — evicting its content key would refuse that too.
+      // A TYPED datum that fails (wrong prefix, body that does not mine to its xid) is a forgery of that xid and
+      // is evicted by the xid; a shape forgery with no xid (a label for a hash) is evicted by its content key.
+      if (error && error.code === 'UNTYPED') { if (ckey) this._anchorKeys.delete(ckey); throw error; }
+      const ekey = xkey || ckey;
+      if (ekey) await this.evict(ekey, error.message);
       throw error;
     }
     // ⛔ DETERMINISTIC FACE MEMBERSHIP — replaces "join the oldest pending face with room, seal on the 9th
@@ -437,18 +454,21 @@ export class Ledger extends EventEmitter {
       uniq.push(a);
     }
     uniq.sort((x, y) => (x.hash < y.hash ? -1 : x.hash > y.hash ? 1 : (x.event < y.event ? -1 : x.event > y.event ? 1 : 0)));
+    let untyped = 0, rejected = 0, rebuilt = 0;
     for (const a of uniq) {
+      // EVERY TRANSACTION IS TYPED BY ITS XID (operator, 2026-09-16). An anchor is a type-7 pointer datum whose
+      // {xid, nonce, prior} the broker mined at submit time; the xid chains to the prior anchor, so it is NOT a
+      // pure function of this set and this node cannot re-derive it. A canonical row that arrives WITHOUT its
+      // identity is not rebuilt — it is counted here, and the count is the feed's defect to fix (the canonical
+      // feed must carry xid + nonce + prior). Nothing is back-mined into a chain position nobody recorded.
+      if (typeof a.xid !== 'string' || !a.xid) { untyped++; continue; }
+      const tx = { type: 'anchor', event: a.event, hash: a.hash, ts: a.ts ?? 0, xid: a.xid, nonce: a.nonce, prior: typeof a.prior === 'string' ? a.prior : undefined };
+      if (tx.prior === undefined) delete tx.prior;
+      let block;
+      try { block = Block.fromTransaction(tx); }
+      catch (e) { rejected++; continue; }   // a typed row the rule refuses (bad prefix, body does not mine): not rebuilt
       this._anchorKeys.add(`${a.event}:${a.hash}`);
-      // CARRY THE MINED TYPE IDENTITY THROUGH THE REBUILD. An anchor is a type-7 datum whose xid/nonce the
-      // broker mined at submit time; the xid chains to the prior anchor, so it is NOT a pure function of this
-      // set and this node cannot re-derive it. Dropping it here would rebuild every anchor as an untyped
-      // datum again — the exact defect this replaced (MEASURED before the fix: 21540/21540 blocks on a real
-      // ledger carried no xid and no nonce). Handed over in the canonical set, it is reproduced verbatim, so
-      // the rebuild stays byte-identical across nodes. Rows anchored before the identity existed have neither
-      // field and are rebuilt exactly as they were — never back-mined into a chain position nobody recorded.
-      const tx = { type: 'anchor', event: a.event, hash: a.hash, ts: a.ts ?? 0,
-                   ...(a.xid ? { xid: a.xid, nonce: a.nonce } : {}) };
-      const block = Block.fromTransaction(tx);
+      rebuilt++;
       // Pin the block timestamp to the anchor ts (a BigInt, as the rest of the ledger expects for its
       // validator-average math) so cube placement is identical across nodes instead of falling back to a
       // per-node hrtime. Face membership is already deterministic via the content hash; this makes the CUBE
@@ -479,10 +499,12 @@ export class Ledger extends EventEmitter {
     // wrote a line about it: SirKit watched this box lose 13,750 block rows and regain 10,500 over one day
     // with no prune, rebuild, compact or delete entry in node.log or coordinator.log. A box can lose most of
     // its ledger invisibly. This is the only place that knows both numbers, so it is the place to print them.
-    console.log(`[XCLT] canonical rebuild: wiped ${wipedBlocks} block row(s), rebuilt ${uniq.length} anchor(s), `
-      + `preserved ${preserved.length} non-anchor block(s), sealed ${faces} face(s), ${this.cubes.size} cube(s)`);
+    console.log(`[XCLT] canonical rebuild: wiped ${wipedBlocks} block row(s), rebuilt ${rebuilt} of ${uniq.length} anchor(s) `
+      + `(${untyped} untyped, ${rejected} rejected), preserved ${preserved.length} non-anchor block(s), sealed ${faces} face(s), ${this.cubes.size} cube(s)`);
     return {
-      anchors: uniq.length,
+      anchors: rebuilt,
+      untyped,
+      rejected,
       blocks: this.blocks.size,
       wiped: wipedBlocks,
       preserved: preserved.length,
@@ -568,7 +590,7 @@ export class Ledger extends EventEmitter {
       groups.get(ck).push({ oldId, value: value.toString(), raw,
                             envelope: ENVELOPE.filter(f => f in raw.tx).length });
     }
-    let kept = 0, rekeyed = 0, deleted = 0, removed = 0, evicted = 0;
+    let kept = 0, rekeyed = 0, deleted = 0, removed = 0, evicted = 0, untyped = 0;
     for (const [ck, rows] of groups) {
       // EVICTED MEANS EVICTED, here too: a content key on the eviction list keeps no row at all.
       if (this._evicted.has(ck)) {
@@ -584,12 +606,13 @@ export class Ledger extends EventEmitter {
         block = Block.deserialize(keep.value);
         newId = Block.fromTransaction(block.tx).id;   // re-validates: a row the CURRENT rule refuses is evicted
       } catch (e) {
-        // One row that fails today's validation must not abort the pass for every other row. It is evicted
-        // by content key — recorded, its rows deleted, refused on every later path — exactly as it would be
-        // if it were submitted now, and the compaction carries on.
-        try { await this.evict(ck, `rejected during content-id compaction: ${e?.message || e}`); } catch { /* best effort */ }
+        // One row that fails today's validation must not abort the pass for every other row. An UNTYPED row
+        // (no micromined xid — every row written before the type rule) is deleted and counted, never evicted:
+        // its typed successor must be admitted. A row the rule refuses for cause is evicted by content key —
+        // recorded, its rows deleted, refused on every later path — exactly as if it were submitted now.
+        if (e && e.code === 'UNTYPED') untyped++;
+        else { try { await this.evict(ck, `rejected during content-id compaction: ${e?.message || e}`); } catch { /* best effort */ } evicted++; }
         for (const r of rows) { try { await this.db.del(`block:${r.oldId}`); deleted++; removed++; } catch { /* gone */ } this.blocks.delete(r.oldId); }
-        evicted++;
         continue;
       }
       const own = blockTimestampNanos(keep.raw);
@@ -620,7 +643,7 @@ export class Ledger extends EventEmitter {
     console.log(`[XCLT] content-id compaction: scanned ${scanned} row(s), kept ${kept} distinct content key(s), `
       + `re-keyed ${rekeyed}, removed ${removed} redundant row(s) (${deleted} old key(s) deleted in total), `
       + `${evicted} content key(s) evicted, ${unaddressed} row(s) had no content address and were left alone`);
-    return { scanned, kept, rekeyed, removed, deleted, evicted, unaddressed, balanced: scanned - unaddressed - kept === removed };
+    return { scanned, kept, rekeyed, removed, deleted, evicted, untyped, unaddressed, balanced: scanned - unaddressed - kept === removed };
   }
 
   getPoolBlocksByIds(ids) { const want = new Set(ids); return this._membershipPool.filter(b => want.has(b.id)); }
@@ -630,11 +653,23 @@ export class Ledger extends EventEmitter {
   // blocks, remove them from the pool, and QUEUE the sealed face for L2 agreement (NOT auto-assign to a local
   // cube — that local pick is the L2 fork). Returns the sealed face, or null if the agreed set wasn't a full 9.
   // Idempotent: a re-seal of already-removed blocks produces no face (sealBlocksIntoFaces needs 9 present).
+  // STAGE 3 OF CONSENSUS VALIDATION (operator, 2026-09-16): after "can it happen" (1) and "is the xid correct" (2),
+  // the geometric placement. A face's positions must be the hash ranks of its nine — re-derived by
+  // verifyPlacement from the blocks and compared with what the face assigned. A mismatch is a bug in the
+  // sealing rule or a corrupted face and must never be persisted, so it throws.
+  _assertPlacement(face, where) {
+    const blocks = Array.from(face.blocks.entries()).map(([position, b]) => ({ hash: b.hash, id: b.id, position }));
+    const r = verifyPlacement({ blocks });
+    if (!r.ok) throw new Error(`[XCLT] ${where}: placement refused — ${r.reason}`);
+    return r;
+  }
+
   async sealAgreedBlocks(agreedBlocks) {
     const present = agreedBlocks.filter(b => this._membershipPool.some(p => p.id === b.id));
     const { faces } = sealBlocksIntoFaces(present);
     const face = faces[0];
     if (!face) return null;                              // < 9 present (already sealed / incomplete) → no-op
+    this._assertPlacement(face, 'sealAgreedBlocks');     // STAGE 3: the geometric placement, re-derived and compared
     for (const [position, block] of face.blocks.entries()) {
       block.setLocation({ faceIndex: 0, position, cubeIndex: 0, cubeSequentialIndex: null, level: 1 });
     }
@@ -716,6 +751,7 @@ export class Ledger extends EventEmitter {
     this._membershipPool = leftover;
 
     for (const face of faces) {
+      this._assertPlacement(face, '_sealReadyFaces');    // STAGE 3: the geometric placement, re-derived and compared
       // Establish an initial location for each sealed block so coordinates are
       // valid before finalize (mirrors addTransaction). Face index is temporary
       // (0) until the cube is finalized; positions are the hash-sorted 0-8 the
