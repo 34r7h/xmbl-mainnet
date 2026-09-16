@@ -64,7 +64,7 @@ export class Face {
     if (blocksToUse.length === 0) return this.timestamp || BigInt(0);
     // Use validator timestamp if available (from xpc validation), otherwise block timestamp
     const timestamps = blocksToUse.map(b => {
-      const ts = b.tx?.validationTimestamp || b.timestamp;
+      const ts = b.validationTimestamp ?? b.tx?.validationTimestamp ?? b.timestamp;   // A5: block field first, legacy in-tx value second
       return typeof ts === 'bigint' ? ts : BigInt(ts * 1000000); // Convert ms to ns if needed
     });
     const sum = timestamps.reduce((a, b) => a + b, BigInt(0));

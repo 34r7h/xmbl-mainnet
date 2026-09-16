@@ -101,7 +101,7 @@ export class XMBLCore {
       xid: this.xid,
       xclt: this.xclt,
       xn: this.xn,
-      batchSealer: this.leadWorker ? (txData) => this.leadWorker.handleFinalizedTx(txData) : null,
+      batchSealer: this.leadWorker ? (txData, opts) => this.leadWorker.handleFinalizedTx(txData, opts) : null,
     });
 
     // Now that xpc exists, wire the lead worker's OTHER job: driving
@@ -318,7 +318,17 @@ export class XMBLCore {
     // NOTE the asymmetry: public-key resolution reads the FULL registry, unfiltered. The allowlist scopes who
     // may VALIDATE, not whose signatures we can verify — narrowing the key lookup would break verification of
     // txs submitted by non-allowlisted peers, which we still ingest and still relay.
-    this.xpc.getPublicKeyByAddress = (addr) => this.peerRegistry.get(addr)?.publicKey || (addr === self ? this.xid.publicKey : null);
+    const resolveKey = (addr) => this.peerRegistry.get(addr)?.publicKey || (addr === self ? this.xid.publicKey : null);
+    this.xpc.getPublicKeyByAddress = resolveKey;
+    // B7 — RE-VERIFICATION AT THE LEDGER. Ledger.addTransaction and addSealedBatch have always verified a
+    // signed tx when they could resolve its signer's key, and the daemon never handed them a resolver: on every
+    // running node that branch was dead and consensus was the ONLY place a signature was ever checked. A tx
+    // tampered with AFTER consensus — in the seal path, in a relayed batch, by a bug between the layers —
+    // reached the block store unexamined. Enabling it required A5 first: while consensus injected its clock
+    // into the signed body, a finalized tx could not re-verify and this resolver would have refused every
+    // honest tx. Same resolver, same registry, same asymmetry (the allowlist scopes who may VALIDATE, never
+    // whose signature can be verified), so a signed tx is now verified at both doors.
+    this.xclt.getPublicKeyByAddress = resolveKey;
     // LIVENESS IS THE WHOLE POINT OF THE NAME, and it was never checked. `lastSeen` was written on every
     // presence and read by NOTHING but the status display, so this filtered on roles.lead alone: every peer
     // this node had EVER seen stayed a validator forever. Once a mesh had come and gone, _getValidationLeaders

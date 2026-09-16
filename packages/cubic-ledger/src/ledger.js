@@ -225,7 +225,7 @@ export class Ledger extends EventEmitter {
    * @emits face:complete
    * @emits cube:complete
    */
-  async addTransaction(tx) {
+  async addTransaction(tx, opts = {}) {
     // Integration: Verify signature if xid available and tx has signature and from address
     if (this.xid && tx.sig && tx.from) {
       try {
@@ -269,7 +269,7 @@ export class Ledger extends EventEmitter {
     }
     let block;
     try {
-      block = Block.fromTransaction(tx);
+      block = Block.fromTransaction(tx, opts);
     } catch (error) {
       // An invalid tx is evicted here, at the door, and recorded so it is never examined again. Without the
       // record the same bad tx is re-validated and re-logged on every resubmission for the life of the node.
@@ -304,7 +304,7 @@ export class Ledger extends EventEmitter {
     return { id: block.id, hash: block.hash, ...sealed };
   }
 
-  async addSealedBatch(txs) {
+  async addSealedBatch(txs, opts = {}) {
     if (!Array.isArray(txs)) {
       throw new Error('addSealedBatch: txs must be an array');
     }
@@ -342,7 +342,7 @@ export class Ledger extends EventEmitter {
           }
         }
       }
-      const block = Block.fromTransaction(tx);
+      const block = Block.fromTransaction(tx, opts);
       // THE POOL IS A SET, AND push() DOES NOT KNOW THAT. block.id is derived from the transaction content,
       // so re-admitting the same tx yields the SAME id — `this.blocks.set` above silently overwrites and the
       // caller never notices, while this line appended a phantom duplicate. That is not an over-count: the
@@ -470,7 +470,7 @@ export class Ledger extends EventEmitter {
       const tx = { type: 'anchor', event: a.event, hash: a.hash, ts: a.ts ?? 0, xid: a.xid, nonce: a.nonce, prior: typeof a.prior === 'string' ? a.prior : undefined };
       if (tx.prior === undefined) delete tx.prior;
       let block;
-      try { block = Block.fromTransaction(tx); }
+      try { block = Block.fromTransaction(tx); }   // a rebuilt anchor's time is pinned from its own `ts` below, never a caller's
       catch (e) { rejected++; continue; }   // a typed row the rule refuses (bad prefix, body does not mine): not rebuilt
       this._anchorKeys.add(`${a.event}:${a.hash}`);
       rebuilt++;

@@ -522,6 +522,27 @@ continue-on-error, and in the release workflow before any publish).
       references to a `face:` row remain** (the surviving `face:complete` hits are an event name). Ledger
       suite 12/12, core 7/7 unchanged. — *cubic-ledger/src/ledger.js*
 
+- [x] **THE CONSENSUS CLOCK LEFT THE SIGNED BODY, AND THE LEDGER VERIFIES AGAIN (A5 + B7).** `moveToProcessing`
+      wrote its quorum-averaged `validationTimestamp` INTO txData, and identity's signing message covers every
+      field but `sig`/`publicKey` — so a finalized transaction carried a value its signer never saw and could
+      not re-verify. That is why the ledger's signature check, which `addTransaction` and `addSealedBatch` have
+      always implemented, was never given a resolver on any running node: consensus was the ONLY place a
+      signature was ever checked, and a tx tampered with after consensus reached the block store unexamined.
+      The clock now travels BESIDE the tx (the finalized event's own field) and is handed to the ledger as an
+      argument; the BLOCK carries it, serialises it and reads it back, with the legacy in-tx value kept as a
+      fallback for rows already on disk. `validatedHash` is still hashed over {...txData, validationTimestamp},
+      so the processing key and the finalized txId are byte-identical — no wire impact. The daemon then wires
+      the same peer-registry resolver into the ledger, so a signed tx is verified at BOTH doors. PROVEN AT THE
+      REAL SITE, not on a hand-built object: raw tx → quorum timestamps → `moveToProcessing` →
+      `finalizeTransaction` → `addTransaction` with a resolver — the body carries no `validationTimestamp`, the
+      finalized tx verifies against its signer's key, the block carries the clock as its own field, and a tx
+      tampered after consensus is REFUSED at the ledger. The old assertion here pinned the DEFECT as a property
+      of `verifyTransaction` itself, which no fix could ever flip; it is replaced by one that exercises the
+      pipeline. Convergence unchanged: the 20-anchor epoch rebuild still yields 2 faces, 1 cube and
+      set_digest 9093792ad91b3e96…. — *consensus/workflow.js; cubic-ledger/block.js, ledger.js, face.js,
+      cube.js, timestamps.js, deterministic-placement.js; core/index.js, lead-worker.js;
+      simulator/devnet.test.mjs (27 checks)*
+
 ## Rollout policy (operator, 2026-09-16): every node, latest version or suspended, updated over the air
 
 - [x] **A node PROVES the version it runs.** `status` and the SIGNED `chain` claim carry `versions` (what the

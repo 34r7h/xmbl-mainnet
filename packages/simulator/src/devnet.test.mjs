@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { LocalDevnet } from './devnet.js';
 import { micromineTx } from '../../cubic-ledger/index.js';
 import { Identity } from '../../identity/index.js';
+import { Ledger } from '@xmbl/cubic-ledger';
 import { ConsensusWorkflow } from '../../consensus/index.js';
 
 let pass = 0;
@@ -78,16 +79,60 @@ const ok = (name, cond, detail = '') => {
     ok('FIX(a): finalize PRESERVES the signed id (not validatedHash)', !!emitted && emitted.txData.id === 'seam_client_id', `id=${emitted?.txData?.id}`);
     ok('FIX(a): the finalized tx STILL verifies against the signer key', (await Identity.verifyTransaction(emitted.txData, from.publicKey)) === true);
     ok('FIX(a): the consensus hash is carried separately as the event txId', emitted.txId === validatedHash);
-    // OPEN defect (c), PINNED here (not only in DEVNET-SEAM-FINDING.md prose): moveToProcessing
-    // injects a `validationTimestamp` INTO the signed tx body, which is outside the signed domain,
-    // so a real finalized tx does NOT re-verify against the signer key. This is why ledger-side
-    // re-verification stays OFF in production. If someone wires getPublicKeyByAddress into the
-    // Ledger without first resolving (c) (block-id-from-signed-body OR carrying validationTimestamp
-    // as a sibling), THIS assertion flips and the gate fails — which is the intended tripwire.
+    // WHY A TX MUST NOT CARRY THE CONSENSUS CLOCK: identity's signingMessage covers every field except
+    // sig/publicKey, so a `validationTimestamp` written into the body is a value the signer never saw.
     const withVt = { ...signed, validationTimestamp: '123' };
-    ok('FIX(a) scope: a tx carrying consensus-injected validationTimestamp does NOT re-verify (open defect (c))',
+    ok('a tx carrying a validationTimestamp INSIDE the signed body does NOT re-verify (why A5 moved it out)',
        (await Identity.verifyTransaction(withVt, from.publicKey)) === false);
     try { await w.mempool?.db?.close?.(); } catch { /* in-memory / already closed */ }
+  }
+
+  // FIX(c) / A5 — DRIVEN AT THE REAL SITE, not asserted on a hand-built object. The previous version of this
+  // block pinned the DEFECT by checking a property of verifyTransaction itself, which no amount of fixing
+  // moveToProcessing could ever flip — a tripwire that could not trip. This runs the actual pipeline:
+  // addRawTransaction → quorum timestamps → moveToProcessing → finalizeTransaction → the ledger, with a key
+  // resolver wired exactly as the daemon wires it (B7). If consensus ever writes its clock back into the
+  // signed body, the finalized tx stops verifying and the ledger refuses it — here, in the gate.
+  {
+    const w = new ConsensusWorkflow({});
+    const rawTxId = await w.mempool.addRawTransaction('leaderA', { ...signed });
+    w.rawTxToId.set(rawTxId, 'leaderA');
+    const entry = w.mempool.rawTx.get('leaderA').get(rawTxId);
+    entry.validationTimestamps = [
+      { nodeId: 'v1', timestamp: 1789470971116000000n },
+      { nodeId: 'v2', timestamp: 1789470971117000000n },
+      { nodeId: 'v3', timestamp: 1789470971118000000n },
+    ];
+    await w.moveToProcessing(rawTxId);
+    const [key, processing] = [...w.mempool.processingTx.entries()][0];
+    ok('A5: the processing tx body carries NO validationTimestamp (the clock is a sibling)',
+       processing.txData.validationTimestamp === undefined, `body=${JSON.stringify(Object.keys(processing.txData))}`);
+    ok('A5: the clock travels BESIDE the tx and is non-null', processing.validationTimestamp != null);
+    ok('A5: the processing tx STILL verifies against the signer key (the whole point)',
+       (await Identity.verifyTransaction(processing.txData, from.publicKey)) === true);
+
+    let fin = null;
+    w.on('tx:finalized', (d) => { fin = d; });
+    await w.finalizeTransaction(key);
+    ok('A5: the FINALIZED tx verifies against the signer key', !!fin && (await Identity.verifyTransaction(fin.txData, from.publicKey)) === true);
+    ok('A5: the finalized event carries the clock as its own field', fin.validationTimestamp != null && fin.txData.validationTimestamp === undefined);
+
+    // B7 — the ledger, with the resolver the daemon now wires, verifies the same tx a SECOND time.
+    const led = new Ledger({});
+    led.xid = from;                                   // enables the ledger's signature check
+    led.getPublicKeyByAddress = (addr) => (addr === from.address ? from.publicKey : null);
+    const res = await led.addTransaction(fin.txData, { validationTimestamp: fin.validationTimestamp });
+    ok('B7: a signed finalized tx is ACCEPTED at the ledger with re-verification ON', !!res && res.duplicate !== true);
+    const block = [...led._membershipPool, ...led.blocks.values()].find((b) => b.tx && b.tx.id === 'seam_client_id');
+    ok('B7: the block carries the consensus clock as its own field, and its tx does not',
+       !!block && block.validationTimestamp != null && block.tx.validationTimestamp === undefined);
+    let refused = '';
+    try { await led.addTransaction({ ...fin.txData, amount: 424242 }, { validationTimestamp: fin.validationTimestamp }); }
+    catch (e) { refused = e.message; }
+    ok('B7: a tx tampered AFTER consensus is REFUSED at the ledger (the defense-in-depth layer is live)',
+       /Invalid transaction signature|address mismatch/.test(refused), `threw="${refused}"`);
+    try { await w.mempool?.db?.close?.(); } catch { /* in-memory / already closed */ }
+    try { await led.close?.(); } catch { /* in-memory */ }
   }
 
   // FIX(a) negative control: mutating `id` AFTER signing (what the old overwrite effectively did)

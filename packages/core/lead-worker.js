@@ -69,8 +69,9 @@ export class LeadWorker {
    * @param {object} txData
    * @returns {Promise<{sealedFaces: number, pooled: number}>}
    */
-  async handleFinalizedTx(txData) {
-    const result = await this.xclt.addSealedBatch([txData]);
+  async handleFinalizedTx(txData, opts = {}) {
+    // A5: the consensus clock arrives beside the tx, not inside it, and is handed to the ledger as an argument.
+    const result = await this.xclt.addSealedBatch([txData], opts);
     if (result.sealedFaces > 0 && typeof this.onBatchSealed === 'function') {
       this.onBatchSealed(result.sealedFaces);
     }

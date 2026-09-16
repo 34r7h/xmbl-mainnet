@@ -68,10 +68,13 @@ export class ConsensusWorkflow extends EventEmitter {
     // Listen for finalized transactions and add to ledger
     this.on('tx:finalized', async (data) => {
       console.log('[XPC] tx:finalized listener triggered, xclt:', !!this.xclt, 'txData:', !!data.txData);
+      // A5: the consensus clock rides BESIDE the tx from here to the block. A tx that reaches the ledger
+      // therefore still carries exactly the bytes its signer signed — which is what lets B7 verify it again.
+      const sealOpts = { validationTimestamp: data.validationTimestamp ?? null };
       if (this.batchSealer) {
         try {
           console.log('[XPC] Routing finalized tx through lead batchSealer:', data.txId || data.txData?.id);
-          await this.batchSealer(data.txData);
+          await this.batchSealer(data.txData, sealOpts);
         } catch (error) {
           console.error('[XPC] batchSealer failed on finalized tx:', error);
         }
@@ -80,7 +83,7 @@ export class ConsensusWorkflow extends EventEmitter {
       if (this.xclt) {
         try {
           console.log('[XPC] Adding transaction to ledger:', data.txId || data.txData?.id);
-          const result = await this.xclt.addTransaction(data.txData);
+          const result = await this.xclt.addTransaction(data.txData, sealOpts);
           console.log('[XPC] Transaction added to ledger successfully, blockId:', result?.blockId);
         } catch (error) {
           console.error('[XPC] Failed to add finalized transaction to ledger:', error);
@@ -748,11 +751,16 @@ export class ConsensusWorkflow extends EventEmitter {
     const processingTxData = {
       rawTxId, // Keep reference to original raw tx
       timestamp: avgTimestamp,
+      // A5 — THE CONSENSUS CLOCK IS A SIBLING OF THE TX, NEVER A FIELD INSIDE IT. This used to be written
+      // into txData as well, and identity's signingMessage covers every field except sig/publicKey, so the
+      // injection put a value the signer never saw inside the signed domain: a finalized tx could not
+      // re-verify against its signer's key, which is why ledger-side re-verification had to stay off (B7)
+      // and why the devnet seam finding pinned it as open defect (c). The value travels HERE, beside the tx,
+      // and the ledger takes it as an argument. Nothing about the wire changes: validatedHash below is still
+      // hashed over {...txData, validationTimestamp}, so the processing key and the finalized txId are
+      // byte-identical to before.
       validationTimestamp: avgTimestamp, // Validator average timestamp (used only at level 1)
-      txData: {
-        ...rawTx.txData,
-        validationTimestamp: avgTimestamp // Include in txData for xclt to use
-      },
+      txData: { ...rawTx.txData },
       sig: rawTx.txData.sig || null, // Leader signs
       leader: leaderId,
       validatorTimestamps: rawTx.validationTimestamps // Keep track of validator timestamps

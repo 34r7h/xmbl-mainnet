@@ -49,9 +49,16 @@ export function contentKey(tx) {
 }
 
 export class Block {
-  constructor(id, tx, hash, digitalRoot, timestamp = null, location = null) {
+  constructor(id, tx, hash, digitalRoot, timestamp = null, location = null, validationTimestamp = null) {
     this.id = id;
     this.tx = tx;
+    // A5 — THE CONSENSUS CLOCK LIVES ON THE BLOCK, NOT INSIDE THE SIGNED TX. Consensus used to write its
+    // averaged validator timestamp into txData, inside the signed domain, so a finalized tx could never
+    // re-verify against its signer's key. It is an envelope value (the ledger's own ENVELOPE list has always
+    // said so) and it belongs here, beside the tx, where it changes no signature and no hash — the block hash
+    // is content-only. `tx.validationTimestamp` is still read as a fallback so blocks persisted before this
+    // change, and any peer still running the old code, keep their time.
+    this.validationTimestamp = validationTimestamp ?? (tx && tx.validationTimestamp !== undefined ? tx.validationTimestamp : null);
     this.txId = tx?.id || null; // Extract id from transaction object
     this.hash = hash;
     this.digitalRoot = digitalRoot;
@@ -93,7 +100,7 @@ export class Block {
     return this.fractalAddress || [];
   }
 
-  static fromTransaction(tx) {
+  static fromTransaction(tx, opts = {}) {
     // Validate transaction type
     validateTransaction(tx);
 
@@ -111,10 +118,12 @@ export class Block {
     // Keep for backward compatibility only
     const digitalRoot = tx.digitalRoot || 0;
     
-    // Use validator average timestamp if available (from xpc, nanoseconds), otherwise use tx timestamp or current time
-    const timestamp = tx.validationTimestamp || tx.timestamp || process.hrtime.bigint();
-    
-    return new Block(id, tx, hash, digitalRoot, timestamp);
+    // Use the validator average timestamp if one was supplied BESIDE the tx (A5: consensus hands it to the
+    // ledger as an argument), else one still carried inside an older tx, else the tx's own time, else now.
+    const vt = opts && opts.validationTimestamp != null ? opts.validationTimestamp : (tx.validationTimestamp ?? null);
+    const timestamp = vt || tx.timestamp || process.hrtime.bigint();
+
+    return new Block(id, tx, hash, digitalRoot, timestamp, null, vt);
   }
 
   serialize() {
@@ -128,6 +137,7 @@ export class Block {
       hash: this.hash,
       digitalRoot: this.digitalRoot,
       timestamp: this.timestamp,
+      validationTimestamp: this.validationTimestamp,   // A5: the consensus clock, an envelope value on the block
       location: this.location,
       coordinates: this.coordinates,
       vector: this.vector,
@@ -140,7 +150,7 @@ export class Block {
       (value && typeof value === 'object' && typeof value.__bigint__ === 'string')
         ? BigInt(value.__bigint__)
         : value);
-    const block = new Block(obj.id, obj.tx, obj.hash, obj.digitalRoot, obj.timestamp, obj.location);
+    const block = new Block(obj.id, obj.tx, obj.hash, obj.digitalRoot, obj.timestamp, obj.location, obj.validationTimestamp ?? null);
     // Restore calculated values if present
     if (obj.coordinates) block.coordinates = obj.coordinates;
     if (obj.vector) block.vector = obj.vector;

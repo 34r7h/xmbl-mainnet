@@ -22,7 +22,7 @@ export function anchorTimestampNanos(ts) {
 // `validationTimestamp` is already NANOSECONDS (stored as a digit string, e.g. "1789470971116000000"),
 // so it is NOT put through anchorTimestampNanos, which reads a numeric string as epoch-ms.
 export function blockTimestampNanos(raw) {
-  const vt = raw?.tx?.validationTimestamp;
+  const vt = raw?.validationTimestamp ?? raw?.tx?.validationTimestamp;   // A5: the block's own field first, the legacy in-tx value second
   if (typeof vt === 'bigint') return vt;
   if (typeof vt === 'number' && Number.isFinite(vt) && vt > 0) return BigInt(Math.floor(vt));
   if (typeof vt === 'string' && /^\d+$/.test(vt)) return BigInt(vt);

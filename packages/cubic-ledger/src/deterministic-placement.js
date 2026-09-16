@@ -78,7 +78,7 @@ export function memberKey(member) {
 export function isPlaceable(member) {
   if (memberKey(member) === undefined) return false;
   if (member.level !== undefined && member.level > 1) return true; // higher-level containers inherit validity
-  return normalizeTimestamp(member?.tx?.validationTimestamp) !== null;
+  return normalizeTimestamp(member?.validationTimestamp ?? member?.tx?.validationTimestamp) !== null;   // A5: block field first
 }
 export function unplaceable(members) { return members.filter(m => !isPlaceable(m)); }
 

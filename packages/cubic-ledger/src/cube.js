@@ -24,7 +24,7 @@ export class Cube {
     for (const face of this.faces.values()) {
       for (const block of face.blocks.values()) {
         // Use validator timestamp if available (from xpc validation), otherwise block timestamp
-        const timestamp = block.tx?.validationTimestamp || block.timestamp;
+        const timestamp = block.validationTimestamp ?? block.tx?.validationTimestamp ?? block.timestamp;   // A5: block field first
         const ts = typeof timestamp === 'bigint' ? timestamp : BigInt(timestamp * 1000000); // Convert ms to ns
         allTimestamps.push(ts);
       }

@@ -145,7 +145,11 @@ deterministically from the block set on every boot, so persistence is redundant 
 phantom keyspace from the rebuild and document that faces are derived state. **Proof:** zero
 references to `face:` rows; boot output unchanged.
 
-### B7. Re-verification at the ledger (follows A5)
+### B7. Re-verification at the ledger (follows A5) — DONE 2026-09-16, with A5
+A5 first: consensus stopped writing its clock into the signed body and hands it to the ledger beside the tx;
+the block carries it. Then the daemon wired its resolver into the Ledger. The devnet seam test now drives the
+real pipeline: the finalized tx verifies against its signer's key and a post-consensus tamper is refused at the
+ledger. 27 checks.
 Wire `getPublicKeyByAddress` into the daemon's `Ledger` so every signed transaction is verified
 twice (consensus, then ledger) — the defense-in-depth layer the ledger already implements but the
 daemon never enables. **Proof:** the devnet's pinned seam test flips; a tx tampered after
@@ -196,7 +200,7 @@ A1 mayo.wasm:            DECIDED 2026-09-16 — adapt MAYO to the cubic coordina
 A2 LNG browser panels:   DECIDED 2026-09-16 — the module ships its browser build; consumers import it
 A3 EVM backend:          DONE — deployed + executed in-process (16 checks); public testnet = product step
 A4 EVM comparison:       CLOSED BY SCOPE — no claim exists to prove
-A5 signature domain:     WORK — compatible fix, no wire impact (B7)
+A5 signature domain:     DONE 2026-09-16 — clock moved beside the tx; ledger re-verification ON (B7)
 A6 xid in canonical feed: SENT to handoff-claude (099e46a4)
 A7 fleet re-anchor:      DECIDED 2026-09-16 — with the rollout; latest-or-suspended + OTA built
 A8 bundle on @xmbl/core: SENT to handoff-claude (099e46a4)
