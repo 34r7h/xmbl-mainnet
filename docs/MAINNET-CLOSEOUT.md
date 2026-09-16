@@ -99,6 +99,31 @@ seven npm deps and leave the vendored `core/` exactly where it is, still unable 
 A8 was waiting on B8 for the package to exist. `@xmbl/core@0.1.11` now exists, so the bundle swap is
 executable. It is handoff-claude's rollout and is not done here.
 
+**Re-measured 2026-09-17, and the staging copy is not staged.** `~/.handoff/xmbl-node` — the directory
+`coord-xmbl-node.mjs` calls the "deployed SLIM install (preferred)" and which was last touched
+2026-09-16 16:32, after the tag — is the SAME `xmbl-slim-node@0.1.8`, with the SAME seven deps, the SAME
+missing `@xmbl/core`, and the SAME frozen 0.1.1–0.1.9 tree as the `.old` directory the live process
+actually runs from. Nothing was ever staged; A8 is not one restart away from done.
+
+**The root cause is a pin, and it is one word.** Those seven deps read `"@xmbl/networking": "latest"`.
+`latest` is resolved ONCE, at install time, and then frozen in `node_modules` — it is not a
+self-updating channel, so twelve packages going to 0.1.11 on the registry moved nothing on disk. The
+replacement bundle must pin **`"@xmbl/core": "0.1.11"` exactly**, and depend on nothing else `@xmbl`:
+core's own `dependencies` carry the other seven at `^0.1.11`.
+
+**The published artifact is not the problem — it was run, from the registry.** `npm install
+@xmbl/core@0.1.11` into an empty directory, then its own `createControlServer` bound to a scratch
+socket, answers `release` with `versions` = all eight at **0.1.11** and
+`build.digest = ac0f97e0f3861b4353984f50808d1f2fd540c410a8cc77ada1b56bee4d41dc15`. The same tarball ships
+`bin/xmbl-node`, whose header names its purpose: "so a deployment can depend on the published package
+instead of vendoring a copy of core/ that drifts from it". The vendored socket answers `unknown op` to
+the same request. Both halves measured on this box, same hour.
+
+**Why the swap cannot be rehearsed beside the live node.** `xmbl-node start` refuses with "another node
+is ALREADY RUNNING ON THIS MACHINE (pid 32869)" — one node per machine, by design. So there is no
+side-by-side proof to take: the rollout is stop-then-start on a node that currently holds `validate`,
+`storage`, `relay` and `lead`, which is exactly why it is the operator's call and not mine.
+
 ### A9. The crossed keypairs and the failed identity query — SENT 2026-09-16
 handoff-claude has it (re-provision on-box or name the owner; broker says `usr_fb2446eb53`;
 envelope 099e46a4). **Proof:** `identity_status.ok == true` on all three and one chain block from
@@ -347,6 +372,25 @@ equal.
 ### Closes by itself
 The cross-cutting "0.x communicates pre-mainnet" line is definitional and closes when the seven
 external reviews return; `AUDIT_GATES_OPEN` flips to `false` in that same reviewed commit.
+
+### The handoff board — what it knew, and what it knows now (2026-09-17)
+The `xmbl-mainnet` project on handoff is `d621f958-1447-482f-8955-ee0d2beaf36c`. Its 42 nodes were
+written 2026-09-09 and the newest edit before today was **2026-09-12** — so every gate closed on
+2026-09-15/16 (B1–B10), the 0.1.11 release, the Linux gate and the coverage number existed only in this
+repo and in the message log. Synced today, signed as `xmbl` over `PUT /api/v1/tasks/:id`:
+
+- **T11.2** (`e0dd0413`) — submitted. `cargo test --workspace`: **11 passed, 0 failed**;
+  `crates/crate-status.test.mjs`: **9 passed, 0 failed**, every crate carrying
+  `//! NON-PRODUCTION (pre-mainnet stub)`, and that check is IN the hard gate.
+- **B8 · RELEASE 0.1.11** (`1e0eaf1f`) — new, submitted: npm 12/12 counted from the registry,
+  crates.io 0/8 counted the same way, and the empty `CARGO_REGISTRY_TOKEN` named as the one blocker.
+- **Release gate on Linux** (`9e7af789`) — new, submitted: 78/78 on ubuntu-latest, coverage 86.8%.
+- **A8** (`fd474fac`) — new, left **todo on purpose**, carrying the measurement above. It is open work.
+
+Two things that board cannot show. Three tasks assigned to `xmbl` have sat in `pending_verification`
+since 2026-09-09 and only the requester can accept them. And **no task in this project has an XMBL
+anchor** — `handoff xmbl verify <task_id>` reports "no anchor recorded" for the 2026-09-09 tasks and for
+today's alike, so the audit trail there is the signed REST `status_history`, not the chain.
 
 ---
 
