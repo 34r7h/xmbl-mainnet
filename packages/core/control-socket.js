@@ -10,6 +10,7 @@ import { VERSION as CONSENSUS_VERSION } from '@xmbl/consensus';
 import { VERSION as STORAGE_COMPUTE_VERSION } from '@xmbl/storage-compute';
 import { VERSION as ZERO_KNOWLEDGE_VERSION } from '@xmbl/zero-knowledge';
 import { VERSION as CORE_VERSION } from './index.js';
+import { codeDigest } from './release.js';   // the VERSION PROOF: a digest of the @xmbl code this process loaded
 
 // THE VERSIONS THIS PROCESS IS RUNNING. Each package reads its own manifest at import time (see the VERSION
 // export in every @xmbl/* root), so this names the code in memory — an install that lands on disk after boot
@@ -25,6 +26,21 @@ const RUNNING_VERSIONS = Object.freeze({
   'storage-compute': STORAGE_COMPUTE_VERSION,
   'zero-knowledge': ZERO_KNOWLEDGE_VERSION,
 });
+
+// THE VERSION PROOF (operator, 2026-09-16: every node must PROVE it runs the latest version or be suspended).
+// A version string can be typed; this cannot: a sha-256 over the bytes of every @xmbl module this process
+// loaded (release.js codeDigest — sorted paths, tests excluded), computed ONCE at boot from the files in
+// memory's provenance. It rides inside the SIGNED chain claim next to `versions`, so a verifier that knows the
+// digest of the published release compares digests, not claims. Per-package digests are served by `release`.
+const RUNNING_BUILD = (() => {
+  try {
+    const b = codeDigest();
+    return Object.freeze({ digest: b.digest, packages: Object.freeze(Object.fromEntries(Object.entries(b.packages).map(([n, p]) => [n, p ? { version: p.version, files: p.files, digest: p.digest } : null]))) });
+  } catch (e) { return Object.freeze({ digest: null, error: e.message, packages: {} }); }
+})();
+// The suspension a caller sees on every producing op: a node behind the fleet's latest version has stopped
+// producing until it is updated (the daemon's OTA loop suspends, updates and restarts it).
+const suspendedReply = (core) => ({ ok: false, suspended: core.suspended, error: `node suspended: ${core.suspended.reason}${core.suspended.detail ? ' — ' + core.suspended.detail : ''}` });
 
 /**
  * Local control socket for the xmbl-node daemon — how the handoff coordinator
@@ -120,7 +136,10 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
   async function handleOp(req) {
     switch (req.op) {
       case 'status':
-        return { ok: true, ...statusSnapshot(), versions: RUNNING_VERSIONS };
+        return { ok: true, ...statusSnapshot(), versions: RUNNING_VERSIONS, build: RUNNING_BUILD.digest, suspended: core.suspended || null, ota: core.ota || null };
+      case 'release':
+        // The full version proof: what this process runs, package by package, and whether it is suspended.
+        return { ok: true, versions: RUNNING_VERSIONS, build: RUNNING_BUILD, suspended: core.suspended || null, ota: core.ota || null };
       case 'peers': {
         const peers = core.xn.getConnectedPeers().map((p) => p.toString());
         return { ok: true, peers, count: peers.length };
@@ -273,6 +292,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         if (!tx || typeof tx !== 'object') {
           return { ok: false, error: 'submit_tx requires a tx object' };
         }
+        if (core.suspended) return suspendedReply(core);     // a suspended node produces nothing
         // Guarded + time-boxed so a control request can never hang the daemon.
         const txId = await withTimeout(core.submitTransaction(tx), SUBMIT_TIMEOUT_MS, 'submit_tx');
         // ⛔ ok:true WITH tx_id:null WAS A LIE, and it is the whole reason 0 type-6 value txs ever reached the
@@ -296,6 +316,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         const txs = Array.isArray(req.params && req.params.txs) ? req.params.txs : (Array.isArray(req.txs) ? req.txs : null);
         if (!txs) return { ok: false, error: 'submit_batch requires params.txs[]' };
         if (txs.length > SUBMIT_BATCH_MAX) return { ok: false, error: `submit_batch capped at ${SUBMIT_BATCH_MAX} txs per call (got ${txs.length})` };
+        if (core.suspended) return suspendedReply(core);     // a suspended node produces nothing
         const results = [];
         let accepted = 0, failed = 0;
         for (const tx of txs) {
@@ -615,6 +636,10 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
           blocks_persisted: blocks_persisted_s,
           mempool: mempool ? { raw: mempool.raw ?? 0, processing: mempool.processing ?? 0, final: mempool.final ?? 0 } : null,
           versions: RUNNING_VERSIONS,
+          // THE VERSION PROOF, inside the signature: the digest of the code this process loaded (see RUNNING_BUILD),
+          // and whether this node has suspended itself for running behind the fleet's latest version.
+          build: RUNNING_BUILD.digest,
+          suspended: core.suspended ? { reason: core.suspended.reason, since: core.suspended.since, running: core.suspended.running ?? null, latest: core.suspended.latest ?? null } : null,
           // THE NODE'S OWN CLOCK, inside the signature — the one field a freshness gate depends on is the one
           // field the node must attest itself.
           ts: new Date().toISOString(),
@@ -638,6 +663,8 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
           cube_curve,                                          // the SEALING layer — see above
           recent_tx,                                           // [{ id, type, timestamp }]
           versions: RUNNING_VERSIONS,                          // what this process is running (see status)
+          build: RUNNING_BUILD.digest,                         // the version proof (see RUNNING_BUILD)
+          suspended: core.suspended || null,
           // the same reading, bound to this node's identity — see the block above
           ...(stmt && sig && pk ? { stmt, sig, pk } : {}),
         };

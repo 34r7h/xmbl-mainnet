@@ -64,14 +64,14 @@ Not a question: the fleet contract is mine to require. handoff-claude has the re
 `nonce` on `/api/v1/xmbl/anchors/canonical`; envelope 099e46a4). **Proof:** after a rebuild,
 anchors carrying an xid == anchors in the feed.
 
-### A7. One coordinated re-anchor so every node builds the same cubes?
-**Why it's open.** Nodes agree on *blocks* now (content ids), but faces and cubes are placed by
-`hash`, which still covers the envelope (who relayed it, their signature), so two honest nodes
-holding identical anchors still seal different cubes. Making `hash` content-only is a wire-format
-change: old and new nodes cannot verify each other's cubes, so it needs the whole fleet to rebuild
-from canonical at the same moment (every node runs `rebuild_ledger` once on the new version).
-**Ask.** Schedule it with the 0.1.11 bundle rollout (a) or defer (b). Coupled with A5.
-**Proof:** `list_cube_keys` returns the same `set_digest` on every live node.
+### A7. One coordinated re-anchor — DECIDED 2026-09-16: yes, with the rollout
+The operator's rule: every change rolls out to every node; a node proves it runs the latest version or is
+suspended until updated; updates are automatic, over the air. Built as software (gates "Rollout policy"):
+the version proof (`build` digest in the signed claim), self-suspension behind npm `latest`, the OTA loop
+in `xmbl-node`. The block hash is content-only now and every tx is typed by its xid, so block ids and hashes
+changed: one canonical rebuild on every node follows the rollout — sent to handoff-claude with the bundle
+and broker-side requirements. **Proof:** every live node's claim carries the same `build` digest and
+`list_cube_keys` returns the same `set_digest` everywhere.
 
 ### A8. The fleet runs `@xmbl/core` — SENT 2026-09-16
 Not a question. handoff-claude has the requirement (bundle = `@xmbl/core@^0.1.11` running its
@@ -167,6 +167,15 @@ version pinned in the script and in CI, into its own artifact; `wasm-schemes.js`
 `build-mayo-cube-wasm.sh --check` matches the recorded sha; the identity suite count is unchanged
 with both schemes loaded.
 
+### B10. Typed-by-xid protocol + rollout policy — DONE 2026-09-16 (operator directives)
+Every tx typed by its xid (tokens.json codes, `micromineTx`, untyped rows deleted, anchors carry `prior`),
+consensus validates in order (can-happen → xid → placement), content-only block hashes, version proof +
+self-suspension + OTA in `@xmbl/core`. What remains is the consumer side, sent to handoff-claude: `prior`
+on the anchor wire tx and in the canonical feed (with xid + nonce), the bundle running `@xmbl/core` under a
+supervisor that respawns on exit 75, the broker suspending nodes whose signed claim is behind, and the
+coordinated canonical rebuild. **Proof:** 0 untyped anchors after the rebuild; every node's `build` digest
+equal.
+
 ### Closes by itself
 The cross-cutting "0.x communicates pre-mainnet" line is definitional and closes when the seven
 external reviews return; `AUDIT_GATES_OPEN` flips to `false` in that same reviewed commit.
@@ -182,7 +191,7 @@ A3 EVM backend:          DONE — deployed + executed in-process (16 checks); pu
 A4 EVM comparison:       CLOSED BY SCOPE — no claim exists to prove
 A5 signature domain:     WORK — compatible fix, no wire impact (B7)
 A6 xid in canonical feed: SENT to handoff-claude (099e46a4)
-A7 fleet re-anchor:      with 0.1.11 / defer
+A7 fleet re-anchor:      DECIDED 2026-09-16 — with the rollout; latest-or-suspended + OTA built
 A8 bundle on @xmbl/core: SENT to handoff-claude (099e46a4)
 A9 crossed keypairs:     SENT to handoff-claude (099e46a4) — owner = ____ if it is not usr_fb2446eb53
 A10 packages/visualizer: retire / keep

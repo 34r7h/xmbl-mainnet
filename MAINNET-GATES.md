@@ -366,6 +366,36 @@ continue-on-error, and in the release workflow before any publish).
 
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 
+- [x] **EVERY TRANSACTION IS TYPED BY ITS XID (operator, 2026-09-16).** tokens.json gives every type its xmbl
+      code (identity 1, utxo 2, token_creation 3, contract 4, state_diff 5, tx 6, anchor 7 — the broker's
+      type-7 pointer); the xid = SHA256(oid + nonce) with prefix '0'+code over the type's canonical body
+      (`micromineBody`: type-6 and the anchor pointer keep their golden shapes, every other type is its fields
+      minus the envelope with keys sorted). `micromineTx` mines it; `validateXid` re-derives it. A tx without a
+      verifiable xid is UNTYPED and refused at every door — consensus ingress, ledger admission, boot
+      rehydration (untyped rows DELETED and counted, never evicted: the typed successor is welcome), canonical
+      rebuild (untyped feed rows skipped and reported as `untyped`). A typed forgery is evicted by its xid.
+      Producers mine BEFORE signing (the node, the CLI, the devnet) so the signature covers the xid.
+      MEASURED before the rule: 16,313 of 17,628 anchors on the audited node carried no xid. An anchor's wire
+      tx must now carry `prior` (the previous anchor xid, '' for the first) — the pointer body cannot be
+      re-mined without it; sent to handoff-claude as a fleet-contract requirement together with the canonical
+      feed carrying xid + nonce + prior. — *cubic-ledger/tokens.json; transaction-validator.js; block.js;
+      ledger.js; consensus/validate.js; ingress-guard.test.mjs (+7 refusals); content-id-rekey-on-boot.test.mjs*
+- [x] **THE ORDER OF CONSENSUS VALIDATION (operator, 2026-09-16): 1. can the tx happen, 2. is the xid correct,
+      3. is the geometric placement right.** `consensus/validate.js` names the stages: `validateCanHappen`
+      (shape via `validateShape`, authorization — signed by a sender or content-addressed —, a value that can
+      exist), `validateXidStage`, `validatePlacementStage` (`verifyPlacement`: a block's position is its hash
+      rank among its face's nine, a face's index the rank of its root among the cube's three — re-derived and
+      compared with any claim). Ingress runs 1→2 and names the failing stage in every refusal
+      (`REJECT [can-happen] …` / `[xid]`); every local seal (`sealAgreedBlocks`, `_sealReadyFaces`) asserts 3;
+      `verifyCube` runs 2 unconditionally and 3 before adoption. — *consensus/validate.js; workflow.js;
+      cubic-ledger/deterministic-placement.js; cube-sync.js*
+- [x] **CONTENT-ONLY BLOCK HASH — every node seals the same cubes (A7, operator: rolled out to every node).**
+      `block.hash` = sha256 of the consensus body (the xid; for an anchor {type,event,hash,ts,xid}), never the
+      envelope (relayer, signature, validator clock, submitter id), so two honest nodes holding the same typed
+      set hash-sort identical faces and seal identical cubes; `block.id` is its first 16 hex. A wire-format
+      change: old and new nodes cannot verify each other's cubes, so it ships with the fleet-wide canonical
+      rebuild the operator ordered. — *block.js; cube-sync.js; content-id-eviction.test.mjs; ledger-determinism.test.mjs*
+
 - [x] Ingress guard + invalid-eviction covered by node tests. — *ingress-guard, invalid-eviction*
 - [x] Byzantine / no-fork test matrix drives the **real** `SealRoundManager` across an in-memory
       gossip bus with a partition mask, asserting the one safety property — honest seal-leads
@@ -459,6 +489,33 @@ continue-on-error, and in the release workflow before any publish).
       Parity itself remains future work; the label is the honest, enforced interim. — *crates/crate-status.test.mjs (9/9), in `test:protocol`*
 - [ ] Version `0.x` communicates pre-mainnet. Do **not** cut `1.0.0` until every ⛔ AUDIT gate
       above is closed.
+
+## Rollout policy (operator, 2026-09-16): every node, latest version or suspended, updated over the air
+
+- [x] **A node PROVES the version it runs.** `status` and the SIGNED `chain` claim carry `versions` (what the
+      process loaded) and `build` — a sha-256 over the bytes of every @xmbl module in memory's provenance
+      (`release.js codeDigest`, sorted paths, tests excluded); `release` serves the per-package digests. A
+      version string can be typed; the digest of the code cannot. — *core/release.js; control-socket.js;
+      suspension.test.mjs; release.test.mjs (23/23)*
+- [x] **A node behind the fleet's latest version SUSPENDS ITSELF.** The daemon asks the release source
+      (`XMBL_RELEASE_URL`, default the npm registry's `@xmbl/core` dist-tag — "xmbl npm always latest") every
+      `XMBL_OTA_CHECK_MS` (10 min; first check 5 s after boot); behind → `core.suspend()`: no submits (control
+      socket `submit_tx`/`submit_batch` answer `ok:false, suspended`), no `submitTransaction`, no validation
+      ticks, no seal ticks — reads and the control socket stay up; `status.suspended` and the signed claim say
+      so. An unreachable release source never suspends (latest unknown ≠ behind). — *core/index.js;
+      bin/xmbl-node.js startOta; control-socket.js; suspension.test.mjs (14/14)*
+- [x] **Updates are automatic, over the air.** Behind → `npm install @xmbl/core@<latest>` in the install that
+      owns this core (`installRootOf`; `XMBL_INSTALL_DIR` overrides; a source checkout only suspends — git
+      updates it) → restart onto the new code: exit `75` (`OTA_EXIT_CODE`) under a supervisor (`--ppid` /
+      `XMBL_SUPERVISED=1`), respawn itself when unsupervised, after the ordinary shutdown released pidfile,
+      socket, machine lock and stores. `XMBL_OTA=0` disables the loop; the proof is reported regardless.
+      — *bin/xmbl-node.js; release.js (updateCommand, OTA_EXIT_CODE)*
+- [ ] **The broker enforces it fleet-wide** — handoff-claude's: a node whose signed `chain` claim carries
+      `versions.core` below npm latest, or a `build` digest that is not the published release's, is suspended
+      at the broker (no chain blocks, no anchors accepted) until its next claim proves the latest; the bundle
+      runs `@xmbl/core`'s `xmbl-node` under a supervisor that respawns on exit 75; one coordinated canonical
+      rebuild follows the rollout (block ids and hashes changed). Sent 2026-09-16; closes when every live node's
+      claim carries the same `build` digest.
 
 ## Audit-prep deliverables (author in-repo BEFORE the ⛔ AUDIT reviews)
 

@@ -26,6 +26,13 @@
     contract (`xsc`, `submit_batch`, `ledger_capabilities`, `identity_status`, a signed `chain` claim, honest
     `submit_tx` rejections) and reports the RUNNING versions; boot waits for the stores.
   - every package exports a load-time `VERSION`.
+  - PROTOCOL (operator, 2026-09-16): every transaction is typed by its xid (tokens.json type codes; `micromineTx`/
+    `validateXid`; untyped rows deleted on boot, skipped by a canonical rebuild; an anchor's wire tx carries `prior`);
+    consensus validates in order — can it happen, is the xid correct, is the placement right (`validate.js`,
+    `verifyPlacement`); block hashes are content-only so every node seals the same cubes.
+  - ROLLOUT (operator, 2026-09-16): a node proves its version (`build` digest of the loaded code, signed into the
+    `chain` claim; `release` op), suspends itself when behind the npm `latest` of @xmbl/core (no submits, validations
+    or seals), installs the latest over the air and restarts (exit 75 under a supervisor).
   - lng: ships its BROWSER build — `dist/lng.browser.js` (`@xmbl/lng/browser`), one dependency-free ES module
     generated from the same `src/*.js` the node runs and byte-checked by the gate (same surface, same bytes, runs
     with no Node globals); the sources no longer assume `process`/`Buffer`.

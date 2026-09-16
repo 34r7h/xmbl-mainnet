@@ -62,6 +62,13 @@ export class XMBLCore {
     // Initialize identity system
     this.xid = null; // Will be set when identity is created
 
+    // SUSPENSION (operator, 2026-09-16): a node that cannot prove it runs the fleet's latest version stops
+    // PRODUCING — submits, anchors, validations, seals — until it is updated (the daemon's OTA loop suspends,
+    // updates and restarts it). Reads and the control socket stay up so a supervisor can see why and act.
+    // Reported on `status` and inside the signed `chain` claim. null = producing.
+    this.suspended = null;
+    this.ota = null;   // the daemon's OTA loop state (bin/xmbl-node.js), for status
+
     // Initialize ledger with network integration
     this.xclt = new Ledger({
       dbPath: config.ledger?.dbPath,
@@ -580,6 +587,7 @@ export class XMBLCore {
     // policy decides WHAT to re-gossip + enforces the bound + C#5 (re-emit stored reports, never re-validate); this
     // only injects the read of stuck txs and the two broadcast fns. Kept trivially thin so all logic is testable.
     const tick = () => {
+      if (this.suspended) return;   // a suspended node validates nothing on stale code
       let stuck = [];
       try { stuck = this.xpc.getStuckRawTxs(MIN_AGE_MS, MAX_AGE_MS); } catch { return; }
       try {
@@ -639,7 +647,7 @@ export class XMBLCore {
     });
     // Tick both levels: L1 first (its sealed faces feed L2's pool), then L2. Bounded, non-throwing, unref'd.
     const SEAL_MS = Math.max(500, Number(process.env.XPC_SEAL_ROUND_MS) || 2000);
-    this._sealTimer = setInterval(async () => { try { await L1.tick(); await L2.tick(); } catch { /* never throw into the interval */ } }, SEAL_MS);
+    this._sealTimer = setInterval(async () => { if (this.suspended) return; try { await L1.tick(); await L2.tick(); } catch { /* never throw into the interval */ } }, SEAL_MS);   // a suspended node seals nothing
     if (this._sealTimer.unref) this._sealTimer.unref();
   }
 
@@ -740,6 +748,21 @@ export class XMBLCore {
   // references createIdentity() sets. Call this BEFORE start(): start() only mints
   // a fresh identity when none is set (`if (!this.xid)`), so a pre-set identity is
   // preserved and the node's address stays stable across restarts.
+  /** Stop producing until resume(): { reason, detail?, running?, latest? } → the recorded suspension (with `since`). */
+  suspend(reason) {
+    const r = typeof reason === 'string' ? { reason } : { ...(reason || {}) };
+    if (!r.reason) r.reason = 'suspended';
+    this.suspended = { ...r, since: (this.suspended && this.suspended.since) || new Date().toISOString() };
+    return this.suspended;
+  }
+
+  /** Produce again. Returns the suspension that was lifted, or null. */
+  resume() {
+    const was = this.suspended;
+    this.suspended = null;
+    return was;
+  }
+
   setIdentity(identity) {
     this.xid = identity;
     this.xclt.xid = this.xid;
@@ -748,6 +771,13 @@ export class XMBLCore {
   }
   
   async submitTransaction(tx) {
+    // A SUSPENDED NODE PRODUCES NOTHING — checked before identity, before typing, before signing.
+    if (this.suspended) {
+      const e = new Error(`node suspended: ${this.suspended.reason}${this.suspended.detail ? ' — ' + this.suspended.detail : ''}`);
+      e.code = 'SUSPENDED';
+      e.suspended = this.suspended;
+      throw e;
+    }
     if (!this.xid) {
       throw new Error('Identity not initialized');
     }
