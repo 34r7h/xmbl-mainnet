@@ -106,7 +106,7 @@ diff -rq packages/identity/mayo-cube/include /tmp/mayo-up/include # identical
 ---
 
 ## T2.1-b — reproducible build (status: **inputs pinned + functional equivalence proven;
-byte-identity NOT yet achieved — see the open decision**)
+byte-identity NOT yet achieved — decision taken 2026-09-16, below**)
 
 The build is `packages/identity/build-mayo-cube-wasm.sh`. It pins every build **input**:
 the exact source set, the defines (`-DMAYO_VARIANT=MAYO_1 -DMAYO_BUILD_TYPE_OPT`, and
@@ -144,17 +144,27 @@ Verify: `shasum -a 256 packages/identity/mayo-cube/mayo.{wasm,cjs}`.
   **stripped** (`WebAssembly.Module.customSections(m, "producers")` → empty for both),
   so the exact clang/LLVM/emsdk that emitted the shipped bytes cannot be read back out.
 
-### Open decision for the operator (this is what keeps T2.1-b `[ ]`)
+### The operator's decision (taken 2026-09-16) — and what keeps T2.1-b `[ ]` now
 
 Byte-reproducibility requires pinning the emsdk that produced the shipped artifact, but
-that version is not recorded and not recoverable from the stripped binary. To close
-T2.1-b as *byte-identical* one of the following must be chosen:
+that version is not recorded and not recoverable from the stripped binary. Two ways to
+close T2.1-b as *byte-identical* were put to the operator:
 
 1. **Locate + pin** the original emsdk version (from build-machine history / CI logs),
    add it to CI, and confirm the rebuild matches `e20b15f0…`; or
 2. **Adopt a freshly built artifact as canonical** under a newly pinned emsdk, record
    its sha256 here, and commit that artifact — a deliberate rotation of the signing
    binary, requiring operator sign-off.
+
+**Decision (2026-09-16, operator): neither.** The shipped baseline artifact is NOT rotated and
+the lost emsdk is NOT hunted. MAYO is to be **adapted to the XMBL curve's crypto coordinate
+system** (the cubic geometry behind `CubicCurveSource`) **to reduce its computation
+requirements** — the `'mayo-cube'` scheme slot in `src/wasm-schemes.js` ("MAYO math later")
+becomes a distinct build. That build pins its Emscripten version in `build-mayo-cube-wasm.sh` and
+in CI from its first commit, and T2.1-b closes when `build-mayo-cube-wasm.sh --check` matches the
+sha recorded for it. `e20b15f0…` stays the `'mayo'` baseline, bit-for-bit as committed, until
+then. The adapted scheme is a new construction and joins the cubic-curve external review. Plan
+and work item: `docs/MAINNET-CLOSEOUT.md` A1 / B9.
 
 Until then this doc pins the shipped bytes and the build **inputs**, and the CI gate can
 already enforce the always-true half: the rebuild must pass the identity suite

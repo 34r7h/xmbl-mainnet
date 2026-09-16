@@ -15,19 +15,19 @@ and a node keeps refusing `XMBL_PROFILE=mainnet`, until the seven external revie
 
 ## Part A — decisions (answer yes/no or pick a letter)
 
-### A1. The MAYO signing binary: do we rebuild it and make the rebuild the real one?
-**Why it's open.** `mayo.wasm` (the post-quantum signer every identity uses) is committed as a
-binary. We can rebuild it from pinned source and the rebuild behaves identically (5/5 identity
-suites), but it is not *byte-identical*, because nobody recorded which Emscripten version built
-the shipped file and the binary has that stamp stripped. An auditor will ask "can I rebuild the
-bytes you ship?" and today the honest answer is "functionally, yes; bit-for-bit, no."
-**Options.** (a) Hunt for the original Emscripten version (build-machine history, old CI logs),
-pin it, prove the bytes match — may be unrecoverable. (b) Pin a current Emscripten, rebuild, commit
-the fresh `mayo.wasm` as canonical, record its new sha256 in `MAYO-PROVENANCE.md`. This rotates the
-signing binary on every node at the next bundle update; keys and signatures stay valid (same
-algorithm, same parameters), it is the *file* that changes.
-**Recommendation.** (b). **Proof of closure:** CI rebuilds and `shasum` matches the recorded value.
-Closes T2.1-b and the cross-cutting "reproducible WASM builds" line.
+### A1. The MAYO signing binary — DECIDED 2026-09-16
+**Decision.** Neither (a) locate-and-pin the lost Emscripten nor (b) rebuild-and-adopt fresh
+bytes. MAYO is to be **adapted to the XMBL curve's crypto coordinate system** — the cubic
+geometry behind `CubicCurveSource` (block coordinates, plane normals, the derived parameter
+block) — **to reduce its computation requirements**. That is the `'mayo-cube'` scheme slot in
+`packages/identity/src/wasm-schemes.js`, which today still resolves to the baseline artifact
+("seams now, MAYO math later").
+**What follows.** The shipped `mayo.wasm` (`e20b15f0…`) is not rotated; it stays the baseline
+`'mayo'` scheme until the adapted build lands. The byte-reproducibility requirement (T2.1-b)
+transfers to the adapted build, which pins its Emscripten version in its first commit, so "can you
+rebuild the bytes you ship?" is answered yes from day one. The adapted scheme is a new construction
+and joins the cubic-curve ⛔ external review — it cannot become a mainnet signer on the existing
+MAYO review alone. Work item: **B9**.
 
 ### A2. Who guards the browser copies of the LNG compiler?
 **Why it's open.** The handoff web app ships three hand-copied browser versions of the LNG
@@ -180,6 +180,20 @@ Every package and crate sits on 0.1.11 locally (HEAD `d54ab69`, unpushed). `git 
 without your say-so — it is outward-facing. **Proof:** `npm view @xmbl/<pkg> version` == 0.1.11
 for all twelve; crates.io shows 0.1.11 for all eight.
 
+### B9. MAYO-cube — MAYO on the cubic coordinate system (from A1)
+Spec first, then code. (1) A new whitepaper section (§7 of
+`docs/xmbl-cubic-cryptography-whitepaper.md`) that names which MAYO step the cube coordinates
+enter — MAYO's cost sits in expanding the public matrices from the key seed and in evaluating the
+whipped quadratic map — what the coordinates replace or seed, and what that saves, stated as
+reviewer assumptions the way §2–§5 do. (2) The C under `packages/identity/mayo-cube/` becomes the
+fork its directory name already promises, built by `build-mayo-cube-wasm.sh` under an Emscripten
+version pinned in the script and in CI, into its own artifact; `wasm-schemes.js` repoints
+`'mayo-cube'` to it (one line) while `'mayo'` keeps the baseline. (3) An in-repo benchmark.
+**Proof:** sign and verify CPU-ms per operation for `'mayo-cube'` divided by the same for
+`'mayo'`, plus signature and public-key bytes — that ratio is the deliverable;
+`build-mayo-cube-wasm.sh --check` matches the recorded sha; the identity suite count is unchanged
+with both schemes loaded.
+
 ### Closes by itself
 The cross-cutting "0.x communicates pre-mainnet" line is definitional and closes when the seven
 external reviews return; `AUDIT_GATES_OPEN` flips to `false` in that same reviewed commit.
@@ -189,7 +203,7 @@ external reviews return; `AUDIT_GATES_OPEN` flips to `false` in that same review
 ## Answer key (copy, edit, send back)
 
 ```
-A1 mayo.wasm:            b  (rebuild + adopt)      / a
+A1 mayo.wasm:            DECIDED 2026-09-16 — adapt MAYO to the cubic coordinate system (B9)
 A2 LNG browser panels:   a  (build from package)   / b
 A3 EVM backend:          b  (export only)          / a — testnet key + RPC: ____
 A4 EVM comparison:       b  (drop claim)           / a
@@ -201,6 +215,6 @@ A9 crossed keypairs:     owner = ____
 A10 packages/visualizer: retire / keep
 A11 lwe_decrypt:         won't build / build
 A12 crates:              stubs for 0.1 / port
-B  start now:            all / B1 B2 B3 B4 B5 B6 B7 (pick)
+B  start now:            all / B1 B2 B3 B4 B5 B6 B7 B9 (pick)
 B8 publish 0.1.11:       go / hold
 ```

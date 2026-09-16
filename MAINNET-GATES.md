@@ -456,10 +456,13 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
       documented. *(blocks T2.1-b, T2.1-c)*
 - [ ] **T2.1-b** — reproducible `mayo.wasm` build. DONE: `build-mayo-cube-wasm.sh` pins all build INPUTS
       (sources/defines/flags/exports) + `--check` mode; rebuild passes the identity suite (functional
-      equivalence, 5/5) and its sha is recorded. BLOCKED on an operator decision for BYTE-identity: the
-      shipped artifact's emsdk version is not recorded and not recoverable (wasm `producers` section
-      stripped), and a rebuild under the drifted toolchain is not byte-identical — must either pin the
-      original emsdk or adopt a freshly-built artifact as canonical (see MAYO-PROVENANCE.md T2.1-b).
+      equivalence, 5/5) and its sha is recorded. The shipped artifact's emsdk version is not recorded and
+      not recoverable (wasm `producers` section stripped), so a rebuild under the drifted toolchain is not
+      byte-identical. DECIDED 2026-09-16 (operator): the shipped baseline is NOT rotated and the lost emsdk
+      is NOT hunted — MAYO is to be adapted to the XMBL cubic coordinate system (the `'mayo-cube'` scheme
+      slot in `wasm-schemes.js`) to reduce its computation requirements; that build pins its emsdk from its
+      first commit, and T2.1-b closes when `build-mayo-cube-wasm.sh --check` matches its recorded sha
+      (MAYO-PROVENANCE.md T2.1-b; docs/MAINNET-CLOSEOUT.md A1 / B9).
 - [x] **T2.1-c** — MAYO fork-vs-upstream diff explained: exactly one file differs (`fips202.h` `shake256`
       `int`→`void`, matching upstream's own `void` definition — a stale-forward-declaration build fix, zero
       algorithm change). Committed as `packages/identity/mayo-cube/mayo-fork.diff`; rationale in
