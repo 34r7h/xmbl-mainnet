@@ -43,6 +43,32 @@ export class Identity {
     this.scheme = scheme;
   }
 
+  // CAN THIS IDENTITY SIGN A CHAIN CLAIM, AND IF NOT, WHICH FIELD IS MISSING?
+  //
+  // ⛔ THE FAILURE THIS MAKES VISIBLE. A node attaches its signed statement to the chain claim only when
+  // address && publicKey && privateKey are all present, and the broker builds xmbl.chain SOLELY from a
+  // verified statement — dropping the whole block when there is none. So a node with a public key and no
+  // private key comes up, reports xmbl.up true with full roles, answers `chain` happily, and publishes NO
+  // CHAIN BLOCK AT ALL, with nothing anywhere saying why. MEASURED 2026-09-16: of the four live coordinators
+  // on the network, three were in exactly this state — two reporting up with no chain block, one failing its
+  // identity query outright — and the only way anyone could tell the three apart was to open a shell on each
+  // box. This answers it from the node itself: `can_sign` false with `missing` naming the field.
+  //
+  // Never returns key material. `missing` is a list of field NAMES.
+  signingStatus() {
+    const missing = [];
+    if (!this.publicKey) missing.push('publicKey');
+    if (!this.privateKey) missing.push('privateKey');
+    if (!this.address) missing.push('address');
+    return {
+      can_sign: missing.length === 0,
+      missing,
+      address: this.address || null,
+      scheme: this.scheme || null,
+      verify_only: !!this.publicKey && !this.privateKey,
+    };
+  }
+
   /**
    * Create a new identity with generated keypair
    * @returns {Promise<Identity>} New identity instance
