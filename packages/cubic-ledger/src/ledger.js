@@ -48,7 +48,7 @@ export class Ledger extends EventEmitter {
     // EVICTED FOR GOOD. A tx this node has rejected as invalid is recorded by content key and refused on
     // every later path — a resubmission is not re-validated, not re-logged and never written. The set is a
     // keyspace of its own (`evicted:`), so it survives a restart AND a canonical rebuild: rebuildFromAnchors
-    // clears block:/cube:/face:/pool: and deliberately does not touch this one. Operator's rule, verbatim:
+    // clears block:/cube:/pool: and deliberately does not touch this one. Operator's rule, verbatim:
     // "if a tx is invalid, it's evicted and never seen again."
     this._evicted = new Set();
     
@@ -438,7 +438,12 @@ export class Ledger extends EventEmitter {
     this.pendingFacesByLevel = new Map();
     this.nextCubeId = 0;
     if (this._dbOpen) {
-      for (const pfx of ['block:', 'cube:', 'face:', 'pool:']) {
+      // FACES ARE DERIVED STATE, NOT A KEYSPACE. No code path has ever written a `face:` row — blocks are
+      // persisted, cubes are persisted, and a face is re-sealed deterministically from its nine blocks on
+      // every boot and every rebuild (that determinism is the whole convergence argument). Clearing a
+      // keyspace nobody writes is a phantom: it read as durable face state that a rebuild had to discard,
+      // which is exactly backwards. The in-memory formation state above IS the reset.
+      for (const pfx of ['block:', 'cube:', 'pool:']) {
         try { await this.db.clear({ gte: pfx, lt: pfx.slice(0, -1) + ';' }); } catch { /* in-memory fallback */ }
       }
     }

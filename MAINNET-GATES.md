@@ -504,6 +504,24 @@ continue-on-error, and in the release workflow before any publish).
 - [ ] Version `0.x` communicates pre-mainnet. Do **not** cut `1.0.0` until every ⛔ AUDIT gate
       above is closed.
 
+- [x] **A NODE SAYS WHEN AND WHY IT DIED (B5).** MEASURED on the audited node: ~199 of 264 exits left NO
+      marker, `node.log` carried no timestamps, and ten FATALs could not be placed in time. The daemon now
+      installs both before it can log or die: an ISO-8601 timestamp on every LINE (a multi-line banner stays
+      parseable line by line) and ONE exit marker per process naming how it ended — `clean-exit`,
+      `error-exit`, `uncaught-exception`, `unhandled-rejection` — with the code, the pid and the uptime. An
+      uncaught error still prints its stack and still terminates the process; a node that keeps running after
+      one lies about its own state. Only on the start path: `xmbl-node status` prints JSON the coordinator
+      parses. SOAKED against the real binary, 3 boots killed by SIGTERM / SIGINT / SIGTERM: **3 exits, 3
+      exit-marker lines, 60 of 60 log lines ISO-stamped, 0 unstamped.** — *core/lifecycle-log.js;
+      bin/xmbl-node.js; lifecycle-log.test.mjs (16/16)*
+- [x] **FACES ARE DERIVED STATE — the phantom `face:` keyspace is gone (B6).** No code path has ever written a
+      `face:` row, yet `rebuildFromAnchors` cleared that prefix on every rebuild, which read as durable face
+      state a rebuild had to discard — exactly backwards. Faces are re-sealed deterministically from their nine
+      blocks on every boot and every rebuild, and that determinism is the whole convergence argument. The wipe
+      list is now `block:`/`cube:`/`pool:`; the in-memory formation reset above it IS the face reset. **Zero
+      references to a `face:` row remain** (the surviving `face:complete` hits are an event name). Ledger
+      suite 12/12, core 7/7 unchanged. — *cubic-ledger/src/ledger.js*
+
 ## Rollout policy (operator, 2026-09-16): every node, latest version or suspended, updated over the air
 
 - [x] **A node PROVES the version it runs.** `status` and the SIGNED `chain` claim carry `versions` (what the

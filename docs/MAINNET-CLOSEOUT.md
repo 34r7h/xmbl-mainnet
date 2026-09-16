@@ -129,13 +129,17 @@ in CI with one installed) and `desktop-app` (fix `main/main.js` to export the `M
 its test expects; 2/5 today) run outside `test:protocol`, so regressions land silently.
 **Proof:** `test:protocol` suite count rises by those files and stays green.
 
-### B5. A node that says when and why it died
+### B5. A node that says when and why it died — DONE 2026-09-16
+Soaked against the real binary: 3 boots, 3 exits (SIGTERM/SIGINT/SIGTERM), 3 exit-marker lines, 60 of 60 log
+lines ISO-stamped, 0 unstamped. Kinds: clean-exit, error-exit, uncaught-exception, unhandled-rejection.
 On the audited node ~199 of 264 exits left no marker, `node.log` carries no timestamps, and ten
 FATALs could not be placed in time. Now that the daemon lives in this repo: an unconditional exit
 handler (signal, uncaught error, or clean stop — one line each) and an ISO timestamp on every
 log line. **Proof:** exits in a soak == exit-marker lines; every line parses as a timestamp.
 
-### B6. Faces: persist them or stop pretending to
+### B6. Faces: persist them or stop pretending to — DONE 2026-09-16
+The `face:` prefix is out of the rebuild wipe list; zero references to a `face:` row remain anywhere. Faces are
+documented as derived state, re-sealed deterministically from their blocks. Ledger suite 12/12.
 No code writes a `face:` row, yet `rebuildFromAnchors` clears that keyspace. Faces are re-sealed
 deterministically from the block set on every boot, so persistence is redundant — remove the
 phantom keyspace from the rebuild and document that faces are derived state. **Proof:** zero

@@ -37,6 +37,7 @@ import { createControlServer } from '../control-socket.js';
 import { createMetricsServer } from '../metrics-server.js';
 import { ensureIdentityAtPath, loadIdentityAtPath } from '@xmbl/identity';
 import { loadOrCreatePeerKey } from '@xmbl/networking';
+import { installTimestampedLogging, installExitMarkers } from '../lifecycle-log.js';   // B5: every line stamped, every exit marked
 // NOTE: XMBLCore is imported lazily inside `start` only. Importing core/index.js
 // pulls in xvsm/xpc/xsc, which print startup banners at module-load time — that
 // would pollute the machine-readable stdout of `status`/`stop`, which are pure
@@ -179,6 +180,10 @@ let detachPpidWatch = null;
 let detached = false;
 
 async function cmdStart(cfgPath, flags = {}) {
+  // B5 — installed FIRST, before anything can log or die, so a node that fails during boot still says so.
+  // Only on the start path: `xmbl-node status` prints JSON the coordinator parses and must stay unprefixed.
+  installTimestampedLogging(console);
+  installExitMarkers();
   const startTime = Date.now(); // for the metrics uptime counter
   const cfg = loadConfig(cfgPath);
   const dataDir = path.resolve(cfg.data_dir);
