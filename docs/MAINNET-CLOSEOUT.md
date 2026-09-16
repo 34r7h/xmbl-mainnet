@@ -208,9 +208,11 @@ consensus is refused at the ledger.
 ### B8. Tag and publish 0.1.11 through the workflow — npm DONE 2026-09-16; crates BLOCKED
 Tagged `v0.1.11` at `9386ee9` and pushed the tag alone, after `main` went green on Linux. **npm: all
 twelve published with provenance.** MEASURED by `npm view @xmbl/<pkg> version` after the run, not from
-the workflow log: core, identity, networking, cubic-ledger, state-machine, consensus, storage-compute,
-zero-knowledge, contracts, simulator, cli == 0.1.11; lng was accepted by the registry with a sigstore
-provenance entry and is still propagating ("your package is being processed").
+the workflow log: **all twelve report `latest` == 0.1.11 and resolve `@xmbl/<pkg>@0.1.11`** — core,
+identity, networking, cubic-ledger, state-machine, consensus, storage-compute, zero-knowledge, lng,
+contracts, simulator, cli. (lng took several minutes longer than the rest: npm's provenance path returns
+"your package is being processed" and the packument served from the CDN reads stale until it lands, so
+a check run immediately after the workflow goes green will under-report.)
 
 Three things had to be fixed before the tag would have published anything, and the first two would
 have burned the tag:
