@@ -17,6 +17,9 @@
     "CHANGELOG.md"
   ],
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "publishConfig": {
     "access": "public"
   },

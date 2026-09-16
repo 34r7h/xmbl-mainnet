@@ -8,6 +8,9 @@
     "./xcl": "./src/xcl/index.js"
   },
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "publishConfig": {
     "access": "public"
   },

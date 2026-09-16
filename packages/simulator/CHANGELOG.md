@@ -74,6 +74,13 @@
     (was 80.6%). `scripts/coverage-report.mjs` is the instrument: `NODE_V8_COVERAGE` + a V8-range reducer,
     since nothing in the tree measured coverage at all. Ten protocol files that no suite had ever loaded now
     have one; four remain, all process entry points.
+  - NODE 22 IS NOW DECLARED, because it was already REQUIRED. Every published package gains
+    `engines: { node: ">=22" }`; the workspace root's `">=20"` was simply false. `@xmbl/identity` imports
+    `node:sqlite` (Node 22.5+) for the durable nonce registry, `@xmbl/storage-compute` meters jobs with
+    `process.threadCpuUsage` (22.10+), and libp2p's own dependency chain calls `Promise.withResolvers`
+    (22.0). On Node 20 a consumer installed cleanly and crashed at import instead of being told at install
+    time. MEASURED: the protocol gate scores 54/75 on Node 20.20.2 and 75/75 on Node 22 — the twenty-one
+    failures were the runtime, not the code. CI and the release workflow now run Node 22 as well.
 
 All notable changes to the `xsim` module will be documented in this file.
 

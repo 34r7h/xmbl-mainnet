@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       # HARD GATE. The eight protocol packages carry the consensus/crypto/isolation
@@ -57,7 +57,7 @@ jobs:
       - uses: mymindstorm/setup-emsdk@v14
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - name: Build MAYO-cube WASM
         working-directory: packages/identity
         run: npm run build:wasm --if-present

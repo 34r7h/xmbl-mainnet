@@ -12,6 +12,9 @@
     "selftest": "node src/xzk.js && node src/fri.js"
   },
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "publishConfig": {
     "access": "public"
   },
