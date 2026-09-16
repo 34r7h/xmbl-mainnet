@@ -1,0 +1,4 @@
+{
+  "//": "CommonJS (require/module.exports), same as main/ and preload/ — see those markers. The package root declares \"type\": \"module\" for the ESM renderer.",
+  "type": "commonjs"
+}

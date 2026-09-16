@@ -543,6 +543,19 @@ continue-on-error, and in the release workflow before any publish).
       cube.js, timestamps.js, deterministic-placement.js; core/index.js, lead-worker.js;
       simulator/devnet.test.mjs (27 checks)*
 
+- [x] **THE CLIENT SUITES ARE IN THE HARD GATE (B4) — 61 → 65 suites.** `cli` (41 tests) and `desktop-app`
+      (5) are jest suites that `run-node-tests.mjs` never ran, so they could regress silently; the runner now
+      skips `__tests__` (a jest suite cannot be run by plain `node`) and each package carries one
+      `jest-suite.test.mjs` that runs the real jest process and exits with its status. `browser-extension`'s
+      two node suites join directly; its Playwright check still needs a Chromium binary and stays on demand
+      (`npm run verify:extension`). **desktop-app was 2/5 and is now 5/5** — three real defects, not test
+      noise: `main/main.js` exported a constructed INSTANCE (so `new MainProcess()` threw "not a constructor")
+      and booted the app as an import side effect, `createWindow()` returned nothing so no caller could reach
+      the window it made, and four directories of CommonJS files sat under a `"type": "module"` package, which
+      is why the suite could not even load. A recording `electron` double lets the real main-process code run
+      outside Electron. — *scripts/run-node-tests.mjs; packages/{cli,desktop-app}/jest-suite.test.mjs;
+      desktop-app/main/main.js, __mocks__/electron.cjs, jest.config.cjs*
+
 ## Rollout policy (operator, 2026-09-16): every node, latest version or suspended, updated over the air
 
 - [x] **A node PROVES the version it runs.** `status` and the SIGNED `chain` claim carry `versions` (what the

@@ -1,0 +1,4 @@
+{
+  "//": "These files are CommonJS (require/module.exports). The package declares \"type\": \"module\" for the ESM renderer and src, which mislabelled them — Electron loads main/preload as CommonJS and jest could not load the tests at all under --experimental-vm-modules. This marker states the dialect the files are actually written in.",
+  "type": "commonjs"
+}

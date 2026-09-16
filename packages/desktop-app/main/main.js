@@ -163,6 +163,11 @@ class MainProcess {
     win.on('closed', () => {
       this.windows.delete(win.id);
     });
+
+    // RETURN THE WINDOW. Every caller wants the handle — the `activate` handler, the tray, and the test that
+    // asserts a window was created — and this returned undefined, so the only way to reach a window was to
+    // reach into this.windows by an id the caller did not have.
+    return win;
   }
 
   createTray() {
@@ -201,8 +206,16 @@ class MainProcess {
   }
 }
 
-// Start main process
-const main = new MainProcess();
-main.init().catch(console.error);
+// EXPORT THE CLASS, START ONLY AS THE ENTRY POINT (B4). This exported the constructed INSTANCE and called
+// init() at import time, so `new MainProcess()` threw "not a constructor" and merely requiring the module
+// booted a node and an Electron app as a side effect — which is why 3 of the 5 desktop tests failed and why
+// this suite could not join the hard gate. Under Electron `require.main === module` is true for the main
+// entry, so the app still starts exactly as before; a test (or any other importer) gets the class alone.
+module.exports = MainProcess;
+module.exports.MainProcess = MainProcess;
 
-module.exports = main;
+if (require.main === module) {
+  const main = new MainProcess();
+  main.init().catch(console.error);
+  module.exports.instance = main;
+}

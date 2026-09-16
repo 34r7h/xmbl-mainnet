@@ -19,7 +19,12 @@ function findTests(dir) {
   let entries;
   try { entries = readdirSync(dir); } catch { return out; }
   for (const name of entries) {
-    if (name === 'node_modules' || name === '.git' || name === 'target') continue;
+    // `__tests__` is the JEST convention, and a jest suite cannot be run by plain `node` — it would fail on
+    // the first `describe`. Those packages (cli, desktop-app) each carry a `jest-suite.test.mjs` wrapper that
+    // runs the real jest process and exits with its status, so the suite IS in this gate; it just enters
+    // through one door instead of eleven. Skipping the directory here is what stops the runner double-counting
+    // those files as failures (B4).
+    if (name === 'node_modules' || name === '.git' || name === 'target' || name === '__tests__') continue;
     const p = join(dir, name);
     const st = statSync(p);
     if (st.isDirectory()) out.push(...findTests(p));

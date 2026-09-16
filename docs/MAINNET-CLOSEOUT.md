@@ -123,7 +123,11 @@ cube `set_digest` at the end. **Proof:** roots equal, digests equal, across N ch
 surface where the module runs in a browser, Node otherwise). **Proof:** MODULE-STATUS column flips
 ✗→✓ per module, each backed by a runnable file in the gate.
 
-### B4. Put the client suites in the hard gate
+### B4. Put the client suites in the hard gate — DONE 2026-09-16
+`test:protocol` went 61 → 65 suites: cli (41 tests) and desktop-app (5) enter through a jest wrapper each, and
+the browser-extension's two node suites directly. desktop-app went 2/5 → 5/5 by fixing the instance-export, the
+window that was never returned, and CommonJS files under a `"type": "module"` package. The extension's
+Playwright check stays on demand (needs Chromium).
 `cli` (41/41 today), `browser-extension` (Playwright, needs a Chromium binary — run on demand or
 in CI with one installed) and `desktop-app` (fix `main/main.js` to export the `MainProcess` class
 its test expects; 2/5 today) run outside `test:protocol`, so regressions land silently.

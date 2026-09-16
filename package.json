@@ -2,7 +2,7 @@
   "name": "xmbl-mainnet",
   "version": "0.1.0",
   "private": true,
-  "description": "XMBL mainnet monorepo — eXtensible Modular Blockchain Ledger. Decoupled modules published to npm (JS/WASM) and crates.io (Rust), plus the real-time blockchain visualizer and the XMBL app builder.",
+  "description": "XMBL mainnet monorepo \u2014 eXtensible Modular Blockchain Ledger. Decoupled modules published to npm (JS/WASM) and crates.io (Rust), plus the real-time blockchain visualizer and the XMBL app builder.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -19,7 +19,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "test:protocol": "node scripts/run-node-tests.mjs packages/core packages/identity packages/networking packages/cubic-ledger packages/state-machine packages/consensus packages/storage-compute packages/zero-knowledge packages/lng packages/contracts packages/simulator crates tests reproductions",
+    "test:protocol": "node scripts/run-node-tests.mjs packages/core packages/identity packages/networking packages/cubic-ledger packages/state-machine packages/consensus packages/storage-compute packages/zero-knowledge packages/lng packages/contracts packages/simulator packages/cli packages/desktop-app packages/browser-extension crates tests reproductions",
     "lint": "npm run lint --workspaces --if-present",
     "visualizer": "npm run dev -w apps/visualizer",
     "app-builder": "npm run dev -w apps/app-builder",
