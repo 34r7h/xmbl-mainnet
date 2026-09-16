@@ -204,6 +204,39 @@ version pinned in the script and in CI, into its own artifact; `wasm-schemes.js`
 `build-mayo-cube-wasm.sh --check` matches the recorded sha; the identity suite count is unchanged
 with both schemes loaded.
 
+**(1) and (3) DONE 2026-09-16; (2) is an OPERATOR DECISION, not a build task.** §7 of the
+whitepaper is written and the instrument exists (`packages/identity/bench-mayo-schemes.mjs`,
+baseline 1.00× — both tags resolve to one artifact — cpk 1420 B, sig 454 B; identity suite 6/6
+unchanged). What §7 establishes, by measurement rather than assertion
+(`packages/identity/profile-mayo-cost.sh`, MAYO_1 opt in WASM under node):
+
+- **The premise holds, hard.** `mayo_expand_pk` is **85.7% of verify** (0.524 of 0.612 ms) and
+  `mayo_expand_sk` is **72.6% of sign** (0.758 of 1.045 ms). 144,495 bytes of P1‖P2 are
+  re-derived from a 16-byte seed by AES-128-CTR on every single verification.
+- **So any insertion point that is not the expansion is bounded at ≤14.3% of verify / ≤27.4% of
+  sign, however good it is.** Seeding `seed_pk` from the cube address saves exactly 0.000 ms.
+- **The one insertion point that can move the number is the one that cannot be signed off here.**
+  Generating P1/P2 from cube coordinates means asserting that 144,495 bytes of GF(16) public-matrix
+  entries derived from public, low-entropy, signer-influenceable coordinates stay indistinguishable
+  from uniform and keep MAYO's rank profile — §2.2's MinRank question transplanted into a
+  multivariate signature scheme, where a distinguisher is a key-recovery route, not a
+  certificational weakness. Recorded as open assumptions **M2/M3** in §6's table.
+- **A bigger, assumption-free number was found while measuring.** `signer.js` calls
+  `MAYOWasm.load()` inside both `sign()` and `verify()` — a fresh WASM module per call. Measured:
+  load 1.270 ms, `verifySync` on a loaded module 0.725 ms, public `verify()` 1.294 ms. **44% of
+  every public verification is module instantiation**; the exported API costs **1.8×** the
+  verification it performs. Caching the module, and the expanded public key per signer, bounds a
+  repeat-signer verification at 1.294 ms → 0.088 ms with no new construction and no external review.
+- **Part (2) is blocked on provenance anyway.** `emcc` here self-reports `4.0.24-git` (a snapshot,
+  not a pinnable release) while the package manager says 5.0.0, and `--check` already reports DIFF
+  against the shipped artifact (documented T2.1-b). A second artifact needs a pinned emsdk commit,
+  a recorded sha *per scheme*, and a `--check` that knows which scheme it is checking.
+
+**The decision the operator owns:** whether MAYO-cube proceeds into external review as a new
+construction (7.2.2, the only route to real CPU savings, carrying M2/M3), or whether A1's goal —
+"reduce its computation requirements" — is served first by the two measured, assumption-free wins
+in §7.3. §7 does not choose; it states what each costs.
+
 ### B10. Typed-by-xid protocol + rollout policy — DONE 2026-09-16 (operator directives)
 Content-addressed admission included: stage 1 reads tokens.json `authority`, so an unsigned type-7 anchor
 from the node-less broker is admitted on its xid (measured: a live core returned a rawTxId where it returned

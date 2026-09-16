@@ -435,8 +435,205 @@ CLASSICAL-ONLY and is labelled as such in-source. Post-quantum signing is MAYO
 | S2 | Nonce `k` uniform & unique per signature | Assumption | Random sampling; RFC-6979 hardening not implemented (§5.2) |
 | S3 | Spatial non-transferability | Heuristic | Domain separation, not a hardness claim (§5.3) |
 | Q1 | All secp256k1 primitives broken by Shor | Fact | Classical-only; PQ path is MAYO / Cubic-LWE (§5.4) |
+| M1 | MAYO's cost is dominated by expanding P1/P2 from the key seed | Measured | 85.7% of verify, 72.6% of sign (§7.1) |
+| M2 | Coordinate-derived P1/P2 keep MAYO's public matrices indistinguishable from uniform | **Open** | **NOT established; this is the MinRank question A2 asks, moved into a multivariate scheme (§7.2.2)** |
+| M3 | A signer cannot choose its cube address to obtain favourable public matrices | Open | Same grinding surface as O2, now load-bearing for a signature scheme (§7.2.1) |
 
 Nothing in this document asserts that the novel constructions are secure. It
 states precisely what must be attacked (A2, O1, O2, S3) and what is inherited from
 well-studied cryptography (S1). Reliance on any construction here awaits the signed
 external report closing the matching ⛔ AUDIT gate in `MAINNET-GATES.md`.
+
+---
+
+## 7. MAYO-cube — adapting MAYO to the cubic coordinate system (gate B9)
+
+### 7.0 Status
+
+**Nothing is built.** `packages/identity/src/wasm-schemes.js` maps both the `'mayo'`
+and `'mayo-cube'` tags to the one vendored MAYO-C artifact, and says so in its own
+comments. This section is the *spec first* half of MAINNET-CLOSEOUT B9: it states
+where MAYO's cost actually is (measured, not assumed), enumerates the points at which
+cube coordinates could enter, and — for each — what it would save and what assumption
+it would add. It deliberately does **not** propose a construction, because the only
+insertion point that would save meaningful CPU is also the one that moves §2.2's
+MinRank question inside a multivariate signature scheme, and this document does not
+have the authority to discharge that.
+
+The parameter set throughout is **MAYO_1** (`include/mayo.h`): `n = 86`, `m = 78`,
+`o = 8`, `v = 78`, `k = 10`, over `GF(16)`. Compact public key 1420 bytes (a 16-byte
+`seed_pk` plus 1404 bytes of `P3`), compact secret key 24 bytes, signature 454 bytes.
+Expanded, the public key is `P1 = 120,159` + `P2 = 24,336` + `P3 = 1,404` bytes.
+
+### 7.1 Where MAYO's cost actually is — measured
+
+B9 asserts the cost sits in expanding the public matrices. That is an assertion until
+somebody times it, and it decides the whole design question, so it was timed.
+`packages/identity/profile-mayo-cost.sh` builds an instrumented artifact from the same
+sources, defines and includes as `build-mayo-cube-wasm.sh` — adding only the
+`mayo_expand_pk` / `mayo_expand_sk` exports, and never touching the committed binary —
+and `profile-mayo-cost.cjs` times it in WASM under node, which is the runtime a node
+actually runs it in.
+
+MAYO_1 opt, 300 iterations, ms/op (Apple silicon, node v22, emcc 4.0.24-git):
+
+| operation | ms/op | share |
+|---|---|---|
+| `mayo_expand_pk` | 0.524 | **85.7% of verify** |
+| `mayo_expand_sk` | 0.758 | **72.6% of sign** |
+| `crypto_sign_verify` (total) | 0.612 | — |
+| `crypto_sign_signature` (total) | 1.045 | — |
+| `crypto_sign_keypair` | 0.678 | — |
+
+**The premise holds, and hard.** 144,495 bytes of `P1‖P2` are re-derived from a 16-byte
+seed by AES-128-CTR (`PK_PRF`, `src/mayo.c:18`) on *every* verification. Everything else
+verify does — SHAKE over the message, two `decode`s, `eval_public_map`, one `memcmp` —
+costs 0.088 ms combined.
+
+Two consequences follow immediately, and they set the rest of this section:
+
+1. Any change that does not touch the expansion is bounded above by **14.3% of verify**
+   and **27.4% of sign**, no matter how good it is.
+2. A verify handed an already-expanded key costs 0.088 ms — **7.0× less** — with no
+   change to MAYO at all.
+
+### 7.2 The three insertion points
+
+#### 7.2.1 `seed_pk` derived from the cube address
+
+MAYO's `seed_pk` is 16 public bytes carried inside the compact public key. Deriving it
+from a signer's cube address (§3.1's `cubeAddress`, or the plane normal `n`) instead of
+from `seed_sk` binds a key to a position in the ledger geometry.
+
+*What it replaces:* the provenance of 16 bytes. *What it saves:* **nothing** —
+`expand_P1_P2` runs identically whatever the seed's origin, so this is 0.000 ms of the
+0.524 ms. It could shrink the compact public key by up to 16 bytes (1420 → 1404) where
+the address is already known to the verifier.
+
+*What it adds:* **M3.** A signer that can choose its cube address can choose its public
+matrices. §2.5 already treats coordinate grinding as a ledger-consensus assumption
+rather than a cryptographic one; making `seed_pk` a function of the address makes that
+assumption load-bearing for a *signature scheme*, where the attacker's search is over
+their own key material and is therefore unbounded by consensus. This is the cheap change
+and it buys no CPU.
+
+#### 7.2.2 The `P1`/`P2` expansion — where the cost is, and the assumption it would add
+
+This is the 85.7%. Replacing `PK_PRF` with a generator that produces `P1`/`P2` directly
+from cube coordinates — plane normals, block coordinates, the derived `(a, b)` parameter
+block of §3.1 — is the only insertion point that can move the number materially.
+
+*What it replaces:* AES-128-CTR expansion of 144,495 bytes. *What it could save:* up to
+0.524 ms of a 0.612 ms verify, if the coordinate-structured generator were free, which it
+would not be — the honest bound is "some fraction of 85.7%", and no fraction can be
+claimed before an implementation exists to time.
+
+*What it adds:* **M2, and it is not a small assumption.** MAYO's security rests on the
+public matrices being indistinguishable from uniform random over `GF(16)`; the known
+attacks on Oil-and-Vinegar schemes (MinRank, the Kipnis–Shamir reconciliation and rank
+attacks) all exploit structure in exactly these matrices. §2.2 already states the
+analogous conjecture for the *two* hashed field elements `(a, b)` of the cubic curve.
+Here the same conjecture would have to hold for **144,495 bytes** of matrix entries
+derived from **public, low-entropy coordinates** (§2.1) — a far larger object generated
+from a far smaller and adversarially-influenceable input. A distinguisher is not merely
+a certificational weakness in a multivariate scheme; a rank deficiency is a key-recovery
+route.
+
+This document does not conjecture that such a generator is safe. It records that this
+is the question, that it is the same question as A2 transplanted into a setting where
+the consequences are worse, and that it must be answered by the external review A1
+requires before any code is written — not after.
+
+#### 7.2.3 The whipped quadratic public map
+
+MAYO's "whipping" evaluates the public map on `k` vinegar vectors and combines them with
+the emulsifier polynomial `f_tail`. Re-expressing that combination in cubic coordinates
+is the third insertion point.
+
+*What it replaces:* `eval_public_map` in verify, and the corresponding map evaluation
+plus linear solve in sign. *What it saves:* **bounded by measurement** — at most 14.3%
+of verify and at most 27.4% of sign, and only if the replacement were free.
+
+*What it adds:* a change to the hard problem itself, which is a larger review object than
+7.2.2 for a strictly smaller payoff. Recorded for completeness; not recommended.
+
+### 7.3 Two paths to A1's goal that add no assumption at all
+
+A1's stated purpose is to *reduce MAYO's computation requirements*. Two routes reach that
+purpose without a new construction, and both are measurable facts rather than design
+choices:
+
+**(a) Stop re-deriving what does not change.** Two layers of this, both measured:
+
+*The WASM module itself.* `MAYOWasm.load()` instantiates a fresh module — its own doc says
+"a fresh module per call" — and `signer.js` calls it inside **both** `sign()` and `verify()`.
+Measured: `MAYOWasm.load()` 1.270 ms; `verifySync` on an already-loaded module 0.725 ms; the
+public `verify()` 1.294 ms. So **44% of every public verification is module instantiation**,
+and the exported API costs **1.8×** the verification it performs. This is a lifecycle choice,
+not a cryptographic one, and it is the largest single number in this section.
+
+*The expanded public key.* Of the verification itself, 0.524 ms of 0.612 ms is re-deriving a
+value that depends only on the signer's `seed_pk`. A verifier that keeps the expanded key
+costs 0.088 ms per subsequent verification — **7.0×** — at ~142 KiB of cache per distinct
+signer. Whether that helps is a question about the *call pattern* (does a node verify
+repeated signatures from the same signer?), answerable by counting.
+
+Neither changes a byte of output or a line of MAYO, so neither needs external review. Taken
+together they bound the reachable saving on a repeat-signer verification at roughly
+1.294 ms → 0.088 ms, which is larger than anything §7.2 offers and carries none of its risk.
+
+**(b) Make the expansion itself faster without changing what it produces.** The vendored
+AES is BearSSL's constant-time bitsliced `aes_ct64` (`src/common/aes_c.c`), and the build
+targets portable WASM with no SIMD. Note that `expand_P1_P2` processes only `seed_pk`,
+which is **public by construction** — it is carried in the clear inside every compact
+public key — so the constant-time requirement that motivates the bitsliced implementation
+does not obviously apply to this call site. A table-based or `-msimd128` expansion would
+produce byte-identical output; equivalence is testable exhaustively against the existing
+vectors. Upside is bounded by the same 85.7%, downside is a build-side review, and the
+cryptographic assumptions are unchanged. This is not a cube-coordinate change and so does
+not satisfy A1's letter; it does serve A1's purpose.
+
+### 7.4 What this section does not claim
+
+It does not claim that a coordinate-derived MAYO is secure, insecure, faster, or smaller.
+It claims one measured fact (§7.1), three bounded consequences of it (§7.2), and two
+assumption-free alternatives (§7.3). `'mayo'` remains `DEFAULT_SCHEME` and the shipped
+`mayo.wasm` is not rotated, per A1.
+
+### 7.6 The build side is not ready either (B9 part 2)
+
+A1 requires the adapted build to pin its Emscripten version in its first commit, so
+"can you rebuild the bytes you ship?" is answered yes from day one. Measured on this
+machine, today:
+
+- `emcc --version` reports **`4.0.24-git`** while the package manager reports
+  `emscripten 5.0.0`. A `-git` snapshot is a moving target, not a pinnable release;
+  pinning it means recording the emsdk *commit*, not the version string.
+- `./build-mayo-cube-wasm.sh --check` rebuilds from the committed sources and reports
+  **DIFF** on both files — rebuilt `mayo.wasm` `0024210180bada8b…` against committed
+  `e20b15f0178db35a…`. This is the already-documented T2.1-b state (the emsdk that
+  produced the shipped artifact is not recoverable; the `producers` section is stripped),
+  and functional equivalence is what the identity suite checks.
+
+So a second artifact cannot be introduced reproducibly yet: `--check` compares one
+rebuilt pair against one committed pair and has no notion of *which* scheme it is
+checking. Part 2 of B9 therefore needs, before any MAYO math: a pinned emsdk commit, a
+recorded sha per artifact, and a `--check` that takes the scheme as an argument.
+
+### 7.5 Questions for the reviewer
+
+1. **M2** — can 144,495 bytes of `GF(16)` public-matrix entries be generated from public,
+   low-entropy cube coordinates while remaining indistinguishable from uniform, and while
+   keeping the rank profile MAYO's security argument requires? If not, 7.2.2 is closed and
+   with it the only insertion point that saves meaningful CPU.
+2. **M3** — if `seed_pk` becomes a function of a signer-influenceable cube address, what
+   bounds the signer's search over public matrices, and does any bound survive an attacker
+   who grinds their own key rather than the ledger's coordinates?
+3. Does the constant-time requirement on `expand_P1_P2` bind at all, given that its only
+   secret-independent input is a value published inside the compact public key (§7.3 b)?
+
+The instrument that will decide any of this is already in the repository:
+`packages/identity/bench-mayo-schemes.mjs` measures sign/verify CPU-ms and key/signature
+bytes for both scheme tags through the production loader, so the day `'mayo-cube'` points
+at its own artifact the ratio is produced with no edit. Today it reports 1.00× — both tags
+resolve to the same binary, which is the baseline any adapted build has to beat.

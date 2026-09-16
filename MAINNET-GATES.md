@@ -685,7 +685,19 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
       is NOT hunted — MAYO is to be adapted to the XMBL cubic coordinate system (the `'mayo-cube'` scheme
       slot in `wasm-schemes.js`) to reduce its computation requirements; that build pins its emsdk from its
       first commit, and T2.1-b closes when `build-mayo-cube-wasm.sh --check` matches its recorded sha
-      (MAYO-PROVENANCE.md T2.1-b; docs/MAINNET-CLOSEOUT.md A1 / B9).
+      (MAYO-PROVENANCE.md T2.1-b; docs/MAINNET-CLOSEOUT.md A1 / B9). **Spec-first half authored 2026-09-16
+      as whitepaper §7** with the cost measured rather than asserted (`profile-mayo-cost.sh`):
+      `mayo_expand_pk` is **85.7% of verify**, `mayo_expand_sk` **72.6% of sign**, so every insertion point
+      that is not the P1/P2 expansion is bounded at ≤14.3% / ≤27.4% — and the one that IS the expansion
+      would assert that 144,495 bytes of GF(16) public-matrix entries generated from public, low-entropy,
+      signer-influenceable coordinates stay indistinguishable from uniform (open assumptions M2/M3, §6).
+      Two assumption-free wins were measured on the way: `signer.js` loads a FRESH WASM module inside both
+      `sign()` and `verify()` (load 1.270 ms vs 0.725 ms of actual verification — **44% of every public
+      verify is module instantiation**), and an already-expanded public key makes a repeat verify 7.0×
+      cheaper. The ratio instrument is `packages/identity/bench-mayo-schemes.mjs` (baseline 1.00×, both
+      tags on one artifact). Build side is separately unready: `emcc` here self-reports `4.0.24-git`, a
+      snapshot rather than a pinnable release, and `--check` has one recorded sha for one artifact with no
+      notion of which scheme it is checking (§7.6).
 - [x] **T2.1-c** — MAYO fork-vs-upstream diff explained: exactly one file differs (`fips202.h` `shake256`
       `int`→`void`, matching upstream's own `void` definition — a stale-forward-declaration build fix, zero
       algorithm change). Committed as `packages/identity/mayo-cube/mayo-fork.diff`; rationale in
