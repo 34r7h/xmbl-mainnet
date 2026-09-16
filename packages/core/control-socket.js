@@ -2,6 +2,29 @@ import net from 'net';
 import fs from 'fs';
 import { createHash } from 'crypto';
 import { collectEarnings } from './earnings.js';
+import { sign, VERSION as IDENTITY_VERSION } from '@xmbl/identity';   // the ONE signature seam — a chain claim the broker can verify is signed HERE or nowhere
+import { VERSION as NETWORKING_VERSION } from '@xmbl/networking';
+import { VERSION as CUBIC_LEDGER_VERSION } from '@xmbl/cubic-ledger';
+import { VERSION as STATE_MACHINE_VERSION } from '@xmbl/state-machine';
+import { VERSION as CONSENSUS_VERSION } from '@xmbl/consensus';
+import { VERSION as STORAGE_COMPUTE_VERSION } from '@xmbl/storage-compute';
+import { VERSION as ZERO_KNOWLEDGE_VERSION } from '@xmbl/zero-knowledge';
+import { VERSION as CORE_VERSION } from './index.js';
+
+// THE VERSIONS THIS PROCESS IS RUNNING. Each package reads its own manifest at import time (see the VERSION
+// export in every @xmbl/* root), so this names the code in memory — an install that lands on disk after boot
+// changes the files, not these values. Reported on `status` (the op the coordinator already polls) so nobody
+// has to read node_modules to learn what a node is executing, and never has to trust that reading.
+const RUNNING_VERSIONS = Object.freeze({
+  core: CORE_VERSION,
+  identity: IDENTITY_VERSION,
+  networking: NETWORKING_VERSION,
+  'cubic-ledger': CUBIC_LEDGER_VERSION,
+  'state-machine': STATE_MACHINE_VERSION,
+  consensus: CONSENSUS_VERSION,
+  'storage-compute': STORAGE_COMPUTE_VERSION,
+  'zero-knowledge': ZERO_KNOWLEDGE_VERSION,
+});
 
 /**
  * Local control socket for the xmbl-node daemon — how the handoff coordinator
@@ -20,8 +43,9 @@ import { collectEarnings } from './earnings.js';
  *   unknown:  { ok: false, error: "unknown op" }
  * Bad JSON on a line is ignored (matches the coordinator).
  *
- * Ops: status, peers, wallet, submit_tx, compute_job, roles, detach, leaders, earnings, validations,
- * xsc, store_shard, list_cube_keys, chain, publish, subscribe.
+ * Ops: status, peers, wallet, submit_tx, submit_batch, compute_job, roles, detach, leaders, earnings,
+ * validations, zk, state_tree, apply_backfill, apply_canonical, rebuild_ledger, ledger_capabilities,
+ * identity_status, addrs, connect, xsc, store_shard, list_cube_keys, chain, publish, subscribe.
  * Every op EXCEPT `subscribe` is a single request/reply (no waiter-hold pattern). `subscribe`
  * holds the connection open and STREAMS one JSON line per received pubsub message (the handoff
  * message-relay transport — see handoff src/xmbl-relay.ts). Every handler is wrapped so a throw
@@ -29,6 +53,22 @@ import { collectEarnings } from './earnings.js';
  */
 
 const SUBMIT_TIMEOUT_MS = 5000;
+const SUBMIT_BATCH_MAX = 500;   // one control request must stay bounded; a drainer pages beyond this
+
+// The one reply for "the node admitted nothing" — used by submit_tx and per-entry by submit_batch.
+const rejectedAtIngress = () => ({
+  ok: false, tx_id: null,
+  error: 'rejected at ingress — the node admitted no transaction',
+  hint: 'xpc.submitTransaction returns null when the tx is unsigned, its signature does not verify, its anchor is malformed, or its user is unresolvable; see the node log for the ingress-guard line naming which',
+});
+
+// Ordered semver compare on the MAJOR.MINOR.PATCH triple (no prerelease handling — @xmbl/* never publishes one).
+function semverGte(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0); }
+  return true;
+}
 
 function withTimeout(promise, ms, label) {
   return Promise.race([
@@ -80,7 +120,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
   async function handleOp(req) {
     switch (req.op) {
       case 'status':
-        return { ok: true, ...statusSnapshot() };
+        return { ok: true, ...statusSnapshot(), versions: RUNNING_VERSIONS };
       case 'peers': {
         const peers = core.xn.getConnectedPeers().map((p) => p.toString());
         return { ok: true, peers, count: peers.length };
@@ -229,12 +269,86 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         return { ok: true, ...ledger, state_root };
       }
       case 'submit_tx': {
-        if (!req.tx || typeof req.tx !== 'object') {
+        const tx = (req.params && req.params.tx) || req.tx;   // the coordinator spells it params.tx; the CLI, tx
+        if (!tx || typeof tx !== 'object') {
           return { ok: false, error: 'submit_tx requires a tx object' };
         }
         // Guarded + time-boxed so a control request can never hang the daemon.
-        const txId = await withTimeout(core.submitTransaction(req.tx), SUBMIT_TIMEOUT_MS, 'submit_tx');
+        const txId = await withTimeout(core.submitTransaction(tx), SUBMIT_TIMEOUT_MS, 'submit_tx');
+        // ⛔ ok:true WITH tx_id:null WAS A LIE, and it is the whole reason 0 type-6 value txs ever reached the
+        // chain while the broker's emission ledger recorded 12 as submitted. xpc.submitTransaction returns NULL
+        // from each of its three ingress guards (unsigned, provably-invalid signature, unresolvable user) — a
+        // REJECTION — and this handler reported it as a successful submit, so every rejected emission was marked
+        // submitted upstream with an undefined tx_id and never re-sent. A submit that admitted nothing is not
+        // ok — say so, and name which guards refuse so the caller fixes the envelope instead of re-sending the
+        // same rejected bytes forever.
+        if (!txId) return rejectedAtIngress();
         return { ok: true, tx_id: txId };
+      }
+      case 'submit_batch': {
+        // The batch form the coordinator's drainer sends. Each tx is submitted through the SAME path and
+        // judged by the SAME rule as submit_tx (a null id is a rejection, never a success), and the reply
+        // carries one verdict per input in input order plus the two counts — so a caller can retry exactly
+        // the rejected ones and never marks an admitted-nothing batch as delivered.
+        // Wire shape (handoff src/xvsm-anchor.ts): { op:'submit_batch', params:{ txs:[<tx>, ...] } } — each <tx>
+        // is the identical raw object submit_tx takes. The broker pages history at 500 per command. A re-applied
+        // anchor is a root no-op on this ledger (content dedup) and counts as ACCEPTED, never as an error.
+        const txs = Array.isArray(req.params && req.params.txs) ? req.params.txs : (Array.isArray(req.txs) ? req.txs : null);
+        if (!txs) return { ok: false, error: 'submit_batch requires params.txs[]' };
+        if (txs.length > SUBMIT_BATCH_MAX) return { ok: false, error: `submit_batch capped at ${SUBMIT_BATCH_MAX} txs per call (got ${txs.length})` };
+        const results = [];
+        let accepted = 0, failed = 0;
+        for (const tx of txs) {
+          if (!tx || typeof tx !== 'object') { results.push({ ok: false, tx_id: null, error: 'not a tx object' }); failed++; continue; }
+          try {
+            const txId = await withTimeout(core.submitTransaction(tx), SUBMIT_TIMEOUT_MS, 'submit_batch');
+            if (txId) { results.push({ ok: true, tx_id: txId }); accepted++; }
+            else { results.push(rejectedAtIngress()); failed++; }
+          } catch (e) { results.push({ ok: false, tx_id: null, error: String(e?.message || e) }); failed++; }
+        }
+        // ok iff nothing failed — the one bit the caller reads today; the counts and per-tx results are what a
+        // tracked dispatch resolves against, so a batch that admitted nothing can never be marked delivered.
+        return { ok: failed === 0, accepted, failed, total: txs.length, results };
+      }
+      case 'ledger_capabilities': {
+        // WHAT THE LEDGER THIS PROCESS IS RUNNING CAN DO — answered from the RUNNING code, not the install tree.
+        // The coordinator asks this before issuing `rebuild_ledger`, which wipes the block store and rebuilds it
+        // from the canonical anchor set: on a ledger that does not rescue non-anchor blocks, that op destroys
+        // every value tx, utxo, identity and contract the node holds. `rescues_non_anchor_blocks` is therefore
+        // a VETO, never an authorisation, and it is derived from the loaded module's own load-time version
+        // (rescue landed in cubic-ledger 0.1.4) plus feature detection of the method itself — two reads that
+        // must agree before the answer is true.
+        if (!core.xclt) return { ok: false, error: 'ledger not initialized' };
+        const v = CUBIC_LEDGER_VERSION;
+        const rescues = typeof core.xclt.rebuildFromAnchors === 'function' && semverGte(v, '0.1.4');
+        // Wire shape (handoff coord-xmbl-node.mjs probeLedgerRescue): r.ok, r.capabilities, and
+        // r.capabilities.rescues_non_anchor_blocks STRICTLY === true is the only live grant to run rebuild_ledger;
+        // anything else falls back to apply_canonical (no wipe). The other fields are informational.
+        return {
+          ok: true,
+          version: v,
+          versions: RUNNING_VERSIONS,
+          capabilities: {
+            rescues_non_anchor_blocks: rescues,
+            reports_wiped_count: rescues,                                   // same release
+            evicts_invalid_for_good: typeof core.xclt.evict === 'function', // 0.1.9+: an invalid tx is refused across restarts
+            content_addressed_block_ids: semverGte(v, '0.1.9'),
+            rekeys_legacy_rows_on_boot: semverGte(v, '0.2.0'),
+          },
+        };
+      }
+      case 'identity_status': {
+        // CAN THIS NODE SIGN A CHAIN CLAIM, AND IF NOT, WHY. A node holding a public key and no private key,
+        // or a public and private key from DIFFERENT keypairs, comes up healthy, answers every op, and
+        // publishes no chain block at all — the broker drops an unsigned or badly-signed claim silently. This
+        // is the node saying so itself: present-field check plus a real sign→verify round trip through the same
+        // seam the chain claim uses. Never returns key material.
+        if (!core.xid) return { ok: false, error: 'identity not initialized' };
+        if (typeof core.xid.verifySigning !== 'function') {
+          return { ok: true, ...(core.xid.signingStatus ? core.xid.signingStatus() : { can_sign: !!(core.xid.address && core.xid.publicKey && core.xid.privateKey) }), keypair_consistent: null, source: 'presence-only (identity predates verifySigning)' };
+        }
+        const r = await withTimeout(core.xid.verifySigning(), SUBMIT_TIMEOUT_MS, 'identity_status');
+        return { ok: true, ...r, source: 'identity.verifySigning()' };
       }
       case 'compute_job': {
         if (!core.computeNode) {
@@ -264,7 +378,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         await withTimeout(core.xn.connect(req.address), SUBMIT_TIMEOUT_MS, 'connect');
         return { ok: true, address: req.address };
       }
-      case '@xmbl/storage-compute': {
+      case 'xsc': {
         // STORAGE + COMPUTE, THE MODULE NOBODY COULD PROBE. xsc has been constructed in core all along
         // (StorageNode always; ComputeNode when roles.compute), and its counters reach the metrics HTTP
         // endpoint — which binds 127.0.0.1 INSIDE the node's own host, so the broker, /xmbl/prove and
@@ -464,6 +578,56 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
           }
         } catch { cube_curve = null; }
 
+        // ── THE CLAIM, SIGNED ───────────────────────────────────────────────────────────────────────
+        // Every number above reaches the broker second-hand: the coordinator reads this socket and POSTs
+        // the result to the broker, where an agent key — ANY managed agent key, on any box — was the only
+        // thing standing behind it. So a node's chain reading was whatever its coordinator said it was, and
+        // the broker published it as that node's, by address.
+        //
+        // An xmbl address is SELF-CERTIFYING: deriveAddress(pk) === 'xmb'+sha256(pk)[:40]
+        // (identity/src/identity.js). So a statement signed by THIS node's identity key, carrying its own
+        // address, is the only form of this reading that binds to the node rather than to whoever relayed it.
+        //
+        // `stmt` is a CANONICAL STRING, not an object, and it is what gets signed. A verifier checks the
+        // exact bytes it received and never re-serialises: key order, number formatting and unicode escaping
+        // can then never make a valid claim fail, nor let a published number drift from a signed one.
+        //
+        // It covers EVERY field a consumer publishes as this node's chain — not just state_root. Signing the
+        // root and leaving blocks_persisted unsigned beside it would publish a verified number next to an
+        // unverified one and call the pair verified, which is the same defect one field over.
+        //
+        // ADDITIVE: the top-level fields are unchanged. A node that cannot sign (verification-only identity,
+        // or no identity yet) returns the reading with no stmt — a consumer then treats the chain claim as
+        // unsigned, which is exactly what it is.
+        const blocks_persisted_s = cube_curve ? cube_curve.blocks_persisted : null;
+        const stmtObj = {
+          v: 1,
+          node_address: (core.xid && core.xid.address) || null,
+          // HEIGHT = blocks_persisted: the count of durable `block:` rows, which survives restart. Not
+          // applied_tx_count, and emphatically not tx_count, which is mempool raw+processing+final and
+          // DECREASES as transactions drain.
+          height: blocks_persisted_s,
+          state_root,
+          tx_count,
+          applied_tx_count: stats ? stats.totalTransactions : null,
+          cubes_persisted: cube_curve ? cube_curve.cubes_persisted : null,
+          faces_sealed: cube_curve ? (cube_curve.faces_sealed_since_boot ?? cube_curve.faces_in_memory) : null,
+          blocks_persisted: blocks_persisted_s,
+          mempool: mempool ? { raw: mempool.raw ?? 0, processing: mempool.processing ?? 0, final: mempool.final ?? 0 } : null,
+          versions: RUNNING_VERSIONS,
+          // THE NODE'S OWN CLOCK, inside the signature — the one field a freshness gate depends on is the one
+          // field the node must attest itself.
+          ts: new Date().toISOString(),
+        };
+        let stmt = null, sig = null, pk = null;
+        try {
+          if (core.xid && core.xid.address && core.xid.publicKey && core.xid.privateKey) {
+            stmt = JSON.stringify(stmtObj);
+            sig = await withTimeout(sign(stmt, core.xid.privateKey), SUBMIT_TIMEOUT_MS, 'chain sign');
+            pk = core.xid.publicKey;
+          }
+        } catch { stmt = null; sig = null; pk = null; }   // an unsignable reading is reported UNSIGNED, never as signed
+
         return {
           ok: true,
           state_root,
@@ -473,6 +637,9 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
           state_diffs: stats ? stats.totalDiffs : null,        // xvsm state-diff count
           cube_curve,                                          // the SEALING layer — see above
           recent_tx,                                           // [{ id, type, timestamp }]
+          versions: RUNNING_VERSIONS,                          // what this process is running (see status)
+          // the same reading, bound to this node's identity — see the block above
+          ...(stmt && sig && pk ? { stmt, sig, pk } : {}),
         };
       }
       case 'publish': {
