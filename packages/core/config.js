@@ -85,12 +85,23 @@ export class Config {
   }
 
   _applyEnvOverrides() {
-    // Environment variables override config file
+    // Environment variables override config file.
+    //
+    // The section must be CREATED if the loaded file omits it. These two sections exist in
+    // _getDefaultConfig(), so the no-file path was always safe — but a real config.json that sets only
+    // what the operator cares about (say `{"ledger": {"dbPath": "/srv/ledger"}}`) has no `network` and no
+    // `logging`, and `this.config.network.port = …` then threw "Cannot set properties of undefined"
+    // before the node had done anything. A minimal config file plus XN_PORT is the ordinary operator
+    // case, and it took the daemon down on boot.
+    const section = (name) => {
+      if (!this.config[name] || typeof this.config[name] !== 'object') this.config[name] = {};
+      return this.config[name];
+    };
     if (process.env.XN_PORT) {
-      this.config.network.port = parseInt(process.env.XN_PORT);
+      section('network').port = parseInt(process.env.XN_PORT);
     }
     if (process.env.LOG_LEVEL) {
-      this.config.logging.level = process.env.LOG_LEVEL;
+      section('logging').level = process.env.LOG_LEVEL;
     }
   }
 
