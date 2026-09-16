@@ -1,47 +1,15 @@
 import { EventEmitter } from 'events';
 import { createHash } from 'crypto';
-import { Block } from './block.js';
+import { Block, consensusBody, contentKey } from './block.js';
 import { Face } from './face.js';
 import { Cube } from './cube.js';
 import { SuperCube } from './super-cube.js';
 import { sortFacesByHash } from './placement.js';
 import { sealBlocksIntoFaces } from './face-sealing.js';
 import { Level } from 'level';
-
-// PARSE THE ANCHOR ts THE WAY THE BROKER ACTUALLY SENDS IT. The canonical feed carries `ts` as an ISO
-// STRING ("2026-07-08T22:54:11.727Z"); the previous line here did `Number(a.ts)`, which is NaN for every
-// one of them, and `NaN || 0` is 0. MEASURED on a live ledger 2026-09-16: all 17,628 stored anchor `ts`
-// values are strings, and all 3,967 rows this rebuild had written carried `timestamp` 0n — so cube
-// placement was pinned to the epoch for the entire canonical set and every rebuilt face averaged to 0.
-// The rest of the ledger measures block timestamps in NANOSECONDS (face.getAverageTimestamp multiplies a
-// non-BigInt by 1e6 to get there), so epoch-ms is scaled here rather than stored raw, which the old line
-// also got wrong for the numeric case it was written for. Anything unparseable still yields 0n — that is
-// the honest answer for an anchor that recorded no time, and it is never guessed at from local wall clock.
-export function anchorTimestampNanos(ts) {
-  let ms = null;
-  if (typeof ts === 'bigint') return ts < 0n ? 0n : ts;          // already nanoseconds
-  if (typeof ts === 'number' && Number.isFinite(ts)) ms = ts;
-  else if (typeof ts === 'string' && ts !== '') {
-    ms = /^-?\d+$/.test(ts) ? Number(ts) : Date.parse(ts);       // numeric string, else ISO-8601
-  }
-  if (ms === null || !Number.isFinite(ms) || ms <= 0) return 0n;
-  return BigInt(Math.floor(ms)) * 1000000n;
-}
-
-// The deterministic time of a persisted non-anchor block, or null when the row does not know it.
-// `validationTimestamp` is already NANOSECONDS (stored as a digit string, e.g. "1789470971116000000"),
-// so it is NOT put through anchorTimestampNanos, which reads a numeric string as epoch-ms.
-export function blockTimestampNanos(raw) {
-  const vt = raw?.tx?.validationTimestamp;
-  if (typeof vt === 'bigint') return vt;
-  if (typeof vt === 'number' && Number.isFinite(vt) && vt > 0) return BigInt(Math.floor(vt));
-  if (typeof vt === 'string' && /^\d+$/.test(vt)) return BigInt(vt);
-  const t = raw?.timestamp;
-  if (typeof t === 'bigint') return t;                                   // revived by deserialize
-  if (t && typeof t === 'object' && /^\d+$/.test(t.__bigint__ ?? '')) return BigInt(t.__bigint__);
-  if (raw?.tx?.ts !== undefined) { const ns = anchorTimestampNanos(raw.tx.ts); if (ns > 0n) return ns; }
-  return typeof t === 'number' && Number.isFinite(t) && t > 0 ? null : 0n;
-}
+import { anchorTimestampNanos, blockTimestampNanos } from './timestamps.js';
+export { anchorTimestampNanos, blockTimestampNanos };
+export { consensusBody, contentKey } from './block.js';
 
 export class Ledger extends EventEmitter {
   constructor(options = {}) {
@@ -76,6 +44,12 @@ export class Ledger extends EventEmitter {
     // actions. Track the anchor content keys we already hold and drop a re-submission before it becomes a
     // block. Populated from disk on rehydrate so it survives restarts.
     this._anchorKeys = new Set();
+    // EVICTED FOR GOOD. A tx this node has rejected as invalid is recorded by content key and refused on
+    // every later path — a resubmission is not re-validated, not re-logged and never written. The set is a
+    // keyspace of its own (`evicted:`), so it survives a restart AND a canonical rebuild: rebuildFromAnchors
+    // clears block:/cube:/face:/pool: and deliberately does not touch this one. Operator's rule, verbatim:
+    // "if a tx is invalid, it's evicted and never seen again."
+    this._evicted = new Set();
     
     // Integration: xid for signature verification
     this.xid = options.xid || null;
@@ -94,7 +68,10 @@ export class Ledger extends EventEmitter {
     this.cubeTopic = options.cubeTopic || 'cubes';
 
     // Open database (async, but don't block constructor)
-    this._initDb().catch(() => {});
+    // Hold the boot promise. _initDb opens the store AND rehydrates the pools, the anchor-dedup set and the
+    // eviction list; without a handle on it every caller is racing a sleep, and a count taken mid-rehydration
+    // reads as "empty" rather than "not ready yet" — which is how an unmeasured claim gets made.
+    this._ready = this._initDb().catch(() => {});
     
     // Subscribe to topics if network available
     if (this.xn && this.xn.started) {
@@ -116,6 +93,9 @@ export class Ledger extends EventEmitter {
     }
   }
   
+  /** Resolves once the store is open and the pools, anchor keys and eviction list are loaded. */
+  ready() { return this._ready || Promise.resolve(); }
+
   async _initDb() {
     try {
       await this.db.open();
@@ -193,7 +173,14 @@ export class Ledger extends EventEmitter {
         if (tx && tx.type === 'anchor' && tx.event && tx.hash) this._anchorKeys.add(`${tx.event}:${tx.hash}`);
       }
     } catch { /* no blocks yet */ }
-    this.emit('pools:rehydrated', { pooled: this._membershipPool.length, pendingFaces: this._pendingCubeFaces.length, anchorKeys: this._anchorKeys.size });
+    // Load the eviction list. Cheap (one short keyspace) and it is what makes "never seen again" outlive
+    // this process rather than being a decision the node forgets the moment it restarts.
+    try {
+      for await (const [key] of this.db.iterator({ gte: 'evicted:', lt: 'evicted;' })) {
+        this._evicted.add(key.toString().slice('evicted:'.length));
+      }
+    } catch { /* no evictions yet */ }
+    this.emit('pools:rehydrated', { pooled: this._membershipPool.length, pendingFaces: this._pendingCubeFaces.length, anchorKeys: this._anchorKeys.size, evicted: this._evicted.size });
   }
 
   /**
@@ -233,6 +220,10 @@ export class Ledger extends EventEmitter {
       }
     }
     
+    // EVICTED MEANS EVICTED. Checked before anything else so a tx this node has already rejected costs one
+    // set lookup and touches neither the validator nor the disk.
+    const ckey = contentKey(tx);
+    if (ckey && this._evicted.has(ckey)) return { pooled: this._membershipPool.length, sealedFaces: 0, evicted: true };
     // CONTENT DEDUP: one anchor (event:hash) is one block, forever. A re-submission of an anchor we already
     // hold is a no-op, not a new block — this is what stops the ledger inflating to 3× its real size and the
     // applied counter running to 100k+. Non-anchor txs are unaffected (they carry their own identity).
@@ -241,7 +232,15 @@ export class Ledger extends EventEmitter {
       if (this._anchorKeys.has(akey)) return { pooled: this._membershipPool.length, sealedFaces: 0, duplicate: true };
       this._anchorKeys.add(akey);
     }
-    const block = Block.fromTransaction(tx);
+    let block;
+    try {
+      block = Block.fromTransaction(tx);
+    } catch (error) {
+      // An invalid tx is evicted here, at the door, and recorded so it is never examined again. Without the
+      // record the same bad tx is re-validated and re-logged on every resubmission for the life of the node.
+      if (ckey) await this.evict(ckey, error.message);
+      throw error;
+    }
     // ⛔ DETERMINISTIC FACE MEMBERSHIP — replaces "join the oldest pending face with room, seal on the 9th
     // ARRIVAL". That rule made WHICH nine blocks form a face depend on arrival order, so two nodes given the
     // identical transaction set partitioned it differently and produced different faces, cubes and digests.
@@ -267,7 +266,9 @@ export class Ledger extends EventEmitter {
       throw new Error('addSealedBatch: txs must be an array');
     }
     for (const tx of txs) {
-      // Same content dedup as addTransaction — one anchor (event:hash) is one block on this path too.
+      // Same eviction check and content dedup as addTransaction — this path is not a way around either.
+      const ckey = contentKey(tx);
+      if (ckey && this._evicted.has(ckey)) continue;
       if (tx && tx.type === 'anchor' && tx.event && tx.hash) {
         const akey = `${tx.event}:${tx.hash}`;
         if (this._anchorKeys.has(akey)) continue;
@@ -489,6 +490,113 @@ export class Ledger extends EventEmitter {
   // ADOPT resolution: return the pool items matching the agreed member ids/roots. If fewer than requested are
   // present, the caller (core adoptSet) STALLS — the missing member hasn't arrived yet; commit-2's retry delivers
   // it, and the next tick retries. This is how a minority node converges on the quorum set instead of forking.
+  /**
+   * EVICT A TRANSACTION FOR GOOD. Records the content key durably, deletes any block row still carrying it,
+   * and drops it from the pool and the anchor-dedup set so nothing re-seals it. Returns what it actually
+   * removed, never a claim of success.
+   */
+  async evict(key, reason = 'invalid') {
+    if (!key) return { evicted: false, rows_deleted: 0 };
+    this._evicted.add(key);
+    if (this._dbOpen) {
+      try { await this.db.put(`evicted:${key}`, JSON.stringify({ reason, at: new Date().toISOString() })); }
+      catch { /* in-memory fallback */ }
+    }
+    this._anchorKeys.delete(key);
+    // Scan the keyspace, not this.blocks: addTransaction persists a block and pools it WITHOUT putting it in
+    // this.blocks (that map is populated by seal/rebuild paths), so an in-memory sweep alone deletes nothing.
+    let rows = 0;
+    if (this._dbOpen) {
+      const doomed = [];
+      try {
+        for await (const [k, v] of this.db.iterator({ gte: 'block:', lt: 'block;' })) {
+          let raw; try { raw = JSON.parse(v.toString()); } catch { continue; }
+          if (contentKey(raw && raw.tx) === key) doomed.push(k.toString().slice('block:'.length));
+        }
+      } catch { /* no blocks yet */ }
+      for (const id of doomed) {
+        try { await this.db.del(`block:${id}`); rows++; } catch { /* already gone */ }
+        this.blocks.delete(id);
+      }
+    }
+    for (const [id, block] of [...this.blocks]) {
+      if (contentKey(block.tx) === key) this.blocks.delete(id);
+    }
+    const before = this._membershipPool.length;
+    this._membershipPool = this._membershipPool.filter(b => contentKey(b.tx) !== key);
+    if (before !== this._membershipPool.length) await this._persistMembershipPool();
+    return { evicted: true, rows_deleted: rows, pooled: this._membershipPool.length };
+  }
+
+  /**
+   * RE-KEY THE BLOCK STORE TO CONTENT IDS AND DROP THE REDUNDANT ROWS.
+   *
+   * Rows written before the id addressed consensus content (block.js consensusBody) are keyed by a hash of
+   * the whole tx, envelope included — so the SAME anchor sits on disk under several ids, one per node that
+   * relayed it and per time it was resubmitted. MEASURED here 2026-09-16: 17,908 rows over 13,783 distinct
+   * (event:hash) pairs, 13,665 carrying node-local fields in the id, 1,273 keys duplicated across 3,849
+   * redundant rows.
+   *
+   * This is a targeted DELETE, not a rebuild: it keeps exactly one row per content key — preferring the row
+   * whose tx is already the bare consensus shape, then the lowest id for determinism — writes it under its
+   * content id, and deletes the rest. Rows outside the broker's canonical set are NOT touched; they may be
+   * real local events the broker has not canonicalised, and nothing here can tell the difference.
+   *
+   * Returns real counts. Nothing is evicted by content: the content was valid, only the extra rows were junk.
+   */
+  async compactToContentIds() {
+    if (!this._dbOpen) return { scanned: 0, kept: 0, rekeyed: 0, deleted: 0, unaddressed: 0 };
+    const ENVELOPE = ['from', 'sig', 'validationTimestamp', 'id', 'agent', 'agent_xmbl_address'];
+    const groups = new Map();           // content key -> [{ oldId, raw, envelopeFields }]
+    let scanned = 0, unaddressed = 0;
+    for await (const [key, value] of this.db.iterator({ gte: 'block:', lt: 'block;' })) {
+      scanned++;
+      let raw; try { raw = JSON.parse(value.toString()); } catch { continue; }
+      const ck = contentKey(raw && raw.tx);
+      if (!ck) { unaddressed++; continue; }
+      const oldId = key.toString().slice('block:'.length);
+      if (!groups.has(ck)) groups.set(ck, []);
+      groups.get(ck).push({ oldId, value: value.toString(), raw,
+                            envelope: ENVELOPE.filter(f => f in raw.tx).length });
+    }
+    let kept = 0, rekeyed = 0, deleted = 0, removed = 0;
+    for (const [, rows] of groups) {
+      // the row closest to bare consensus shape wins; ties broken by id so every node picks the same one
+      rows.sort((a, b) => (a.envelope - b.envelope) || (a.oldId < b.oldId ? -1 : a.oldId > b.oldId ? 1 : 0));
+      const keep = rows[0];
+      const block = Block.deserialize(keep.value);
+      const newId = Block.fromTransaction(block.tx).id;
+      const own = blockTimestampNanos(keep.raw);
+      if (own !== null) block.timestamp = own;
+      block.id = newId;
+      for (const r of rows) {
+        if (r.oldId === newId) continue;
+        try { await this.db.del(`block:${r.oldId}`); deleted++; } catch { /* already gone */ }
+        this.blocks.delete(r.oldId);
+        if (r !== keep) removed++;   // a genuinely redundant row; the survivor's own del is a re-key
+      }
+      if (keep.oldId !== newId) rekeyed++;
+      try { await this.db.put(`block:${newId}`, block.serialize()); } catch { /* in-memory fallback */ }
+      this.blocks.set(newId, block);
+      kept++;
+    }
+    // the pool and the anchor-dedup set now hold stale ids; re-derive both from what actually survived
+    this._membershipPool = [...this.blocks.values()];
+    this._anchorKeys = new Set();
+    for (const b of this.blocks.values()) {
+      const ck = contentKey(b.tx);
+      if (ck && b.tx.type === 'anchor') this._anchorKeys.add(ck);
+    }
+    await this._persistMembershipPool();
+    // SAY WHAT WAS DESTROYED, and do not dress a re-key up as a deletion: `deleted` counts every old key
+    // removed (a survivor moving to its content id removes one too), `removed` counts only the rows that had
+    // no survivor — the genuinely redundant copies. scanned - kept must equal removed, or something is wrong.
+    console.log(`[XCLT] content-id compaction: scanned ${scanned} row(s), kept ${kept} distinct content key(s), `
+      + `re-keyed ${rekeyed}, removed ${removed} redundant row(s) (${deleted} old key(s) deleted in total), `
+      + `${unaddressed} row(s) had no content address and were left alone`);
+    return { scanned, kept, rekeyed, removed, deleted, unaddressed, balanced: scanned - kept === removed };
+  }
+
   getPoolBlocksByIds(ids) { const want = new Set(ids); return this._membershipPool.filter(b => want.has(b.id)); }
   getPendingFacesByRoots(roots) { const want = new Set(roots); return this._pendingCubeFaces.filter(f => want.has(f.getMerkleRoot())); }
 

@@ -1,4 +1,4 @@
-export { Ledger, anchorTimestampNanos, blockTimestampNanos } from './src/ledger.js';
+export { Ledger, anchorTimestampNanos, blockTimestampNanos, consensusBody, contentKey } from './src/ledger.js';
 export { Block } from './src/block.js';
 export { Face } from './src/face.js';
 export { Cube } from './src/cube.js';
