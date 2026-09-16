@@ -35,6 +35,9 @@ export class PeerDiscovery {
 
     const RETRY_MS = Math.max(5000, Number(process.env.XN_BOOTSTRAP_RETRY_MS) || 15000);
     const MAX_TRIES = Math.max(1, Number(process.env.XN_BOOTSTRAP_MAX_TRIES) || 40);   // ~10 min at 15s
+    // How often the per-seed warning repeats AFTER the retry budget is spent. Same cadence as the budget
+    // itself (~10 min at 15s), so a permanently dead seed costs ~6 lines an hour instead of ~240.
+    const QUIET_EVERY = Math.max(1, Number(process.env.XN_BOOTSTRAP_QUIET_EVERY) || MAX_TRIES);
     let tries = 0;
 
     const peerIdOf = (addr) => { const m = /\/p2p\/([^/]+)$/.exec(String(addr)); return m ? m[1] : null; };
@@ -78,8 +81,20 @@ export class PeerDiscovery {
           console.log(`[xn] bootstrap: connected to seed ${addr}`);
         } catch (error) {
           // A seed that does not answer is worse than no seed at all: it looks configured, every node dials
-          // it, and nothing reports the failure. Name it, every time, with the reason.
-          console.warn(`[xn] bootstrap: seed ${addr} unreachable (attempt ${tries}/${MAX_TRIES}): ${error?.message || error}`);
+          // it, and nothing reports the failure. Name it, with the reason — every attempt while there is still
+          // a retry budget, and then PERIODICALLY rather than forever.
+          //
+          // ⛔ WHY THE THROTTLE. This warned on every attempt for the life of the process. A node whose only
+          // seed is down writes one line per seed per RETRY_MS, indefinitely: MEASURED on this node
+          // 2026-09-16, 8,542 identical lines in node.log against 10 give-up lines, from a single seed
+          // refusing connections. node.log is the file an operator greps, and burying it under one dead seed
+          // is the same defect as not logging at all — the evidence exists and cannot be found. After the
+          // budget is spent the loop keeps watching (a seed that returns must still reconnect), but it says so
+          // once per QUIET_EVERY attempts and carries the real attempt count so nothing looks like it stopped.
+          if (tries <= MAX_TRIES || tries % QUIET_EVERY === 0) {
+            const suffix = tries > MAX_TRIES ? ` — still watching, ${QUIET_EVERY} attempt(s) since the last line` : '';
+            console.warn(`[xn] bootstrap: seed ${addr} unreachable (attempt ${tries}/${MAX_TRIES}): ${error?.message || error}${suffix}`);
+          }
         }
       }
       // GIVE UP LOUDLY, BUT KEEP THE LOOP. Stopping the timer here would restore the original defect for any
