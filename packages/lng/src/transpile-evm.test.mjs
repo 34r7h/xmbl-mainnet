@@ -1,10 +1,7 @@
 // EVM backend tests: LNG → Solidity transpiler (decision 1, source-level).
 // Structural assertions on the emitted Solidity; plus an actual solcjs compile when available.
 import { transpile } from './transpile-evm.js';
-import { execSync } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import solc from 'solc';
 
 let pass = 0, fail = 0;
 const ok = (name, cond) => { if (cond) { pass++; console.log('ok   ' + name); } else { fail++; console.log('FAIL ' + name); } };
@@ -60,20 +57,19 @@ ok('non-overloaded name is NOT mangled', !transpile("~contract `C { ~on `once(`a
   ok('`~e is NOT dropped to a comment', !sol.includes('unsupported statement'));
 }
 
-// Real compile with solcjs when present.
-let solc = null;
-try { execSync('which solcjs', { stdio: 'ignore' }); solc = 'solcjs'; } catch { }
-if (solc) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lngsol-'));
+// Real compile — ALWAYS. solc is an in-process, pinned dev dependency now (it used to be a `which solcjs`
+// lottery that skipped on every machine without one — a check that cannot fail in CI is not a gate).
+{
   let compiled = 0;
   for (const [name, src] of [['Lender', LENDER], ['Vault', VAULT]]) {
-    const f = path.join(dir, name + '.sol');
-    fs.writeFileSync(f, transpile(src));
-    try { execSync(`${solc} --bin --base-path ${dir} -o ${dir} ${f}`, { stdio: 'ignore' }); if (fs.readdirSync(dir).some(x => x.startsWith(name) && x.endsWith('.bin'))) compiled++; } catch { }
+    const input = { language: 'Solidity', sources: { [name + '.sol']: { content: transpile(src) } },
+      settings: { outputSelection: { '*': { '*': ['evm.bytecode.object'] } } } };
+    const out = JSON.parse(solc.compile(JSON.stringify(input)));
+    const errors = (out.errors || []).filter((e) => e.severity === 'error');
+    if (errors.length) console.log('   solc: ' + errors.map((e) => e.formattedMessage).join('\n   '));
+    else if (out.contracts[name + '.sol'][name].evm.bytecode.object.length > 0) compiled++;
   }
-  ok('solcjs compiles Lender + Vault to bytecode', compiled === 2);
-} else {
-  console.log('skip solcjs compile (solcjs not installed)');
+  ok('solc compiles Lender + Vault to bytecode (in-process, no PATH dependency)', compiled === 2);
 }
 
 console.log(`\n${pass}/${pass + fail} passed`);

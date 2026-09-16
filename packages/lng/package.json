@@ -25,10 +25,13 @@
     "url": "https://github.com/34r7h/xmbl-mainnet.git",
     "directory": "packages/lng"
   },
-  "description": "LNG \u2014 the XMBL smart-contract language. Interpreter, type checker, determinism gate, and EVM (Solidity) + WASM backends. Zero dependencies; usable standalone.",
-  "dependencies": {},
+  "description": "LNG — the XMBL smart-contract language. Interpreter, type checker, determinism gate, and EVM (Solidity) + WASM backends. Zero dependencies; usable standalone.",
   "scripts": {
     "build:browser": "node build-browser.mjs",
     "test": "node ../../scripts/run-node-tests.mjs ."
+  },
+  "devDependencies": {
+    "@ethereumjs/evm": "^10.1.3",
+    "solc": "^0.8.37"
   }
 }

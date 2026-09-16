@@ -121,7 +121,16 @@ continue-on-error, and in the release workflow before any publish).
       (LNG revert — what an imported `require()`/`revert` lowers to) compiles to a `unreachable`
       trap, the same rollback the overflow/÷0 guards use, so a guarded contract enforces on-chain
       rather than only in the interpreter. — *compile-wasm.js; compile-wasm.test.mjs*
-- [ ] EVM backend output is structurally asserted and solc-compiles, but is not deployed/audited.
+- [x] **EVM backend output is DEPLOYED and EXECUTED — in-process, on every run, in the hard gate.** The same
+      LNG source goes down all three roads and must compute the same answers: interpreter, WASM (no imports),
+      and `transpile` → solc 0.8.37 (in-process solcjs, a pinned dev dependency — the old `which solcjs`
+      lottery skipped on every machine without one) → bytecode deployed into @ethereumjs/evm (the JS
+      reference EVM, dev-only) and called through the real ABI (solc's `methodIdentifiers`). Proven: inc/
+      sumTo/classify three-way parity (5 calls), full 256-bit width (`inc(2^200)`), overflow reverts on all
+      three, `~e 'too big'` → `revert("too big")` → an EVM REVERT carrying that reason with state intact
+      after it, `~decimal 1.05` → `1.05e18` fixed-point on-chain. Not a public chain (a product step, not a
+      readiness one); external review of the backend stays under the ⛔ audits. — *lng/evm-deploy.test.mjs
+      (16/16); lng/transpile-evm.test.mjs (22/22, solc compile now unconditional)*
 - [x] **Browser panel ports: the browser build ships IN the module — nothing is ported by hand.** LNG is a
       module; its users import it, they never copy it. `@xmbl/lng` ships `dist/lng.browser.js` — ONE
       dependency-free ES module generated from the SAME `src/*.js` the node runs by `build-browser.mjs` (no
@@ -220,7 +229,10 @@ continue-on-error, and in the release workflow before any publish).
       is out of scope for the composition increments and is tracked as its own language feature. Separately,
       `xmbl_lwe_decrypt` is deliberately NOT provided: decryption needs a SECRET key, which is neither
       chain-derivable nor safe to place in a guest's reach — its determinism and key-custody model is
-      an open design question, not a build task. Both are the remaining §3.1 surface.
+      an open design question, not a build task. **DECIDED 2026-09-16: `xmbl_lwe_decrypt` is WON'T-BUILD —**
+      decryption stays off-host by design (a guest never holds a secret key; contracts ADD ciphertexts via
+      `env.xmbl_he_add` and never read them). What keeps this row `[ ]` is the byte-string type alone
+      (docs/MAINNET-CLOSEOUT.md B1).
 - [x] **T6.2 — contracts LINK xmbl UTXOs to the Verkle state machine, provably and reproducibly.** A
       contract can now SPEND committed xmbl UTXOs and CREATE new ones, into the SAME Verkle tree the
       state machine already commits ledger blocks to (`state-machine.js` maps a `utxo` block to
@@ -345,7 +357,12 @@ continue-on-error, and in the release workflow before any publish).
       assertion, not runtime cost), which is a new mainnet-repo dependency DECISION, not a wiring task —
       a gas-estimate-vs-measured-cpuMs comparison is not like-for-like and is NOT claimed. So the
       "fraction of the resources" claim keeps its honest scope: a real MEASUREMENT basis, no cross-VM
-      COMPARISON.
+      COMPARISON. **(d) is CLOSED BY SCOPE (2026-09-16):** no user-facing document makes a cross-VM claim
+      any more (README carries none; the only remaining mention, `COMPUTE-ISOLATION-THREAT-MODEL.md`, is
+      the disclaimer that the basis is not a comparison), so there is nothing to prove. Should a like-for-
+      like number ever be wanted, the EVM execution engine is now in-repo as a DEV dependency of `@xmbl/lng`
+      (@ethereumjs/evm, used by `evm-deploy.test.mjs`) — but a JS EVM interpreter measured in-process is
+      not "Ethereum", and no such number will be published under that name.
 
 ## `@xmbl/consensus` — user-as-validator, five-stage mempool, sealing
 

@@ -44,7 +44,7 @@ The cryptic testnet names are gone. Each protocol module is one npm package and 
 | `@xmbl/consensus` | `xmbl-consensus` | xpc | User-as-validator consensus; five-stage mempool; sealing. |
 | `@xmbl/storage-compute` | `xmbl-storage-compute` | xsc | P2P storage with availability proofs + the hardened WASM compute market. **Where contracts execute** (composes state-machine + contracts). |
 | `@xmbl/zero-knowledge` | `xmbl-zero-knowledge` | xzk | ZK cube-curve state-commitment (FRI). **Experimental, unaudited.** |
-| `@xmbl/lng` | *(npm/WASM only)* | lng | The **LNG** smart-contract language — interpreter, type checker, determinism gate, and Solidity/EVM + WASM backends. **Zero dependencies; standalone.** Ships its browser build as `@xmbl/lng/browser` (one ES module generated from the same sources, byte-checked by the gate) — import it, never copy it. |
+| `@xmbl/lng` | *(npm/WASM only)* | lng | The **LNG** smart-contract language — interpreter, type checker, determinism gate, and Solidity/EVM + WASM backends. **Zero dependencies; standalone.** Ships its browser build as `@xmbl/lng/browser` (one ES module generated from the same sources, byte-checked by the gate) — import it, never copy it. The EVM output is deployed and executed in the gate (in-process solc + EVM; interpreter == WASM == EVM). |
 | `@xmbl/contracts` | *(npm/WASM only)* | XCL | The **XCL** contract layer: binds contracts compiled by `@xmbl/lng` to cubic-ledger coordinates and Verkle state, executing them in the storage-compute sandbox. |
 
 App / tooling modules (npm / web only):
