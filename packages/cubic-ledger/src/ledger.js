@@ -350,10 +350,17 @@ export class Ledger extends EventEmitter {
     if (!Array.isArray(txs)) {
       throw new Error('addSealedBatch: txs must be an array');
     }
+    // ⛔ A REFUSAL REFUSES ONE TRANSACTION, NOT THE BATCH. This loop used to let the first invalid entry throw
+    // straight out, so every honest transaction BEHIND it in the list was dropped on the floor, unsealed and
+    // unrecorded — a denial of service needing no xid collision at all, just a forgery sent ahead of real
+    // traffic. The refusal is still raised to the caller (after the honest entries are admitted and sealed),
+    // because a finalized transaction the ledger will not take is a fault consensus must hear about.
+    let firstError = null;
     for (const tx of txs) {
       // Same eviction check and content dedup as addTransaction — this path is not a way around either.
       const ckey = contentKey(tx);
-      if (ckey && this._evicted.has(ckey)) continue;
+      const xkey = tx && typeof tx.xid === 'string' ? `xid:${tx.xid}` : null;
+      if ((ckey && this._evicted.has(ckey)) || (xkey && this._evicted.has(xkey))) continue;
       if (tx && tx.type === 'anchor' && tx.event && tx.hash) {
         const akey = `${tx.event}:${tx.hash}`;
         if (this._anchorKeys.has(akey)) continue;
@@ -384,7 +391,27 @@ export class Ledger extends EventEmitter {
           }
         }
       }
-      const block = Block.fromTransaction(tx, opts);
+      // ⛔ THE SAME TWO DOORS addTransaction CLOSES, CLOSED HERE TOO — and this is the path that carries real
+      // fleet traffic (consensus `tx:finalized` → lead-worker.handleFinalizedTx → here), while addTransaction
+      // is the legacy incremental one. There was no failure handling at all on this side, so a forgery that
+      // kept an honest anchor's event:hash left that content key claimed forever (the honest anchor arriving
+      // later was skipped as a duplicate), and nothing was ever evicted. Release the speculative key on EVERY
+      // failure, and record the refusal under a key derived from the forgery's OWN bytes when its claimed xid
+      // is not its content address — never under the xid it impersonated, which belongs to somebody else.
+      let block;
+      try {
+        block = Block.fromTransaction(tx, opts);
+      } catch (error) {
+        if (ckey && this._anchorKeys.has(ckey)) this._anchorKeys.delete(ckey);
+        // UNTYPED is a refusal, not an eviction: the datum has no identity yet and the same anchor may arrive
+        // typed a moment later — exactly as in addTransaction.
+        if (!(error && error.code === 'UNTYPED')) {
+          const ekey = (error && error.code === 'XID_MISMATCH') ? this._forgedKey(tx) : (ckey || null);
+          if (ekey) await this.evict(ekey, error.message);
+        }
+        if (!firstError) firstError = error;
+        continue;
+      }
       // THE POOL IS A SET, AND push() DOES NOT KNOW THAT. block.id is derived from the transaction content,
       // so re-admitting the same tx yields the SAME id — `this.blocks.set` above silently overwrites and the
       // caller never notices, while this line appended a phantom duplicate. That is not an over-count: the
@@ -404,8 +431,13 @@ export class Ledger extends EventEmitter {
     }
     // CONSENSUS-V2: do NOT auto-seal local-9. The pool is the L1 candidate; a SealRoundManager agrees the set
     // cross-node, then calls sealAgreedBlocks. Sealing on a local count is the fork bug this fixes.
-    if (this._consensusV2) return { sealedFaces: 0, pooled: this._membershipPool.length };
-    return this._sealReadyFaces();
+    if (this._consensusV2) {
+      if (firstError) throw firstError;
+      return { sealedFaces: 0, pooled: this._membershipPool.length };
+    }
+    const sealed = await this._sealReadyFaces();
+    if (firstError) throw firstError;
+    return sealed;
   }
 
   // DETERMINISTIC REBUILD — the cube ledger becomes a PURE FUNCTION of the canonical anchor set, so it can

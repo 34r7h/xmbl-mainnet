@@ -112,5 +112,47 @@ const honest = (label) => micromineTx({ type: 'anchor', event: 'task.created', h
   await l.close?.(); rmSync(dir, { recursive: true, force: true });
 }
 
+// ── 5. THE SAME TWO DOORS THROUGH THE SEAL PATH — addSealedBatch, not addTransaction ──
+// addTransaction is the legacy incremental path; the path a FINALIZED transaction actually takes on a live
+// node is consensus `tx:finalized` → lead-worker.handleFinalizedTx → addSealedBatch. That function claims the
+// anchor content key before validation exactly as addTransaction did, and had no failure handling at all — so
+// both doors the sections above closed were still standing behind it, on the only path that carries real
+// fleet traffic. A fix that handles one entry point and not the other is not a fix.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'xmbl-poison-e-'));
+  const l = new Ledger({ dbPath: dir }); await l.initialize?.();
+  const real = honest('victim-e');
+  const twin = { ...real, nonce: real.nonce + 1 };               // same event:hash, broken identity
+  let threw = null;
+  try { await l.addSealedBatch([twin]); } catch (e) { threw = e; }
+  ok('SEAL PATH: a forgery sharing the honest event:hash is refused', threw !== null && threw.code === 'XID_MISMATCH');
+  ok('SEAL PATH: it does not keep the content key it claimed before validation', !l._anchorKeys.has(`${real.event}:${real.hash}`));
+  ok('SEAL PATH: the honest xid was NOT evicted', !l._evicted.has(`xid:${real.xid}`));
+  ok('SEAL PATH: the forgery WAS evicted under a key derived from its own bytes', [...l._evicted].some((k) => k.startsWith('forged:')));
+  const res = await l.addSealedBatch([real]);
+  ok('SEAL PATH: THE HONEST ANCHOR IS STILL ADMITTED after the forgery', !!res);
+  ok('SEAL PATH: and it is really stored (1 block)', l._membershipPool.length === 1);
+  await l.addSealedBatch([real]);
+  ok('SEAL PATH: a genuine duplicate is still deduped (still 1 block)', l._membershipPool.length === 1);
+  await l.close?.(); rmSync(dir, { recursive: true, force: true });
+}
+
+// ── 6. ONE BAD TRANSACTION MUST NOT DISCARD THE HONEST ONES BATCHED WITH IT ──
+// addSealedBatch takes a LIST. A throw out of the middle of the loop drops every remaining entry on the floor,
+// so one forgery placed ahead of honest traffic silently deletes it — a cheaper denial of service than either
+// door above, needing no xid collision at all.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'xmbl-poison-f-'));
+  const l = new Ledger({ dbPath: dir }); await l.initialize?.();
+  const a = honest('batch-a'), b = honest('batch-b'), c = honest('batch-c');
+  const poison = { ...honest('batch-poison'), nonce: 7 };         // invalid: body no longer mines to its xid
+  let threw = null;
+  try { await l.addSealedBatch([a, poison, b, c]); } catch (e) { threw = e; }
+  ok('a batch carrying one forgery still reports the refusal', threw !== null && threw.code === 'XID_MISMATCH');
+  ok('THE THREE HONEST TRANSACTIONS BEHIND IT ARE ALL ADMITTED', l._membershipPool.length === 3);
+  ok('the forgery itself is not in the ledger', l._membershipPool.length === 3 && !l._membershipPool.some((blk) => blk.tx.nonce === 7));
+  await l.close?.(); rmSync(dir, { recursive: true, force: true });
+}
+
 console.log(`\n${pass}/${pass + fail} passed`);
 process.exit(fail ? 1 : 0);
