@@ -1,4 +1,4 @@
-# Changelog
+# @xmbl/contracts
 
 ## 0.1.11
 
@@ -27,9 +27,11 @@
     `submit_tx` rejections) and reports the RUNNING versions; boot waits for the stores.
   - every package exports a load-time `VERSION`.
 
-All notable changes to the `xsim` module will be documented in this file.
+### Patch Changes
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
+- Updated dependencies
+  - @xmbl/identity@0.1.11
+  - @xmbl/state-machine@0.1.11
+  - @xmbl/storage-compute@0.1.11
+  - @xmbl/zero-knowledge@0.1.11
+  - @xmbl/lng@0.1.11

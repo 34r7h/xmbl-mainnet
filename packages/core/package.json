@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/core",
-  "version": "0.1.2",
+  "version": "0.1.11",
   "type": "module",
   "main": "index.js",
   "license": "MIT",
@@ -13,19 +13,26 @@
     "directory": "packages/core"
   },
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./control-socket.js": "./control-socket.js",
+    "./node-config.js": "./node-config.js",
+    "./metrics-server.js": "./metrics-server.js",
+    "./package.json": "./package.json"
   },
   "dependencies": {
-    "@xmbl/consensus": "^0.1.3",
-    "@xmbl/cubic-ledger": "^0.1.3",
-    "@xmbl/identity": "^0.1.2",
-    "@xmbl/networking": "^0.1.2",
-    "@xmbl/state-machine": "^0.1.3",
-    "@xmbl/storage-compute": "^0.1.2",
-    "@xmbl/zero-knowledge": "^0.1.1",
+    "@xmbl/consensus": "^0.1.11",
+    "@xmbl/cubic-ledger": "^0.1.11",
+    "@xmbl/identity": "^0.1.11",
+    "@xmbl/networking": "^0.1.11",
+    "@xmbl/state-machine": "^0.1.11",
+    "@xmbl/storage-compute": "^0.1.11",
+    "@xmbl/zero-knowledge": "^0.1.11",
     "pino": "^10.1.0"
   },
   "scripts": {
     "test": "node ../../scripts/run-node-tests.mjs ."
+  },
+  "bin": {
+    "xmbl-node": "bin/xmbl-node.js"
   }
 }

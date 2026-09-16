@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/storage-compute",
-  "version": "0.1.2",
+  "version": "0.1.11",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -16,7 +16,7 @@
     "directory": "packages/storage-compute"
   },
   "dependencies": {
-    "@xmbl/identity": "^0.1.2",
+    "@xmbl/identity": "^0.1.11",
     "level": "^10.0.0"
   },
   "scripts": {

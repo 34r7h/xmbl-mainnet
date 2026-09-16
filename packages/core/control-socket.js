@@ -333,7 +333,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
             reports_wiped_count: rescues,                                   // same release
             evicts_invalid_for_good: typeof core.xclt.evict === 'function', // 0.1.9+: an invalid tx is refused across restarts
             content_addressed_block_ids: semverGte(v, '0.1.9'),
-            rekeys_legacy_rows_on_boot: semverGte(v, '0.2.0'),
+            rekeys_legacy_rows_on_boot: semverGte(v, '0.1.11'),
           },
         };
       }

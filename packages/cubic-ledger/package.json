@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/cubic-ledger",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -16,7 +16,7 @@
     "directory": "packages/cubic-ledger"
   },
   "dependencies": {
-    "@xmbl/identity": "^0.1.2",
+    "@xmbl/identity": "^0.1.11",
     "level": "^10.0.0"
   },
   "scripts": {

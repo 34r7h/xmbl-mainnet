@@ -88,7 +88,7 @@ blocked on that parity work before any crates.io consumer can rely on them.
    runs them, so regressions land silently; add them to `test:protocol` (cli is green as of 2026-09-16;
    desktop-app's `main.test.js` needs the `MainProcess` export fixed first).
 5. **Release discipline** — the 2026-09-15/16 hotfix spray (per-package hand publishes, `.npmrc` token,
-   gate never run, crates left at 0.1.0) is closed by the 0.2.0 line; RELEASING.md now forbids hand
+   gate never run, crates left at 0.1.0) is closed by the 0.1.11 line; RELEASING.md now forbids hand
    publishing. The fleet bundle (`xmbl-slim-node`) still vendors a copy of `core/` — it should depend on
    `@xmbl/core` and run `xmbl-node` (handoff-claude's side).
 5. **`networking`** — NAT discovery / gossip fan-out is a ⛔ integration/audit gate.
