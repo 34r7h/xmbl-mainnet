@@ -228,9 +228,25 @@ have burned the tag:
    and be persisted nowhere (both writes swallow their errors by design). The root read correctly for
    the life of the process and came back 64 zeros on the next boot. See `0ae2bb8`.
 3. **Both registry secrets were EMPTY.** `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` exist by name and
-   resolve to nothing — the job log prints `NODE_AUTH_TOKEN:` with no `***` mask, and npm failed
-   `ENEEDAUTH` after packing all twelve. `NPM_TOKEN` was re-set from the operator's own valid token
-   and the job re-run; `CARGO_REGISTRY_TOKEN` is still empty and no crates.io token exists on this box.
+   resolve to nothing. Actions masks every non-empty secret as `***`, so the job log printing a bare
+   `NODE_AUTH_TOKEN:` is not a formatting quirk — it is the value being empty; npm failed `ENEEDAUTH`
+   after packing all twelve.
+
+   **This session overwrote the `NPM_TOKEN` repository secret.** The token came from this box's
+   gitignored `.env` and was validated read-only first (`npm whoami` → `34r7h`, a 40-character
+   `npm_…` automation token; nothing was published from the laptop), then written with
+   `printf '%s' "$T" | gh secret set NPM_TOKEN --repo 34r7h/xmbl-mainnet` and the failed job re-run
+   with `gh run rerun 35110388868 --failed`.
+
+   That is a deliberate change to the release mechanism and is worth naming rather than burying:
+   **CI now publishes with the same token that sits in this box's `.env`.** `RELEASING.md` forbids
+   publishing from a laptop, and that still holds — the tag remains the only trigger — but the
+   laptop's token is now the CI credential, so revoking or rotating it locally silently breaks the
+   next tag, which will fail `ENEEDAUTH` after packing every package and in no other way. Replacing
+   it with a dedicated CI automation token is a one-line `gh secret set` whenever the operator wants
+   the two separated again.
+
+   `CARGO_REGISTRY_TOKEN` is still empty and no crates.io token exists on this box.
 
 **crates.io: 0 of 8 published.** `cargo publish -p xmbl-identity` reached the upload and failed with
 "please provide a non-empty token". The `artifacts` job `needs: [npm, cargo]`, so it skipped and the run
@@ -256,6 +272,13 @@ That last line matters — it is the check that publishing 0.1.11 does not stop 
 it. (The boot needed `XMBL_ALLOW_COLOCATED_NODES=1`, because the machine lock correctly refused while the
 handoff slim node held it; the scratch node ran with every role false, no bootstrap peers and loopback
 only, and was stopped afterwards.)
+
+**`main` is green on Linux AFTER the tag, not only at it.** The tag sits at `9386ee9` and five commits
+have landed since, three of them new suites that had only ever run on darwin. Run `35112166330` on
+`b5fd413` (ubuntu-latest, Node 22) scores `protocol suites: 78/78 passed`. The one failure in between
+was mine and not the platform's: `agent-keystore.test.mjs` asserted `!serialized.includes('ct')`, and a
+base64 public key contains `ct` by chance — it passed alone and went 77/78 in the full gate. Fixed to
+assert on the record's KEYS in `c6ee301`.
 
 **Remaining proof:** crates.io shows 0.1.11 for all eight.
 

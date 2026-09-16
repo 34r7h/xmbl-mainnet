@@ -46,6 +46,15 @@ a registry — they ship as GitHub Release artifacts.
 
 `GITHUB_TOKEN` (built in) covers the Release upload.
 
+**An empty secret is invisible except as a MISSING mask.** Actions replaces every non-empty secret
+with `***` in the log, so an env line reading bare `NODE_AUTH_TOKEN:` or `CARGO_REGISTRY_TOKEN:`
+means the value is genuinely empty — the job then compiles, tests and packs everything and dies at
+the upload (`ENEEDAUTH` on npm, "please provide a non-empty token" on cargo). Check the mask first.
+Both secrets existed by name and were empty on 2026-09-16. `NPM_TOKEN` was set that day from the
+token in this box's `.env` (validated with `npm whoami`, never used to publish by hand), which means
+**CI currently publishes with the laptop's own token**: rotate it locally and the next tag fails.
+`CARGO_REGISTRY_TOKEN` is still empty, and the eight crates have never published.
+
 ## Never publish by hand
 
 `npm publish` from a laptop (an `.npmrc` token, a per-package bump to get one fix out) is how the
