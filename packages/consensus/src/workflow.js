@@ -2,7 +2,7 @@ import { Mempool } from './mempool.js';
 import { ValidationTaskManager } from './validation-tasks.js';
 import { EventEmitter } from 'events';
 import { createHash } from 'crypto';
-import { verifyMicromine, type6TxBody } from '@xmbl/cubic-ledger';   // content-addressing: the ONLY admissible proof an unsigned type-6 carries
+import { verifyMicromine, type6TxBody, validateTransaction } from '@xmbl/cubic-ledger';   // content-addressing: the ONLY admissible proof an unsigned type-6 carries; validateTransaction: the ledger's own shape rule, applied at the door
 
 export class ConsensusWorkflow extends EventEmitter {
   constructor(options = {}) {
@@ -168,6 +168,20 @@ export class ConsensusWorkflow extends EventEmitter {
     if (!signed && !this._isContentAddressedType6(txData)) {
       console.warn(`ingress-guard: REJECT unsigned ${txData.type || 'tx'} from ${submitterId}`);
       return false;
+    }
+
+    // 1b. AN ANCHOR THE LEDGER WOULD REFUSE IS REFUSED HERE. cubic-ledger's validateTransaction is the one
+    // place the anchor shape rule lives (required fields + a 64-hex sha-256 `hash`); admitting an anchor that
+    // fails it only lets the pool carry a tx to finalization so the ledger can evict it there. Scoped to anchors:
+    // every other type is validated at its own stage (type-6 by content address above, signed types at
+    // completeValidation) and the guard must never re-grow into the verifying ingress that blackholed valid
+    // identities. Same rule, same function, applied at the door instead of after consensus paid for it.
+    if (txData.type === 'anchor') {
+      try { validateTransaction(txData); }
+      catch (e) {
+        console.warn(`ingress-guard: REJECT malformed anchor from ${submitterId}: ${e.message}`);
+        return false;
+      }
     }
 
     if (local) return true;                                                  // local submits are not a flood vector

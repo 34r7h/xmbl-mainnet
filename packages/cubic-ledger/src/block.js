@@ -35,6 +35,12 @@ export function consensusBody(tx) {
   return null;
 }
 
+// The block id a consensus body addresses — spelled once, used by Block.fromTransaction and by the ledger's
+// boot scan that decides whether a stored row is keyed by its content id or by a pre-content envelope hash.
+export function contentIdOf(body) {
+  return createHash('sha256').update(body).digest('hex').substring(0, 16);
+}
+
 // The dedup key for a transaction: what "the same tx" means on disk and in the pool.
 export function contentKey(tx) {
   if (tx && tx.type === 'anchor' && tx.event && tx.hash) return `${tx.event}:${tx.hash}`;
@@ -98,9 +104,7 @@ export class Block {
     // The id addresses the CONSENSUS CONTENT, not the envelope the whole-tx hash covers (see
     // consensusBody above). A tx with no defined content body keeps the old derivation.
     const body = consensusBody(tx);
-    const id = body === null
-      ? hash.substring(0, 16)
-      : createHash('sha256').update(body).digest('hex').substring(0, 16);
+    const id = body === null ? hash.substring(0, 16) : contentIdOf(body);
     
     // Digital root is no longer used for placement (hash-based sorting instead)
     // Keep for backward compatibility only

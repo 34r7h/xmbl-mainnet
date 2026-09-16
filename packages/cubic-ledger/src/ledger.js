@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { createHash } from 'crypto';
-import { Block, consensusBody, contentKey } from './block.js';
+import { Block, consensusBody, contentKey, contentIdOf } from './block.js';
 import { Face } from './face.js';
 import { Cube } from './cube.js';
 import { SuperCube } from './super-cube.js';
@@ -97,12 +97,22 @@ export class Ledger extends EventEmitter {
   ready() { return this._ready || Promise.resolve(); }
 
   async _initDb() {
+    // A STORE THAT FAILED TO OPEN IS NOT OPEN. This used to set _dbOpen = true on the catch branch too ("might
+    // already be open"), so a LevelDB held by another process (its LOCK file), a missing directory or a corrupt
+    // manifest left a ledger that reported itself durable while every put/get failed silently into the in-memory
+    // fallback — MEASURED 2026-09-16: a CLI `tx add` returned a block id, and the next process could not find the
+    // row, because a stale daemon held the lock and the "open" never happened. The truth is the handle's own
+    // status, and a failed open is said out loud with its reason.
+    this._dbError = null;
     try {
       await this.db.open();
-      this._dbOpen = true;
     } catch (error) {
-      // Database might already be open
-      this._dbOpen = true;
+      this._dbError = error;
+    }
+    this._dbOpen = this.db.status === 'open';
+    if (!this._dbOpen) {
+      console.error(`[XCLT] ledger store did NOT open (${this._dbError?.code || this._dbError?.message || this.db.status}) — running WITHOUT persistence; nothing added now survives this process`);
+      this.emit('store:unavailable', { error: this._dbError, status: this.db.status });
     }
     // ORPHAN FIX: _membershipPool and _pendingCubeFaces are in-memory. Before this, a restart dropped both and
     // the already-persisted blocks were NEVER re-pooled — so they could never join a face and were orphaned for
@@ -166,11 +176,18 @@ export class Ledger extends EventEmitter {
     // Seed the anchor-dedup set from every block already on disk, so a re-submission after a restart is still
     // recognised as a duplicate and does not re-inflate the ledger. One O(blocks) scan at boot; bodies are plain
     // JSON so no Block instance is built.
+    // The same pass notices rows keyed by something other than their content id — rows written before
+    // block ids addressed consensus content (block.js consensusBody), one per node that relayed the same
+    // anchor and per time it was resubmitted. Cheap to detect here (one hash per addressed row), and the
+    // store is converged ONCE, below, rather than by an operator remembering to run a compaction by hand.
+    let legacyKeyed = 0;
     try {
-      for await (const [, value] of this.db.iterator({ gte: 'block:', lt: 'block;' })) {
+      for await (const [key, value] of this.db.iterator({ gte: 'block:', lt: 'block;' })) {
         let b; try { b = JSON.parse(value.toString()); } catch { continue; }
         const tx = b && b.tx;
         if (tx && tx.type === 'anchor' && tx.event && tx.hash) this._anchorKeys.add(`${tx.event}:${tx.hash}`);
+        const body = consensusBody(tx);
+        if (body !== null && key.toString().slice('block:'.length) !== contentIdOf(body)) legacyKeyed++;
       }
     } catch { /* no blocks yet */ }
     // Load the eviction list. Cheap (one short keyspace) and it is what makes "never seen again" outlive
@@ -180,7 +197,14 @@ export class Ledger extends EventEmitter {
         this._evicted.add(key.toString().slice('evicted:'.length));
       }
     } catch { /* no evictions yet */ }
-    this.emit('pools:rehydrated', { pooled: this._membershipPool.length, pendingFaces: this._pendingCubeFaces.length, anchorKeys: this._anchorKeys.size, evicted: this._evicted.size });
+    // CONVERGE THE STORE TO CONTENT IDS, ONCE. Runs only when the scan above found a row keyed by an envelope
+    // hash, so a store that is already content-keyed pays nothing; the second boot finds 0 and skips.
+    let rekey = null;
+    if (legacyKeyed > 0) {
+      try { rekey = await this.compactToContentIds(); }
+      catch (e) { console.warn(`[XCLT] content-id compaction failed, store left as found: ${e?.message || e}`); }
+    }
+    this.emit('pools:rehydrated', { pooled: this._membershipPool.length, pendingFaces: this._pendingCubeFaces.length, anchorKeys: this._anchorKeys.size, evicted: this._evicted.size, legacyKeyed, rekey });
   }
 
   /**
@@ -257,8 +281,10 @@ export class Ledger extends EventEmitter {
       await this._persistMembershipPool();
     }
     // Under consensus-v2 the pool is the candidate set a seal round agrees; otherwise seal every full 9 now.
-    if (this._consensusV2) return { pooled: this._membershipPool.length, sealedFaces: 0 };
-    return this._sealReadyFaces();
+    // Either way the caller learns WHICH block it just pooled (content id + whole-tx hash) — a CLI, a devnet
+    // or a bridge that submits a tx needs its id to look it up, and had no way to get it from this reply.
+    const sealed = this._consensusV2 ? { pooled: this._membershipPool.length, sealedFaces: 0 } : await this._sealReadyFaces();
+    return { id: block.id, hash: block.hash, ...sealed };
   }
 
   async addSealedBatch(txs) {
@@ -466,23 +492,6 @@ export class Ledger extends EventEmitter {
     };
   }
 
-  // WHAT THIS LEDGER CAN DO, ASKED OF THE RUNNING CODE RATHER THAN THE INSTALL TREE.
-  //
-  // A caller deciding whether `rebuild_ledger` is safe to issue has two bad options: read
-  // node_modules/@xmbl/cubic-ledger/package.json, which reports the INSTALLED version and not the one in
-  // memory (an OTA that lands a new bundle without restarting leaves the old code running — this box was in
-  // exactly that state for part of 2026-09-15), or issue the destructive op and look at the result, which
-  // only tells you afterwards. This is the third option: a non-destructive question the running process
-  // answers about itself. `rescues_non_anchor_blocks` is the one that matters — false means a canonical
-  // rebuild on this node will drop every value tx, utxo, identity and contract it holds.
-  capabilities() {
-    return {
-      rescues_non_anchor_blocks: true,
-      reports_wiped_count: true,
-      rebuild_logs_to_stdout: true,
-    };
-  }
-
   // ---- CONSENSUS-V2 (2b) seal hooks. STATE lives here; the SealRoundManager (in core, with the gossip) injects
   // getMembershipPool as getItems and calls sealAgreedBlocks as sealSet. block.hash is the node-consistent L1 key. ----
   getMembershipPool() { return this._membershipPool; }
@@ -559,13 +568,30 @@ export class Ledger extends EventEmitter {
       groups.get(ck).push({ oldId, value: value.toString(), raw,
                             envelope: ENVELOPE.filter(f => f in raw.tx).length });
     }
-    let kept = 0, rekeyed = 0, deleted = 0, removed = 0;
-    for (const [, rows] of groups) {
+    let kept = 0, rekeyed = 0, deleted = 0, removed = 0, evicted = 0;
+    for (const [ck, rows] of groups) {
+      // EVICTED MEANS EVICTED, here too: a content key on the eviction list keeps no row at all.
+      if (this._evicted.has(ck)) {
+        for (const r of rows) { try { await this.db.del(`block:${r.oldId}`); deleted++; removed++; } catch { /* gone */ } this.blocks.delete(r.oldId); }
+        evicted++;
+        continue;
+      }
       // the row closest to bare consensus shape wins; ties broken by id so every node picks the same one
       rows.sort((a, b) => (a.envelope - b.envelope) || (a.oldId < b.oldId ? -1 : a.oldId > b.oldId ? 1 : 0));
       const keep = rows[0];
-      const block = Block.deserialize(keep.value);
-      const newId = Block.fromTransaction(block.tx).id;
+      let block, newId;
+      try {
+        block = Block.deserialize(keep.value);
+        newId = Block.fromTransaction(block.tx).id;   // re-validates: a row the CURRENT rule refuses is evicted
+      } catch (e) {
+        // One row that fails today's validation must not abort the pass for every other row. It is evicted
+        // by content key — recorded, its rows deleted, refused on every later path — exactly as it would be
+        // if it were submitted now, and the compaction carries on.
+        try { await this.evict(ck, `rejected during content-id compaction: ${e?.message || e}`); } catch { /* best effort */ }
+        for (const r of rows) { try { await this.db.del(`block:${r.oldId}`); deleted++; removed++; } catch { /* gone */ } this.blocks.delete(r.oldId); }
+        evicted++;
+        continue;
+      }
       const own = blockTimestampNanos(keep.raw);
       if (own !== null) block.timestamp = own;
       block.id = newId;
@@ -593,8 +619,8 @@ export class Ledger extends EventEmitter {
     // no survivor — the genuinely redundant copies. scanned - kept must equal removed, or something is wrong.
     console.log(`[XCLT] content-id compaction: scanned ${scanned} row(s), kept ${kept} distinct content key(s), `
       + `re-keyed ${rekeyed}, removed ${removed} redundant row(s) (${deleted} old key(s) deleted in total), `
-      + `${unaddressed} row(s) had no content address and were left alone`);
-    return { scanned, kept, rekeyed, removed, deleted, unaddressed, balanced: scanned - kept === removed };
+      + `${evicted} content key(s) evicted, ${unaddressed} row(s) had no content address and were left alone`);
+    return { scanned, kept, rekeyed, removed, deleted, evicted, unaddressed, balanced: scanned - unaddressed - kept === removed };
   }
 
   getPoolBlocksByIds(ids) { const want = new Set(ids); return this._membershipPool.filter(b => want.has(b.id)); }

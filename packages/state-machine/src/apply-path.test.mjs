@@ -11,6 +11,7 @@
 //   node vendor/xmbl-node/state-machine/src/apply-path.test.mjs
 import { StateMachine } from './state-machine.js';
 import { Ledger } from '../../cubic-ledger/src/ledger.js';
+import { createHash } from 'node:crypto';
 import { rm, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,9 +24,11 @@ const check = async (name, fn) => {
 };
 const eq = (a, b, what) => { if (a !== b) throw new Error(`${what}: expected ${b}, got ${a}`); };
 
-// Nine anchor txs seal exactly one face under the hash-sorted partition (9 blocks per face).
+// Nine anchor txs seal exactly one face under the hash-sorted partition (9 blocks per face). An anchor's
+// `hash` is a sha-256 digest by contract (cubic-ledger validateTransaction refuses anything else), so the
+// fixture mines a real digest per tag rather than a padded label.
 const anchors = (n, tag) => Array.from({ length: n }, (_, i) => ({
-  type: 'anchor', event: 'task.created', hash: `${tag}-${i}`.padEnd(64, '0'), ts: 1_700_000_000_000 + i,
+  type: 'anchor', event: 'task.created', hash: createHash('sha256').update(`${tag}-${i}`).digest('hex'), ts: 1_700_000_000_000 + i,
 }));
 
 const fresh = async () => {

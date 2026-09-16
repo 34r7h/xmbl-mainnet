@@ -7,11 +7,13 @@
 // whenever it CANNOT prove invalidity, because rejecting a tx the rest of the mesh seals costs a cube forever.
 import { ConsensusWorkflow } from './workflow.js';
 import assert from 'node:assert';
+import { createHash } from 'node:crypto';
 
 let pass = 0, fail = 0;
 const check = async (n, f) => { try { await f(); console.log(`  ok   ${n}`); pass++; } catch (e) { console.log(`  FAIL ${n}\n       ${e.message}`); fail++; } };
 const mk = () => new ConsensusWorkflow({});
-const SIGNED = { type: 'anchor', event: 'e', hash: 'h', from: 'xmbStale', sig: 'SIG' };
+const digest = (label) => createHash('sha256').update(String(label)).digest('hex');   // an anchor hash is a sha-256 digest by contract
+const SIGNED = { type: 'anchor', event: 'e', hash: digest('h'), from: 'xmbStale', sig: 'SIG' };
 
 console.log('\n1. predicate is fork-safe — false whenever invalidity cannot be PROVEN');
 await check('unsigned tx -> false (presence guard handles it, not this)', async () => {
@@ -49,14 +51,14 @@ await check('_evictRawTx clears map, LevelDB and stage-2 tasks', async () => {
 console.log('\n3. drain clears the pre-guard backlog, and ONLY the provably-invalid part');
 await check('drain evicts invalid, keeps unprovable, keeps valid', async () => {
   const w = mk();
-  const bad = { ...SIGNED, hash: 'bad' };                 // resolves + verify=false -> evict
+  const bad = { ...SIGNED, hash: digest('bad') };         // resolves + verify=false -> evict
   const unprovable = { ...SIGNED, from: 'xmbUnknown' };   // key unresolved       -> keep
-  const good = { ...SIGNED, hash: 'good', from: 'xmbGood' };
+  const good = { ...SIGNED, hash: digest('good'), from: 'xmbGood' };
   w.mempool.rawTx.set('L', new Map([['b', { txData: bad }], ['u', { txData: unprovable }], ['g', { txData: good }]]));
   w.rawTxToId.set('b', 'L'); w.rawTxToId.set('u', 'L'); w.rawTxToId.set('g', 'L');
   w.mempool._deleteRawTx = async () => {};
   w.getPublicKeyByAddress = (a) => (a === 'xmbUnknown' ? null : 'PK');
-  w._isPositivelyInvalid = async (tx) => tx.from !== 'xmbUnknown' && tx.hash === 'bad';
+  w._isPositivelyInvalid = async (tx) => tx.from !== 'xmbUnknown' && tx.hash === digest('bad');
   const { scanned, evicted } = await w.drainInvalidMempool();
   assert.strictEqual(scanned, 3);
   assert.strictEqual(evicted, 1, 'expected exactly the provably-invalid one');

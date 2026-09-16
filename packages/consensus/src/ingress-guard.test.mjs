@@ -22,11 +22,15 @@
 // Run: node ingress-guard.test.mjs
 import { ConsensusWorkflow } from './workflow.js';
 import assert from 'node:assert';
+import { createHash } from 'node:crypto';
 
 let pass = 0;
 const check = (n, c) => { assert.ok(c, n); console.log('  ok  ', n); pass++; };
 const mk = () => new ConsensusWorkflow({});
-const signedAnchor = (h = 'h') => ({ type: 'anchor', event: 'task.created', hash: h, from: 'xmbA', sig: 'SIG' });
+// An anchor's `hash` is a sha-256 digest by contract (cubic-ledger validateTransaction), so fixtures mine one
+// from a label rather than passing the label itself.
+const digest = (label) => createHash('sha256').update(String(label)).digest('hex');
+const signedAnchor = (h = 'h') => ({ type: 'anchor', event: 'task.created', hash: digest(h), from: 'xmbA', sig: 'SIG' });
 
 // (a) SIGNED traffic is admitted — including anchors
 {
@@ -40,10 +44,12 @@ const signedAnchor = (h = 'h') => ({ type: 'anchor', event: 'task.created', hash
 // (b) UNSIGNED is rejected regardless of type — this is the actual junk
 {
   const w = mk();
-  check('REJECTS an unsigned anchor', w._admitToPool('nodeA', { type: 'anchor', event: 'x', hash: 'h', from: 'a' }) === false);
-  check('REJECTS a tx with sig but no from', w._admitToPool('nodeA', { type: 'anchor', event: 'x', hash: 'h', sig: 'S' }) === false);
+  check('REJECTS an unsigned anchor', w._admitToPool('nodeA', { type: 'anchor', event: 'x', hash: digest('h'), from: 'a' }) === false);
+  check('REJECTS a tx with sig but no from', w._admitToPool('nodeA', { type: 'anchor', event: 'x', hash: digest('h'), sig: 'S' }) === false);
   check('REJECTS the seal-driver chain-fill junk (no sig)', w._admitToPool('nodeA', { type: 'tx', from: 'xmbl-seal-driver-payer', amount: '1' }) === false);
-  check('REJECTS an empty-string signature', w._admitToPool('nodeA', { type: 'anchor', event: 'x', hash: 'h', from: 'a', sig: '' }) === false);
+  check('REJECTS an empty-string signature', w._admitToPool('nodeA', { type: 'anchor', event: 'x', hash: digest('h'), from: 'a', sig: '' }) === false);
+  check('REJECTS a signed anchor whose hash is a label, not a digest (the ledger rule, applied at the door)', w._admitToPool('nodeA', { type: 'anchor', event: 'proof.mined', hash: 'proofofmined-1789450900844', from: 'a', sig: 'S' }) === false);
+  check('REJECTS a signed anchor missing its event (required by tokens.json)', w._admitToPool('nodeA', { type: 'anchor', hash: digest('h'), from: 'a', sig: 'S' }) === false);
   check('REJECTS a null/garbage payload', w._admitToPool('nodeA', null) === false);
   check('accepts array-form `from` (type-6 shape)', w._admitToPool('nodeA', { type: 'tx', from: ['a'], sig: 'S' }) === true);
   check('REJECTS an EMPTY array `from`', w._admitToPool('nodeA', { type: 'tx', from: [], sig: 'S' }) === false);
