@@ -235,6 +235,14 @@ export class StateMachine extends EventEmitter {
   }
 
   async _handleLedgerBlock(block) {
+    // JOIN THE STORE BEFORE TOUCHING IT. This handler is wired to `block:added` in the CONSTRUCTOR, so the
+    // ledger can deliver a block while `_initDb` is still opening the db and rehydrating the tree. Both
+    // writes below swallow their errors (by design — an in-memory fallback must not take the node down),
+    // which means an early block was applied to the in-memory tree and persisted NOWHERE: the root looked
+    // right for the life of the process and came back 64 zeros on the next boot, with nothing logged.
+    // MEASURED: applying two blocks before `ready()` resolved gave root ad778ca2… in-process and
+    // 0000000000… after a restart; awaiting `ready()` first, the same root survives.
+    await this.ready();
     const changes = this._stateChangesFor(block);
     if (!changes || !Object.keys(changes).length) return;
     try {

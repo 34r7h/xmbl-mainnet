@@ -10,10 +10,16 @@ import { join } from 'path';
 let pass = 0, fail = 0;
 const check = async (n, f) => { try { await f(); console.log(`  ok   ${n}`); pass++; } catch (e) { console.log(`  FAIL ${n}\n       ${e.message}`); fail++; } };
 const EMPTY = '0'.repeat(64);
-// Portable: this suite runs on the laptop AND on every Linux box in the fleet.
+// Portable: this suite runs on the laptop AND on every Linux box in the fleet — so it JOINS on `ready()`
+// rather than sleeping. A fixed timeout is a guess about someone else's scheduler: this suite waited
+// 120/150/250/500ms for the store to open and the tree to rehydrate, which held on this laptop and LOST on
+// ubuntu-latest, where the restart check read 64 zeros — the 150ms wait expired before `_initDb` had opened
+// the db, so `_handleLedgerBlock` persisted no diff rows and the restart had nothing to replay.
+// `StateMachine.ready()` resolves once the store is open, the tree is rehydrated from `state:` and the diff
+// rows are swept; every write below it is already awaited. There is nothing left to sleep for.
 const dir = join(tmpdir(), 'xvsm-verkle-test');
 const fresh = async () => { rmSync(dir, { recursive: true, force: true });
-  const sm = new StateMachine({ dbPath: dir }); await new Promise(r => setTimeout(r, 120)); return sm; };
+  const sm = new StateMachine({ dbPath: dir }); await sm.ready(); return sm; };
 
 const blk = (id, tx) => ({ id, tx });
 const REAL_TRAFFIC = [
@@ -107,16 +113,38 @@ console.log('\n4. restart survival');
 await check('verkle root survives a restart (diffs are REPLAYED, not just collected)', async () => {
   const d = dir + '-restart';
   rmSync(d, { recursive: true, force: true });
-  let sm = new StateMachine({ dbPath: d }); await new Promise(r => setTimeout(r, 150));
+  let sm = new StateMachine({ dbPath: d }); await sm.ready();
   for (const b of REAL_TRAFFIC) await sm._handleLedgerBlock(b);
   const before = sm.stateTree.getRoot();
   assert.notStrictEqual(before, EMPTY);
-  await new Promise(r => setTimeout(r, 250)); await sm.db.close();
-  sm = new StateMachine({ dbPath: d }); await new Promise(r => setTimeout(r, 500));
+  // No sleep before the close: _handleLedgerBlock awaits both the tree insert (which awaits
+  // _saveState) and the diff `put`, so when the loop above returns, the bytes are already down.
+  await sm.db.close();
+  sm = new StateMachine({ dbPath: d }); await sm.ready();
   const after = sm.stateTree.getRoot();
   await sm.db.close(); rmSync(d, { recursive: true, force: true });
   assert.strictEqual(after, before, 'root changed across restart');
   assert.notStrictEqual(after, EMPTY, 'root reset to zeros on restart');
+});
+
+// The regression the sleeps above were hiding. `_handleLedgerBlock` is wired to `block:added` in the
+// CONSTRUCTOR, so in production a block can arrive while `_initDb` is still opening the store — and both of
+// that handler's writes swallow their errors, so the block landed in the in-memory tree and nowhere on disk.
+// The root read correctly for the life of the process and came back 64 zeros on the next boot, silently.
+// This check applies traffic with NO join at all, the way the ledger's event does.
+await check('a block applied BEFORE the store finished opening still survives a restart', async () => {
+  const d = dir + '-race';
+  rmSync(d, { recursive: true, force: true });
+  let sm = new StateMachine({ dbPath: d });          // deliberately NOT awaiting ready()
+  for (const b of REAL_TRAFFIC) await sm._handleLedgerBlock(b);
+  const before = sm.stateTree.getRoot();
+  assert.notStrictEqual(before, EMPTY, 'control invalid: nothing was applied');
+  await sm.db.close();
+  sm = new StateMachine({ dbPath: d }); await sm.ready();
+  const after = sm.stateTree.getRoot();
+  await sm.db.close(); rmSync(d, { recursive: true, force: true });
+  assert.notStrictEqual(after, EMPTY, 'root came back as 64 zeros — the early block was never persisted');
+  assert.strictEqual(after, before, 'root changed across restart');
 });
 
 rmSync(dir, { recursive: true, force: true });
