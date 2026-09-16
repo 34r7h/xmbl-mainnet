@@ -4,8 +4,11 @@
   "type": "module",
   "main": "index.js",
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./browser": "./dist/lng.browser.js",
+    "./package.json": "./package.json"
   },
+  "browser": "./dist/lng.browser.js",
   "license": "MIT",
   "publishConfig": {
     "access": "public"
@@ -18,6 +21,7 @@
   "description": "LNG \u2014 the XMBL smart-contract language. Interpreter, type checker, determinism gate, and EVM (Solidity) + WASM backends. Zero dependencies; usable standalone.",
   "dependencies": {},
   "scripts": {
+    "build:browser": "node build-browser.mjs",
     "test": "node ../../scripts/run-node-tests.mjs ."
   }
 }

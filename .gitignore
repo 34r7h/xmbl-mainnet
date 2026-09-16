@@ -2,6 +2,8 @@
 node_modules/
 # js builds
 dist/
+# ...except @xmbl/lng's browser build: committed and byte-checked against its sources by the gate
+!packages/lng/dist/
 dist-node/
 dist-miniapp/
 dist-contract-lab/

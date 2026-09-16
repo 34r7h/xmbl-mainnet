@@ -1109,7 +1109,10 @@ function lngStr(v, quoted) {
 // Public API + CLI
 // ----------------------------------------------------------------------------
 function run(src, out) {
-  out = out || process.stdout;
+  // Default sink: the process's stdout under Node; the console in a browser (no `process`). ONE source
+  // serves both — the browser artifact (dist/lng.browser.js) is generated from this file — so a caller
+  // that wants the output passes `{ write }` and gets the same bytes on either side.
+  out = out || (typeof process !== 'undefined' && process.stdout) || { write: (s) => console.log(String(s).replace(/\n$/, '')) };
   const ast = parse(lex(src));
   return evalProgram(ast, out);
 }

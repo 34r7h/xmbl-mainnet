@@ -29,16 +29,14 @@ rebuild the bytes you ship?" is answered yes from day one. The adapted scheme is
 and joins the cubic-curve ⛔ external review — it cannot become a mainnet signer on the existing
 MAYO review alone. Work item: **B9**.
 
-### A2. Who guards the browser copies of the LNG compiler?
-**Why it's open.** The handoff web app ships three hand-copied browser versions of the LNG
-interpreter/EVM/WASM backends (`web/views/config-panels/lng-*.js`, in the *handoff* repo). They
-were re-synced once; nothing fails if they drift again. Nothing in this repo can watch a file in a
-different repo.
-**Options.** (a) The handoff repo stops hand-copying and builds those panels *from* the published
-`@xmbl/lng` package (one bundling step), with a diff check there. (b) Vendor the three panel files
-into xmbl-mainnet so a check here can see drift.
-**Recommendation.** (a) — one source of truth, no copies. **Proof:** the handoff repo's build fails
-when `@xmbl/lng` output and the panel differ; no `lng-*.js` hand copies remain.
+### A2. The browser copies of the LNG compiler — DECIDED 2026-09-16
+**Decision.** Not a question: LNG is a module, every user of it imports the module and gets the same
+thing. **Done:** `@xmbl/lng` ships its browser build — `dist/lng.browser.js`, one dependency-free ES
+module generated from the same `src/*.js` the node runs — as `@xmbl/lng/browser`; the gate rebuilds
+it and fails on a byte of drift, and proves the same programs give the same bytes on both sides
+(34 checks). The four hand copies in the handoff repo (`lng-{interp,evm,wasm,typecheck}.js`) are the
+consumer's to delete for one import line — sent to handoff-claude as a requirement. **Proof:** the
+handoff repo counts 0 `lng-*.js` ports and 1 `import … from '@xmbl/lng/browser'`.
 
 ### A3. Is the EVM backend a supported deployment target, or an export?
 **Why it's open.** LNG can transpile a contract to Solidity that `solc` compiles, but we have
@@ -204,7 +202,7 @@ external reviews return; `AUDIT_GATES_OPEN` flips to `false` in that same review
 
 ```
 A1 mayo.wasm:            DECIDED 2026-09-16 — adapt MAYO to the cubic coordinate system (B9)
-A2 LNG browser panels:   a  (build from package)   / b
+A2 LNG browser panels:   DECIDED 2026-09-16 — the module ships its browser build; consumers import it
 A3 EVM backend:          b  (export only)          / a — testnet key + RPC: ____
 A4 EVM comparison:       b  (drop claim)           / a
 A5 signature domain:     approve / defer

@@ -26,6 +26,9 @@
     contract (`xsc`, `submit_batch`, `ledger_capabilities`, `identity_status`, a signed `chain` claim, honest
     `submit_tx` rejections) and reports the RUNNING versions; boot waits for the stores.
   - every package exports a load-time `VERSION`.
+  - lng: ships its BROWSER build — `dist/lng.browser.js` (`@xmbl/lng/browser`), one dependency-free ES module
+    generated from the same `src/*.js` the node runs and byte-checked by the gate (same surface, same bytes, runs
+    with no Node globals); the sources no longer assume `process`/`Buffer`.
 
 ### Patch Changes
 

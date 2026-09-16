@@ -38,7 +38,10 @@ function uleb(n) { n = BigInt(n); const b = []; do { let x = Number(n & 0x7Fn); 
 function sleb(n) { n = BigInt(n); const b = []; let more = true; while (more) { let byte = Number(n & 0x7Fn); n >>= 7n; if ((n === 0n && (byte & 0x40) === 0) || (n === -1n && (byte & 0x40) !== 0)) more = false; else byte |= 0x80; b.push(byte); } return b; }
 function vec(items) { return [...uleb(items.length), ...items.flat()]; }
 function section(id, payload) { return [id, ...uleb(payload.length), ...payload]; }
-function nm(s) { const b = [...Buffer.from(s, 'utf8')]; return [...uleb(b.length), ...b]; }
+// UTF-8 bytes of a name — TextEncoder is the one encoder Node and browsers both ship; this file is also the
+// source of the browser build (dist/lng.browser.js), where `Buffer` does not exist.
+const utf8 = (s) => [...new TextEncoder().encode(s)];
+function nm(s) { const b = utf8(s); return [...uleb(b.length), ...b]; }
 const I32 = 0x7F, I64 = 0x7E;
 const O = {
   unreachable: 0x00, block: 0x02, loop: 0x03, if: 0x04, else: 0x05, end: 0x0b, br: 0x0c, br_if: 0x0d, ret: 0x0f, call: 0x10, drop: 0x1a,
@@ -100,7 +103,7 @@ function compile(src, opts = {}) {
   if (hostState) {
     let off = KEYS_BASE;
     for (const f of c.fields) {
-      const kb = [...Buffer.from(f.name, 'utf8')];
+      const kb = utf8(f.name);
       keyPtr.push(off); keyLen.push(kb.length); keyBytes.push(...kb); off += kb.length;
     }
   }
