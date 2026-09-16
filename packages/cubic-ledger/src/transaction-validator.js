@@ -57,6 +57,17 @@ export function validateTransaction(tx) {
     }
   }
 
+  // AN ANCHOR'S hash MUST BE A DIGEST. tokens.json requires the FIELD to be present and never checked what
+  // was in it, so a literal label passed straight through. MEASURED on this node's ledger 2026-09-16: one row
+  // carried hash "proofofmined-1789450900844" under event "proof.mined" — signed by this node's own key. An
+  // anchor is a hashes-only digest of an off-chain event and nothing anywhere can resolve it back to a source
+  // record (every anchor lookup on the broker is a 404), so the digest shape is the ONLY thing about an anchor
+  // this node can actually check. Refusing it here means a fabricated anchor is rejected at the door and, via
+  // Ledger.addTransaction, recorded as evicted — never examined again.
+  if (tx.type === 'anchor' && !/^[0-9a-f]{64}$/.test(String(tx.hash))) {
+    throw new Error(`anchor hash is not a sha-256 digest: ${JSON.stringify(tx.hash)}`);
+  }
+
   return true;
 }
 

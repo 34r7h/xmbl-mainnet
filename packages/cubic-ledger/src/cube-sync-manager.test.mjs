@@ -39,7 +39,7 @@ function seedCube(ledger, salt) {
   for (let f = 0; f < 3; f++) {
     const blocks = [];
     for (let i = 0; i < 9; i++) {
-      const tx = { type: 'anchor', event: 'e', hash: `h${salt}${f}${i}`, from: 'xmbA', sig: 'S' };
+      const tx = { type: 'anchor', event: 'e', hash: createHash('sha256').update(`h${salt}${f}${i}`).digest('hex'), from: 'xmbA', sig: 'S' };
       blocks.push({ hash: txHash(tx), tx });
     }
     faces.push({ root: faceRootOf(blocks.map(b => b.hash)), blocks });

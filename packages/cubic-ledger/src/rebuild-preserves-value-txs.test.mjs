@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 // A CANONICAL REBUILD MAY DISCARD A DIVERGENT CHAIN. IT MAY NOT DISCARD STATE THE CANONICAL SET DOES NOT
 // DESCRIBE. The broker's canonical set is anchors and nothing else, so every type-6 value tx, utxo, identity
 // and contract a node holds is outside it by construction — and rebuildFromAnchors cleared the whole `block:`
@@ -29,7 +30,7 @@ test('a canonical rebuild keeps every block the anchor set cannot re-derive', as
   for (let i = 0; i < 100 && !led._dbOpen; i++) await sleep(50);
 
   const anchors = Array.from({ length: 30 }, (_, i) => ({
-    event: 'task.created', hash: `a${String(i).padStart(4, '0')}`.padEnd(16, '0'), ts: 1000 + i,
+    event: 'task.created', hash: createHash('sha256').update(`anchor-${i}`).digest('hex'), ts: 1000 + i,
   }));
   for (const a of anchors) await led.addTransaction({ type: 'anchor', event: a.event, hash: a.hash, ts: a.ts });
   for (let i = 0; i < 12; i++) {
