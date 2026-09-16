@@ -30,3 +30,4 @@ release-artifacts/
 .DS_Store
 coverage/
 *.log
+.npmrc

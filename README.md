@@ -36,7 +36,7 @@ The cryptic testnet names are gone. Each protocol module is one npm package and 
 
 | npm package (`packages/`) | Rust crate (`crates/`) | was | what it is |
 |---|---|---|---|
-| `@xmbl/core` | `xmbl-core` | core | Node runtime orchestrating every module below. |
+| `@xmbl/core` | `xmbl-core` | core | Node runtime orchestrating every module below. Ships the `xmbl-node` daemon (`npx xmbl-node start --config <path>`): control socket + metrics, the surface a supervisor talks to. |
 | `@xmbl/identity` | `xmbl-identity` | xid | MAYO post-quantum identity & signatures; cube-curve crypto seam. |
 | `@xmbl/networking` | `xmbl-networking` | xn | libp2p P2P layer: discovery, gossip, routing, NAT traversal. |
 | `@xmbl/cubic-ledger` | `xmbl-cubic-ledger` | xclt | The cube-curve ledger: blocks → 9-block faces → 3-face cubes. |
@@ -51,7 +51,7 @@ App / tooling modules (npm / web only):
 
 | package | was | what it is |
 |---|---|---|
-| `@xmbl/cli` | xcli | Command-line interface to every module. |
+| `@xmbl/cli` | xcli | Command-line interface to every module; `xmbl chain start` runs a local devnet (real identities + ledger) with an RPC. |
 | `@xmbl/visualizer` (`packages/visualizer`) | xv | Visualizer library: status server + Three.js scene helpers. |
 | `@xmbl/explorer` (`apps/visualizer`) | new | Live, educational 3D cube-curve **app** — connects to any node, demo fallback. |
 | `@xmbl/simulator` | xsim | Deterministic + chaotic network simulator for tests. |
@@ -79,6 +79,10 @@ npm test                    # test all packages
 npm run visualizer          # serve the Explorer at http://localhost:5180
 npm run app-builder         # run the app builder
 
+npx xmbl-node start --config config.node.json   # run a real node (@xmbl/core daemon: control socket + metrics)
+npx -w packages/cli xmbl chain start            # local devnet with 10 funded accounts + RPC (the "hardhat for XMBL")
+npm run devnet -w packages/simulator            # the same devnet, headless, on :8646 for the browser extension
+
 cargo build --workspace     # build the Rust crates
 cargo test  --workspace     # test the Rust crates
 ```
@@ -86,7 +90,8 @@ cargo test  --workspace     # test the Rust crates
 ## Release
 
 One version line for all `@xmbl/*` protocol packages and `xmbl-*` crates, cut by pushing a
-semver tag. See [RELEASING.md](RELEASING.md).
+semver tag. See [RELEASING.md](RELEASING.md). Every package exports a load-time `VERSION`, and a
+running node reports the versions it is actually executing on its control socket (`status`.versions).
 
 ## License
 

@@ -47,10 +47,10 @@ async function initialize() {
     // Clear ALL databases on startup for fresh simulation
     // The simulator uses ./data/xsim/ledger (relative to project root)
     const projectRoot = path.join(__dirname, '..');
-    const xsimDbPath = path.join(projectRoot, 'data', '@xmbl/simulator', 'ledger');
-    const xcltDbPath = path.join(projectRoot, '@xmbl/cubic-ledger', 'data', 'ledger');
-    const xvsmDbPath = path.join(projectRoot, 'data', '@xmbl/simulator', '@xmbl/state-machine');
-    const xpcDbPath = path.join(projectRoot, 'data', '@xmbl/simulator', '@xmbl/consensus');
+    const xsimDbPath = path.join(projectRoot, 'data', 'xsim', 'ledger');
+    const xcltDbPath = path.join(projectRoot, 'cubic-ledger', 'data', 'ledger');
+    const xvsmDbPath = path.join(projectRoot, 'data', 'xsim', 'xvsm');
+    const xpcDbPath = path.join(projectRoot, 'data', 'xsim', 'xpc');
     
     // Clear all database paths
     [xsimDbPath, xcltDbPath, xvsmDbPath, xpcDbPath].forEach(dbPath => {
@@ -278,10 +278,10 @@ async function initialize() {
           
           // Clear ALL databases for restart
           const projectRoot = path.join(__dirname, '..');
-          const xsimDbPath = path.join(projectRoot, 'data', '@xmbl/simulator', 'ledger');
-          const xcltDbPath = path.join(projectRoot, '@xmbl/cubic-ledger', 'data', 'ledger');
-          const xvsmDbPath = path.join(projectRoot, 'data', '@xmbl/simulator', '@xmbl/state-machine');
-          const xpcDbPath = path.join(projectRoot, 'data', '@xmbl/simulator', '@xmbl/consensus');
+          const xsimDbPath = path.join(projectRoot, 'data', 'xsim', 'ledger');
+          const xcltDbPath = path.join(projectRoot, 'cubic-ledger', 'data', 'ledger');
+          const xvsmDbPath = path.join(projectRoot, 'data', 'xsim', 'xvsm');
+          const xpcDbPath = path.join(projectRoot, 'data', 'xsim', 'xpc');
           
           [xsimDbPath, xcltDbPath, xvsmDbPath, xpcDbPath].forEach(dbPath => {
             if (fs.existsSync(dbPath)) {

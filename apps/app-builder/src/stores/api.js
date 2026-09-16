@@ -2,7 +2,6 @@
 import { useAppState } from './state'
 import _ from 'lodash'
 import db from '@/utils/db.js'
-// import compute from '@/utils/compute.js'
 import * as git from '../utils/git.js'
 import { Buffer } from 'buffer'
 window.Buffer = Buffer
