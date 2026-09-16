@@ -569,6 +569,31 @@ continue-on-error, and in the release workflow before any publish).
       broker's default feed (3991 untyped, 17 rejected, 0 would rebuild) and kept all 20 blocks and its cube.
       — *cubic-ledger/src/ledger.js; core/control-socket.js; rebuild-refusal.test.mjs (13/13)*
 
+- [x] **⚠ SECURITY: A FORGERY COULD DELETE THE TRANSACTION IT IMPERSONATED. FIXED.** Found by the new
+      three-node reproduction on its first run: three nodes given the identical 36-anchor set plus one forged
+      anchor ended at **36 / 35 / 36 blocks**. Two doors, the same attack, no key material required, and every
+      xid and every anchor `event:hash` is public. (1) The ledger evicted an invalid TYPED datum by the xid it
+      CLAIMED — but a datum fails `validateXid` precisely when its body does not hash to that xid, i.e. when
+      the xid belongs to someone else's datum. So copying an honest anchor's xid and changing one byte evicted
+      the HONEST anchor for good: refused forever if it had not arrived yet, and its stored rows DELETED by
+      `evict()` if it had. (2) The anchor content key `event:hash` was claimed BEFORE validation and kept on
+      failure, so a forgery sharing an honest anchor's event and hash made every later honest copy answer
+      `duplicate: true` and vanish. Now: a datum whose claimed xid is not its content address is evicted under
+      a digest of ITS OWN bytes (`forged:<sha256>`), the speculative content key is released on every failure,
+      and both errors carry `code: 'XID_MISMATCH'`. The forgery is still refused forever; what it impersonated
+      is untouched. — *cubic-ledger/src/ledger.js, transaction-validator.js; xid-poisoning.test.mjs (23/23)*
+- [x] **THREE FULL NODES CONVERGE UNDER ADVERSARIAL DELIVERY (B2 / T6.2 c).**
+      `reproductions/three-nodes.mjs` boots three real `XMBLCore` instances per run and delivers the same
+      typed set to each in its own seeded shuffle, with ~20% re-gossiped duplicates and two forgeries spliced
+      mid-stream. Two phases, because the fleet has two sealing modes and they do not converge alike:
+      **eager local sealing** (the default, `XPC_CONSENSUS_V2` unset) converges the BLOCK SET on every run
+      (36/36/36, identical block digest) but the cube partition follows arrival time — measured 3 distinct
+      cube `set_digest`s in 2 of 3 runs, because a node cuts a hash-sorted nine whenever it happens to hold
+      nine. That is why the live fleet converges through the canonical rebuild rather than through live
+      sealing. **Agreed sealing** (`XPC_CONSENSUS_V2=1`) cuts the boundary before it is sealed and all three
+      agree on blocks, faces, cubes, the cube `set_digest` AND the state root. Runs in ~2s for 3 runs, so it
+      sits in the hard gate. — *reproductions/three-nodes.mjs*
+
 ## Rollout policy (operator, 2026-09-16): every node, latest version or suspended, updated over the air
 
 - [x] **A node PROVES the version it runs.** `status` and the SIGNED `chain` claim carry `versions` (what the

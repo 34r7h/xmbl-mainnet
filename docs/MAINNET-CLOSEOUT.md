@@ -111,7 +111,12 @@ and it forces `~u256` amounts to i64 in the UTXO proof contracts. Work: surface 
 a MAYO signature and spends a UTXO on the real host; `compile-wasm` and `contract-host` suites gain
 those cases.
 
-### B2. Full-stack multi-node reproduction under adversarial timing (T6.2 c)
+### B2. Full-stack multi-node reproduction under adversarial timing (T6.2 c) — DONE 2026-09-16
+`reproductions/three-nodes.mjs`: three real XMBLCore per run, same set in three shuffles with duplicates and
+forgeries. Eager sealing converges the block set but not the cube partition (measured); agreed sealing
+(XPC_CONSENSUS_V2=1) converges blocks, cubes, set_digest and state root. It found a live denial-of-service on
+its first run — a forgery could evict the anchor whose xid it copied — now fixed and pinned by
+xid-poisoning.test.mjs.
 Three node *subsystems* converge today; three full nodes (network + consensus + ledger + state)
 under the simulator's chaos do not yet have a reproduction. Work: `reproductions/three-nodes.mjs`
 booting three `XMBLCore` in-process with the chaotic simulator, asserting one state root and one

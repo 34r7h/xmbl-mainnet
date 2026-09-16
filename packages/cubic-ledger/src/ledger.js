@@ -7,6 +7,7 @@ import { SuperCube } from './super-cube.js';
 import { sortFacesByHash } from './placement.js';
 import { sealBlocksIntoFaces } from './face-sealing.js';
 import { verifyPlacement } from './deterministic-placement.js';
+import { micromineBody } from './transaction-validator.js';   // the forged-bytes eviction key (see _forgedKey)
 import { Level } from 'level';
 import { anchorTimestampNanos, blockTimestampNanos } from './timestamps.js';
 export { anchorTimestampNanos, blockTimestampNanos };
@@ -225,6 +226,18 @@ export class Ledger extends EventEmitter {
    * @emits face:complete
    * @emits cube:complete
    */
+  /**
+   * The eviction key for a datum whose claimed xid is NOT its content address: a digest of the exact bytes
+   * offered (the claimed identity plus the body it actually carries). Refuses that forgery forever without
+   * ever touching the xid it impersonates.
+   */
+  _forgedKey(tx) {
+    let body = null;
+    try { body = micromineBody(tx); } catch { body = null; }
+    const material = JSON.stringify({ xid: tx?.xid ?? null, nonce: tx?.nonce ?? null, type: tx?.type ?? null, body });
+    return `forged:${createHash('sha256').update(material).digest('hex')}`;
+  }
+
   async addTransaction(tx, opts = {}) {
     // Integration: Verify signature if xid available and tx has signature and from address
     if (this.xid && tx.sig && tx.from) {
@@ -271,14 +284,29 @@ export class Ledger extends EventEmitter {
     try {
       block = Block.fromTransaction(tx, opts);
     } catch (error) {
+      // ⛔ THE SPECULATIVE CONTENT KEY IS TAKEN BACK ON EVERY FAILURE, not just on UNTYPED. The key above is
+      // claimed BEFORE the datum is validated, so a forgery that keeps an honest anchor's `event` and `hash`
+      // and breaks anything else (its nonce, its type prefix, its body) left that key claimed forever — and
+      // the honest anchor arriving later was answered `duplicate: true` and never stored. The same
+      // denial-of-service as the xid eviction below, through the dedup door instead of the eviction door.
+      if (ckey && this._anchorKeys.has(ckey)) this._anchorKeys.delete(ckey);
       // An invalid tx is evicted here, at the door, and recorded so it is never examined again. Without the
       // record the same bad tx is re-validated and re-logged on every resubmission for the life of the node.
       // UNTYPED is the one refusal that is NOT an eviction: the datum simply has no identity yet, and the same
       // anchor (same event:hash) may arrive typed a moment later — evicting its content key would refuse that too.
-      // A TYPED datum that fails (wrong prefix, body that does not mine to its xid) is a forgery of that xid and
-      // is evicted by the xid; a shape forgery with no xid (a label for a hash) is evicted by its content key.
-      if (error && error.code === 'UNTYPED') { if (ckey) this._anchorKeys.delete(ckey); throw error; }
-      const ekey = xkey || ckey;
+      if (error && error.code === 'UNTYPED') { throw error; }   // no identity yet: refused, never evicted
+      // ⛔ NEVER EVICT BY A CLAIMED-BUT-UNPROVEN XID. This evicted by `xid:<claimed>` whenever a typed datum
+      // failed — and a datum fails validateXid precisely when its body does NOT hash to that xid, i.e. when the
+      // xid belongs to SOMEBODY ELSE'S datum. So anyone could take an honest anchor's xid, change one byte of
+      // the body, submit it, and the honest anchor was evicted-for-good on every node that saw the forgery —
+      // refused forever if it had not arrived yet, and its stored rows DELETED by evict() if it had. A
+      // denial-of-service against any transaction whose xid is public, which is all of them.
+      // MEASURED by reproductions/three-nodes.mjs before this fix: three nodes given the identical 36-anchor
+      // set plus one forgery ended with 36 / 35 / 36 blocks — the node that happened to receive the forgery
+      // first was the one that lost the honest anchor.
+      // The forgery is still refused forever, under a key derived from ITS OWN bytes, which no honest datum
+      // can collide with because those bytes do not content-address to anything.
+      const ekey = (error && error.code === 'XID_MISMATCH') ? this._forgedKey(tx) : (ckey || null);
       if (ekey) await this.evict(ekey, error.message);
       throw error;
     }

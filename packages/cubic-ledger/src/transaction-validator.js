@@ -145,13 +145,19 @@ export function validateXid(tx) {
   if (!Number.isInteger(tx.nonce) || tx.nonce < 0) throw untyped(`untyped ${tx.type}: nonce is not a non-negative integer`);
   const code = typeCodeOf(tx.type);
   if (!tx.xid.startsWith(typePrefix(code))) {
-    throw new Error(`xid ${tx.xid.slice(0, 10)}… carries type prefix ${tx.xid.slice(0, 2)} (${typeOfXid(tx.xid) || 'not a chain tx type'}) but tx.type is ${tx.type} (prefix ${typePrefix(code)})`);
+    const e = new Error(`xid ${tx.xid.slice(0, 10)}… carries type prefix ${tx.xid.slice(0, 2)} (${typeOfXid(tx.xid) || 'not a chain tx type'}) but tx.type is ${tx.type} (prefix ${typePrefix(code)})`);
+    e.code = 'XID_MISMATCH';   // the claimed xid is not proven to be this datum's — never evict by it
+    throw e;
   }
   if (tx.type === 'anchor' && typeof tx.prior !== 'string') {
     throw untyped('untyped anchor: no `prior` (the previous anchor xid, or "" for the first) — the type-7 pointer body cannot be re-mined without it');
   }
   if (!verifyMicromine(micromineBody(tx), tx.nonce, tx.xid, code)) {
-    throw new Error(`${tx.type} failed micromine verification: xid ${tx.xid} does not content-address the body at nonce ${tx.nonce}`);
+    // TAGGED, because the caller must NOT treat the claimed xid as this datum's identity: the body does not
+    // hash to it, so the xid names somebody else's datum — see the eviction rule in Ledger.addTransaction.
+    const e = new Error(`${tx.type} failed micromine verification: xid ${tx.xid} does not content-address the body at nonce ${tx.nonce}`);
+    e.code = 'XID_MISMATCH';
+    throw e;
   }
   return true;
 }

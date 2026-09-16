@@ -29,6 +29,7 @@ sources it compiles — so a reviewer can confirm the exact bytes that produced 
 | Reproduction | Module | Claim reproduced |
 |--------------|--------|------------------|
 | `agentic-contract-e2e.mjs` | `packages/contracts` + `identity` + `state-machine` | A gated agentic contract is hosted and USED with every function (machine-checked against the compiler's WASM exports) through the real root→coordinator→agent delegation chain; XMBL state is observed updating at every surface (contract fields, the Verkle root, the UTXO ledger), every unauthorized/out-of-scope/replayed/revoked/value-violating call leaves the root unmoved, each committed change is Verkle-provable, and the transition is deterministic across independent nodes. |
+| `three-nodes.mjs` | `core` + `consensus` + `cubic-ledger` + `state-machine` | Three full nodes given the same typed set in different orders, with duplicates and forgeries, converge: the block set always, and under agreed seal boundaries the cubes, the cube `set_digest` and the state root too |
 | `contracts-reentrancy.mjs` | `packages/contracts` | A called contract never runs nested inside its caller's frame, so classic reentrancy is inexpressible by construction. |
 
 ## Browser-surface reproduction (app render, not a Node protocol run)
