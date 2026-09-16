@@ -28,6 +28,21 @@ export function anchorTimestampNanos(ts) {
   return BigInt(Math.floor(ms)) * 1000000n;
 }
 
+// The deterministic time of a persisted non-anchor block, or null when the row does not know it.
+// `validationTimestamp` is already NANOSECONDS (stored as a digit string, e.g. "1789470971116000000"),
+// so it is NOT put through anchorTimestampNanos, which reads a numeric string as epoch-ms.
+export function blockTimestampNanos(raw) {
+  const vt = raw?.tx?.validationTimestamp;
+  if (typeof vt === 'bigint') return vt;
+  if (typeof vt === 'number' && Number.isFinite(vt) && vt > 0) return BigInt(Math.floor(vt));
+  if (typeof vt === 'string' && /^\d+$/.test(vt)) return BigInt(vt);
+  const t = raw?.timestamp;
+  if (typeof t === 'bigint') return t;                                   // revived by deserialize
+  if (t && typeof t === 'object' && /^\d+$/.test(t.__bigint__ ?? '')) return BigInt(t.__bigint__);
+  if (raw?.tx?.ts !== undefined) { const ns = anchorTimestampNanos(raw.tx.ts); if (ns > 0n) return ns; }
+  return typeof t === 'number' && Number.isFinite(t) && t > 0 ? null : 0n;
+}
+
 export class Ledger extends EventEmitter {
   constructor(options = {}) {
     super();
@@ -339,7 +354,19 @@ export class Ledger extends EventEmitter {
           wipedBlocks++;
           let raw; try { raw = JSON.parse(value.toString()); } catch { continue; }
           if (!raw || !raw.tx || raw.tx.type === 'anchor') continue;
-          try { preserved.push(Block.deserialize(value.toString())); } catch { /* unreadable row, leave it */ }
+          let b; try { b = Block.deserialize(value.toString()); } catch { continue; /* unreadable row, leave it */ }
+          // RESTORE THE BLOCK'S OWN TIME, NEVER THIS NODE'S CLOCK. Rows written before Block.serialize()
+          // carried `timestamp` have no timestamp field at all, and Block's constructor defaults an absent
+          // one to Date.now() — so the rescue pass was re-stamping every preserved block with the instant
+          // the rebuild ran. MEASURED on a rebuild of this node's real ledger: all 276 value-tx blocks came
+          // back with times inside a 58ms window at 2026-09-16T03:47:58Z, 56 distinct values, i.e. the wall
+          // clock. That makes the rebuilt chain a function of WHEN a node rebuilt, which is exactly what a
+          // canonical rebuild exists to eliminate. validationTimestamp is the consensus time the rest of the
+          // ledger already prefers for these blocks (face.getAverageTimestamp reads it first), so it is the
+          // deterministic answer; a block that carries neither gets 0n rather than a borrowed clock.
+          const own = blockTimestampNanos(raw);
+          if (own !== null) b.timestamp = own;
+          preserved.push(b);
         }
       } catch { /* no blocks yet */ }
       preserved.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
