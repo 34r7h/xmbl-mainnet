@@ -73,10 +73,31 @@ changed: one canonical rebuild on every node follows the rollout — sent to han
 and broker-side requirements. **Proof:** every live node's claim carries the same `build` digest and
 `list_cube_keys` returns the same `set_digest` everywhere.
 
-### A8. The fleet runs `@xmbl/core` — SENT 2026-09-16
+### A8. The fleet runs `@xmbl/core` — SENT 2026-09-16; MEASURED 2026-09-16: NOT DONE, and now unblocked
 Not a question. handoff-claude has the requirement (bundle = `@xmbl/core@^0.1.11` running its
 `xmbl-node` bin; no vendored `core/` or `node.js`; envelope 099e46a4). **Proof:**
 `status.versions.core == '0.1.11'` on every node; `core/` absent from the served tarball.
+
+**Measured against the live node after B8 published (pid 32869, `xmb0844bbed…`, up since
+2026-09-16T04:01:04Z), over its own control socket — the proof above, run:**
+
+- `release` → `{"ok":false,"error":"unknown op"}`. So does `identity_status`. So does `chain`.
+  Those three ops ARE the version proof; a node that cannot answer them cannot prove anything.
+- The process runs `node node.js start` from `~/.handoff/xmbl-node.old/` — `xmbl-slim-node`, which
+  **vendors a hand-copied `core/`** (cache, config, control-socket, earnings, index, lead-worker,
+  logger, metrics-server, node-config, rate-limiter) and depends on **no `@xmbl/core` at all**.
+- Its installed protocol packages, in both `~/.handoff/xmbl-node/` and `~/.handoff/xmbl-node.old/`:
+  consensus 0.1.3, cubic-ledger 0.1.9, identity 0.1.4, networking 0.1.4, state-machine 0.1.5,
+  storage-compute 0.1.2, zero-knowledge 0.1.1.
+
+**Two consequences worth stating plainly.** First, publishing 0.1.11 did NOT suspend the fleet: the
+suspend-gate and the OTA loop both live in `@xmbl/core`, which this node does not run, so the
+"latest-or-suspended" rule (A7) is not in force on it — it is not suspended, and it is also not
+updating. Second, this node cannot be OTA'd at all in its present shape; `npm install` would move the
+seven npm deps and leave the vendored `core/` exactly where it is, still unable to answer `release`.
+
+A8 was waiting on B8 for the package to exist. `@xmbl/core@0.1.11` now exists, so the bundle swap is
+executable. It is handoff-claude's rollout and is not done here.
 
 ### A9. The crossed keypairs and the failed identity query — SENT 2026-09-16
 handoff-claude has it (re-provision on-box or name the owner; broker says `usr_fb2446eb53`;
@@ -184,11 +205,38 @@ twice (consensus, then ledger) — the defense-in-depth layer the ledger already
 daemon never enables. **Proof:** the devnet's pinned seam test flips; a tx tampered after
 consensus is refused at the ledger.
 
-### B8. Tag and publish 0.1.11 through the workflow
-Every package and crate sits on 0.1.11 locally (HEAD `d54ab69`, unpushed). `git push origin main
---tags` with `v0.1.11` runs the gate, publishes npm with provenance, then the crates. Not done
-without your say-so — it is outward-facing. **Proof:** `npm view @xmbl/<pkg> version` == 0.1.11
-for all twelve; crates.io shows 0.1.11 for all eight.
+### B8. Tag and publish 0.1.11 through the workflow — npm DONE 2026-09-16; crates BLOCKED
+Tagged `v0.1.11` at `9386ee9` and pushed the tag alone, after `main` went green on Linux. **npm: all
+twelve published with provenance.** MEASURED by `npm view @xmbl/<pkg> version` after the run, not from
+the workflow log: core, identity, networking, cubic-ledger, state-machine, consensus, storage-compute,
+zero-knowledge, contracts, simulator, cli == 0.1.11; lng was accepted by the registry with a sigstore
+provenance entry and is still propagating ("your package is being processed").
+
+Three things had to be fixed before the tag would have published anything, and the first two would
+have burned the tag:
+
+1. **`main` was RED on Linux and had been for some time** — the gate scored 54/75 on ubuntu-latest and
+   75/75 here. One cause: the workflows pinned Node 20 and nothing in this tree runs on Node 20
+   (`node:sqlite` needs 22.5, `process.threadCpuUsage` 22.10, libp2p's own chain calls
+   `Promise.withResolvers`, 22.0). Fixed by running 22 — and by declaring it, since the twelve
+   published packages carried NO `engines` field and the root claimed `">=20"`, so a Node 20 consumer
+   installed cleanly and crashed at import. See `7ac626d`.
+2. **A real data-loss defect the runner exposed** — `StateMachine._handleLedgerBlock` is wired to
+   `block:added` in the constructor, so a block could arrive mid-`_initDb`, land in the in-memory tree
+   and be persisted nowhere (both writes swallow their errors by design). The root read correctly for
+   the life of the process and came back 64 zeros on the next boot. See `0ae2bb8`.
+3. **Both registry secrets were EMPTY.** `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` exist by name and
+   resolve to nothing — the job log prints `NODE_AUTH_TOKEN:` with no `***` mask, and npm failed
+   `ENEEDAUTH` after packing all twelve. `NPM_TOKEN` was re-set from the operator's own valid token
+   and the job re-run; `CARGO_REGISTRY_TOKEN` is still empty and no crates.io token exists on this box.
+
+**crates.io: 0 of 8 published.** `cargo publish -p xmbl-identity` reached the upload and failed with
+"please provide a non-empty token". The `artifacts` job `needs: [npm, cargo]`, so it skipped and the run
+reads red even though npm succeeded. **Unblocks with:** a crates.io token in the
+`CARGO_REGISTRY_TOKEN` repo secret, then `gh run rerun <id> --failed`. Nothing else about the crate job
+is wrong — it compiled and packaged `xmbl-identity v0.1.11` before the token check.
+
+**Remaining proof:** crates.io shows 0.1.11 for all eight.
 
 ### B9. MAYO-cube — MAYO on the cubic coordinate system (from A1)
 Spec first, then code. (1) A new whitepaper section (§7 of
@@ -268,11 +316,13 @@ A4 EVM comparison:       CLOSED BY SCOPE — no claim exists to prove
 A5 signature domain:     DONE 2026-09-16 — clock moved beside the tx; ledger re-verification ON (B7)
 A6 xid in canonical feed: SENT to handoff-claude (099e46a4)
 A7 fleet re-anchor:      DECIDED 2026-09-16 — with the rollout; latest-or-suspended + OTA built
-A8 bundle on @xmbl/core: SENT to handoff-claude (099e46a4)
+A8 bundle on @xmbl/core: SENT to handoff-claude (099e46a4) — MEASURED NOT DONE: the live node
+                         still runs the vendored slim node (`release` = unknown op). Unblocked now.
 A9 crossed keypairs:     SENT to handoff-claude (099e46a4) — owner = ____ if it is not usr_fb2446eb53
 A10 packages/visualizer: retire / keep
 A11 lwe_decrypt:         RECORDED — won't build (off-host by design)
 A12 crates:              stubs for 0.1 (label-enforced); say "port" to schedule it
 B  start now:            all / B1 B2 B3 B4 B5 B6 B7 B9 (pick)
-B8 publish 0.1.11:       go / hold
+B8 publish 0.1.11:       npm DONE 2026-09-16 (v0.1.11, all twelve). crates BLOCKED —
+                         CARGO_REGISTRY_TOKEN is empty; set it and `gh run rerun --failed`
 ```
