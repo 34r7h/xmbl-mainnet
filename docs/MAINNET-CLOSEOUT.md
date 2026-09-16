@@ -109,7 +109,15 @@ actually runs from. Nothing was ever staged; A8 is not one restart away from don
 `latest` is resolved ONCE, at install time, and then frozen in `node_modules` — it is not a
 self-updating channel, so twelve packages going to 0.1.11 on the registry moved nothing on disk. The
 replacement bundle must pin **`"@xmbl/core": "0.1.11"` exactly**, and depend on nothing else `@xmbl`:
-core's own `dependencies` carry the other seven at `^0.1.11`.
+core's own `dependencies` carry the other seven at `^0.1.11`. The exact pin is the version a box
+STARTS on, not a freeze — the OTA loop inside `@xmbl/core` is what moves it afterwards
+(`npm install @xmbl/core@<latest>`, then exit 75 onto the new code), which is A7 working as intended.
+
+**That bundle is now IN THIS REPO: `deploy/xmbl-node-bundle/`** — `package.json` (the exact pin and
+nothing else `@xmbl`), `patch-floodsub.mjs`, `config.example.json`, and a README carrying the
+`prebuild-install -r napi` step that recent npm's script gating makes necessary. Verified by installing
+those committed files into an empty directory: 361 packages, `@xmbl/core` 0.1.11, and its control socket
+answers `release` with the digest above.
 
 **The published artifact is not the problem — it was run, from the registry.** `npm install
 @xmbl/core@0.1.11` into an empty directory, then its own `createControlServer` bound to a scratch

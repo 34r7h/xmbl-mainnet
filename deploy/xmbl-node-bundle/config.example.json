@@ -1,0 +1,11 @@
+{
+  "identity_path": "/ABSOLUTE/PATH/TO/xmbl.json",
+  "data_dir": "/ABSOLUTE/PATH/TO/node-data",
+  "listen_addrs": ["/ip4/0.0.0.0/tcp/0"],
+  "bootstrap_peers": [
+    "/ip4/173.255.233.69/tcp/4001/p2p/12D3KooWKKZUR5o8BeSGMNu43gWKWgudWsnZHxoJU4ZYuqjC8nRU"
+  ],
+  "announce_addrs": [],
+  "roles": { "validate": true, "storage": true, "compute": false, "relay": true, "lead": true },
+  "resource_caps": { "disk_mb": 1024, "compute_cpu_ms": 10000, "compute_mem_mb": 512 }
+}

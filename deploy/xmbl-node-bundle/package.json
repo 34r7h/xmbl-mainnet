@@ -1,0 +1,19 @@
+{
+  "name": "xmbl-node-bundle",
+  "version": "0.1.11",
+  "private": true,
+  "type": "module",
+  "description": "The fleet bundle that RUNS @xmbl/core instead of vendoring a copy of it. One @xmbl dependency, pinned EXACTLY: core carries the other seven at ^0.1.11 itself.",
+  "scripts": {
+    "postinstall": "node patch-floodsub.mjs",
+    "start": "xmbl-node start --config ./config.json",
+    "stop": "xmbl-node stop --config ./config.json",
+    "status": "xmbl-node status --config ./config.json"
+  },
+  "dependencies": {
+    "@xmbl/core": "0.1.11"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
