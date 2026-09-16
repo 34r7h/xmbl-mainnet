@@ -51,3 +51,26 @@
     presented. The value ABI's `-1` sentinel TRAPS instead of widening to 2^256-1. The typechecker refuses
     arithmetic/bitwise/ordering on `~bytes` and now walks `~contract` method bodies at all, which it never did.
     A contract with no byte literals emits a byte-identical, import-free module.
+  - storage-compute: THE ERASURE CODER RETURNED CORRUPTED DATA WITHOUT SAYING SO. `StorageShard.decode`
+    recovers a lost data shard by XOR-ing its parity group, and XOR parity recovers AT MOST ONE loss per
+    group — but when two members of one group were missing it filled the hole with zeros and returned the
+    buffer as if decoding had succeeded, with no error, no flag and no short read. MEASURED on k=4, m=2:
+    losing data shards 0 and 2 handed back a buffer that differed from the original and nothing downstream
+    could tell. Two independent causes are fixed: the group is now checked for completeness before the XOR
+    is trusted, and `m` — the encoding's PARITY DEGREE — is carried on every shard as the new optional
+    `parityCount` field instead of being inferred from however many parity shards happened to survive (that
+    inference was wrong exactly when a parity shard was among the losses: given data 0,1,2 and parity 4 only,
+    the inferred m was 1, the recovery group became {0,1,2,3} instead of {0,2}, and decode returned wrong
+    bytes). An unrecoverable decode now THROWS and names every missing shard. Proven exhaustively over all
+    63 non-empty subsets of a k=4/m=2 encoding: every subset either decodes to the exact original or throws,
+    and none returns wrong bytes. COMPAT: `parityCount` is additive and optional, so a shard written by an
+    older node reads back fine — a new node treats it as legacy and REFUSES parity recovery rather than
+    guessing, which fails loudly where the old code failed silently. Shard metadata persists as JSON
+    (`meta:<id>`), so an old reader ignores the extra field.
+  - core: a boot crash. `Config._applyEnvOverrides()` assigned into `config.network` / `config.logging`
+    without creating them, so a node started with `XN_PORT` or `LOG_LEVEL` set against a config that omitted
+    those sections died on `undefined.port` before it could log why. The sections are created on demand.
+  - the protocol gate is 75 suites (was 67), and line coverage across the twelve protocol packages is 85.5%
+    (was 80.6%). `scripts/coverage-report.mjs` is the instrument: `NODE_V8_COVERAGE` + a V8-range reducer,
+    since nothing in the tree measured coverage at all. Ten protocol files that no suite had ever loaded now
+    have one; four remain, all process entry points.

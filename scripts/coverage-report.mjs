@@ -24,6 +24,13 @@
 //                                 package that may be deleted is waste. Counted and reported SEPARATELY
 //                                 so the exclusion is visible rather than silent.
 //
+// NOTHING IS EXCLUDED SILENTLY. The walk covers BOTH workspace roots — packages/ and apps/ — because the
+// question this file answers is "all modules", and a reporter that quietly walks one root answers a
+// narrower question than the one it prints. apps/ source is keyed `apps/<name>` (so apps/visualizer and
+// packages/visualizer cannot collide in the per-package table) and totalled under APPS, which is reported
+// beside PROTOCOL and never folded into it: the protocol packages are what ship to npm, and mixing an
+// unshipped app's lines into that number would move it without moving what it measures.
+//
 // Exclusions are printed with the report. A coverage number whose denominator you cannot see is a
 // claim, not a measurement.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -56,7 +63,9 @@ function walk(dir, out = []) {
   return out;
 }
 
-const allSrc = walk(join(ROOT, 'packages'));
+// BOTH roots. packages/ holds the 12 published protocol packages (plus the private ones); apps/ holds the
+// app-builder and the app visualizer. Walking only packages/ would exclude apps/ without saying so.
+const allSrc = [...walk(join(ROOT, 'packages')), ...walk(join(ROOT, 'apps'))];
 const inScope = new Set(allSrc);
 
 // ── reduce the raw V8 output ────────────────────────────────────────────────────────────────────
@@ -109,7 +118,9 @@ const loaded = new Set(scriptsByFile.keys());
 const never = allSrc.filter((p) => !loaded.has(p)).map((p) => relative(ROOT, p)).sort();
 
 // ── aggregate ───────────────────────────────────────────────────────────────────────────────────
-const pkgOf = (rel) => rel.split('/')[1];
+// `packages/core/x.js` -> `core`; `apps/visualizer/x.js` -> `apps/visualizer`. The prefix is kept for apps
+// so a name that exists under both roots stays two rows rather than silently summing into one.
+const pkgOf = (rel) => { const [top, name] = rel.split('/'); return top === 'apps' ? `apps/${name}` : name; };
 const pkgs = new Map();
 const bump = (k) => { if (!pkgs.has(k)) pkgs.set(k, { total: 0, covered: 0, files: 0, never: 0 }); return pkgs.get(k); };
 for (const r of rows) { const a = bump(pkgOf(r.p)); a.total += r.total; a.covered += r.covered; a.files++; }
@@ -119,7 +130,7 @@ const pad = (s, w) => String(s).padEnd(w);
 const rp = (s, w) => String(s).padStart(w);
 const pct = (c, t) => (t ? (c / t * 100).toFixed(1) : '—');
 
-console.log(`LINE COVERAGE — packages/*/ source under the protocol gate  (${rawFiles} V8 coverage files reduced)\n`);
+console.log(`LINE COVERAGE — packages/*/ and apps/*/ source under the protocol gate  (${rawFiles} V8 coverage files reduced)\n`);
 console.log(`  ${pad('package', 20)} ${rp('lines', 8)} ${rp('covered', 8)} ${rp('%', 7)}  ${rp('files', 6)} ${rp('never run', 10)}`);
 const group = (names) => {
   let T = 0, C = 0, F = 0, N = 0;
