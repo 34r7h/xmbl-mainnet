@@ -23,7 +23,7 @@ export function validateCanHappen(tx) {
   // re-derived at stage 2: a type-6's payer sig is the deferred type-7 pointer, and an ANCHOR is a pointer to a
   // digest that moves no value, minted by a node-less custodial broker that no end user ever signs for.
   // MEASURED 2026-09-16 before this read the table: a broker anchor — correctly typed, xid verifying — was
-  // refused here as "unsigned", so every typed anchor the fleet produced died at stage 1 and "0 untyped
+  // refused here as "unsigned", so every typed anchor the nodes produced died at stage 1 and "0 untyped
   // anchors" was unreachable no matter what the broker did. Everything else must still be signed by a sender.
   const contentAddressed = authorityOf(tx.type) === 'content-addressed';
   const signed = typeof tx.sig === 'string' && tx.sig.length > 0 && hasSender;

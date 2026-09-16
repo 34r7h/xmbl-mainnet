@@ -67,7 +67,7 @@ wire.
 
 **This does not make the cube ledger converge cross-node.** Face and cube placement are driven by
 `hash`, which is still envelope-dependent. Converging that requires `hash` to be content-only, which
-IS a wire-format change and a coordinated fleet re-anchor — see "Still open" below.
+IS a wire-format change and a coordinated re-anchor — see "Still open" below.
 
 ### 2. Every rebuilt block's timestamp was 0 — FIXED (0.1.7)
 
@@ -225,7 +225,7 @@ a fresh fabricated anchor               —    rejected: "anchor hash is not a s
 
 - **Cross-node cube convergence.** Placement keys off `hash`, which covers the envelope. Making it
   content-only breaks `verifyCube` against every peer still running the old derivation, so it needs a
-  coordinated fleet re-anchor. Not a change to make from one node.
+  coordinated re-anchor. Not a change to make from one node.
 - **`xid` in the canonical feed** (defect 3) — handoff-claude's.
 - One row in the first census showed a `timestamp` of `[object Object]`; still unexplained.
 - A canonical rebuild ran on this node at boot from the coordinator's own path (`node.log`:

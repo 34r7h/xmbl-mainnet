@@ -396,7 +396,7 @@ export class Ledger extends EventEmitter {
         }
       }
       // ⛔ THE SAME TWO DOORS addTransaction CLOSES, CLOSED HERE TOO — and this is the path that carries real
-      // fleet traffic (consensus `tx:finalized` → lead-worker.handleFinalizedTx → here), while addTransaction
+      // node traffic (consensus `tx:finalized` → lead-worker.handleFinalizedTx → here), while addTransaction
       // is the legacy incremental one. There was no failure handling at all on this side, so a forgery that
       // kept an honest anchor's event:hash left that content key claimed forever (the honest anchor arriving
       // later was skipped as a duplicate), and nothing was ever evicted. Release the speculative key on EVERY

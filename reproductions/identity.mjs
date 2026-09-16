@@ -15,7 +15,7 @@
 //
 // ALSO REPRODUCED: the crossed-keypair detector. A node whose stored private key does not belong to its stored
 // public key signs happily and is rejected by everyone — `verifySigning()` is the one call that catches it
-// locally. Two nodes on the live fleet are in exactly that state.
+// locally. Two nodes on the live nodes are in exactly that state.
 //
 // Exits non-zero if any claim fails, so it is also a hard-gate test (reproductions.test.mjs).
 import { createHash } from 'node:crypto';

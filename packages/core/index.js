@@ -62,7 +62,7 @@ export class XMBLCore {
     // Initialize identity system
     this.xid = null; // Will be set when identity is created
 
-    // SUSPENSION (operator, 2026-09-16): a node that cannot prove it runs the fleet's latest version stops
+    // SUSPENSION (operator, 2026-09-16): a node that cannot prove it runs the latest published version stops
     // PRODUCING — submits, anchors, validations, seals — until it is updated (the daemon's OTA loop suspends,
     // updates and restarts it). Reads and the control socket stay up so a supervisor can see why and act.
     // Reported on `status` and inside the signed `chain` claim. null = producing.

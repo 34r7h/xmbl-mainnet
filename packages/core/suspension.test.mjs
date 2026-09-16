@@ -1,4 +1,4 @@
-// SUSPENSION + VERSION PROOF (operator, 2026-09-16): a node behind the fleet's latest version produces nothing
+// SUSPENSION + VERSION PROOF (operator, 2026-09-16): a node behind the latest published version produces nothing
 // until updated, and every reading it signs carries the digest of the code it runs. Asserted by count against
 // the real XMBLCore and the real control socket — no daemon, no network.
 import assert from 'node:assert';

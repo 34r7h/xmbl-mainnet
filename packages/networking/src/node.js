@@ -155,7 +155,7 @@ export class XNNode extends EventEmitter {
       // address it cannot bind as fatal, and `<seed>/p2p-circuit` above is a listen address whose success
       // depends on a REMOTE box running a relay server. Measured in prod 2026-09-15: every node died at boot
       // with "Some configured addresses failed to be listened on" and crash-looped through its restart
-      // budget — the fleet went from 3 nodes up to 0. NO_FATAL keeps the addresses this node CAN bind and
+      // budget — the nodes went from 3 nodes up to 0. NO_FATAL keeps the addresses this node CAN bind and
       // logs the rest, which is the only correct behaviour for an address that is a request to a peer.
       transportManager: { faultTolerance: FaultTolerance.NO_FATAL },
       connectionEncrypters: [noise()],

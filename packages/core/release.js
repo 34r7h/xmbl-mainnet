@@ -9,7 +9,7 @@
 //                         be typed; the digest of the code in memory cannot.
 //   compareVersions()   — semver triples, so "0.1.9" < "0.1.11".
 //   otaDecision()       — behind or not, and what to do about it.
-//   fetchLatestVersion()— the fleet's source of truth for "latest": the npm registry's dist-tag (the operator's
+//   fetchLatestVersion()— the source of truth for "latest": the npm registry's dist-tag (the operator's
 //                         rule is "xmbl npm always latest"), or a broker endpoint returning { version }.
 //   installRootOf()     — where `npm install @xmbl/core@<latest>` runs: the install that owns THIS core, or
 //                         null in a source checkout (a checkout is updated by git, never by the daemon).

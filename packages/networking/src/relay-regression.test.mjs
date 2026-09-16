@@ -1,7 +1,7 @@
 // REGRESSION TEST for the outage of 2026-09-15: the first cut of relay self-election read the SEED's public
 // ip out of the node's own `<seed>/p2p-circuit` reservation address and elected a NAT'd laptop as the relay
 // server, and putting that reservation in `addresses.listen` made a failed reservation a FATAL listen error,
-// so every node in the fleet crash-looped at boot. Both are asserted here by OUTCOME: does a private box
+// so every node among the nodes crash-looped at boot. Both are asserted here by OUTCOME: does a private box
 // elect, and does a node whose seed runs no relay still come up?
 import { XNNode } from './node.js';
 

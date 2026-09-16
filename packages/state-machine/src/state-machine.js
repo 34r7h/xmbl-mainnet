@@ -335,9 +335,9 @@ export class StateMachine extends EventEmitter {
     // ⛔ RECORD A DIFF FOR EVERY ANCHOR APPLIED, or applied_tx_count IS ZERO BY CONSTRUCTION. This loop wrote
     // straight into the tree and never touched `this.diffs`, which it had just emptied — and
     // getStatistics().totalTransactions is transactionLog.length + diffs.length. So the moment a node runs the
-    // convergence primitive, the number the whole fleet reads as "is this node applying anything" resets to 0
+    // convergence primitive, the number every node reads as "is this node applying anything" resets to 0
     // and STAYS 0 no matter how many anchors it applied. MEASURED 2026-09-15: this node held a correct root
-    // over 3,941 applied anchors and published applied_tx_count 0; across the fleet 42 of 46 reporting nodes
+    // over 3,941 applied anchors and published applied_tx_count 0; across the nodes 42 of 46 reporting nodes
     // read 0, and a design ruling was written on the premise that 41 of them had "applied nothing". They had.
     // The diff is not bookkeeping — it is the same StateDiff the block path records, keyed by the anchor's own
     // content, so a rebuild and a live apply of the same anchor upsert to ONE row rather than two.

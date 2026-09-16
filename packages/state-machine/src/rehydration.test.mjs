@@ -1,4 +1,4 @@
-// THE THREE DEFECTS THAT KEPT NODES OFF A SHARED ROOT, each asserted by the symptom the fleet showed,
+// THE THREE DEFECTS THAT KEPT NODES OFF A SHARED ROOT, each asserted by the symptom the nodes showed,
 // not by the mechanism. All three were measured live on 2026-09-15 before being fixed here.
 import { test } from 'node:test';
 import assert from 'node:assert';
@@ -25,7 +25,7 @@ test('a restarted node publishes a REAL root, not 64 zeros, from the state: keys
   await sm.db.close();
 
   // Reopen. The diff replay is NOT the thing under test — delete every diff row first, so the only
-  // surviving source for the trie is `state:`. 39 of 44 reporting fleet nodes published ZERO here.
+  // surviving source for the trie is `state:`. 39 of 44 reporting nodes published ZERO here.
   sm = await open(dir);
   await sm.db.clear({ gte: 'diff:', lt: 'diff:\xFF' });
   await sm.db.close();
@@ -73,7 +73,7 @@ test('legacy rows keyed by block id are re-keyed to content identity on the next
   const dir = `/tmp/xvsm-rehydrate-${process.pid}-d`;
   rmSync(dir, { recursive: true, force: true });
   let sm = await open(dir);
-  // Write rows the way every node on the fleet already has them: one per submission, keyed by block id.
+  // Write rows the way every node on the nodes already has them: one per submission, keyed by block id.
   const set = anchors(40);
   let written = 0;
   for (let pass = 0; pass < 3; pass++) for (const a of set) {

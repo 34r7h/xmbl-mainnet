@@ -2,7 +2,7 @@
 //
 // Rows written before block ids addressed consensus content (block.js consensusBody) are keyed by a hash of the
 // WHOLE tx, envelope included: the same anchor sits on disk under one id per node that relayed it and per time it
-// was resubmitted. The compaction that collapses them used to be a method nobody called; a fleet node converged
+// was resubmitted. The compaction that collapses them used to be a method nobody called; a set of nodes node converged
 // only if an operator remembered to. Now the ledger's own boot scan notices an envelope-keyed row and runs the
 // compaction once, so the second boot finds nothing to do — asserted here by COUNT, on disk, after the fact.
 import { test } from 'node:test';

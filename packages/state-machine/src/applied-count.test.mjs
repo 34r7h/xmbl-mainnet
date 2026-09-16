@@ -1,4 +1,4 @@
-// OUTCOME TEST: applied_tx_count after the convergence primitive. The metric the whole fleet reads.
+// OUTCOME TEST: applied_tx_count after the convergence primitive. The metric every node reads.
 const { StateMachine } = await import("../index.js");
 const sm = new StateMachine({ dbPath: null });
 sm._dbOpen = false;

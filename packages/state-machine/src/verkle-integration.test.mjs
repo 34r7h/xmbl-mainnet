@@ -10,7 +10,7 @@ import { join } from 'path';
 let pass = 0, fail = 0;
 const check = async (n, f) => { try { await f(); console.log(`  ok   ${n}`); pass++; } catch (e) { console.log(`  FAIL ${n}\n       ${e.message}`); fail++; } };
 const EMPTY = '0'.repeat(64);
-// Portable: this suite runs on the laptop AND on every Linux box in the fleet — so it JOINS on `ready()`
+// Portable: this suite runs on the laptop AND on every Linux box among the nodes — so it JOINS on `ready()`
 // rather than sleeping. A fixed timeout is a guess about someone else's scheduler: this suite waited
 // 120/150/250/500ms for the store to open and the tree to rehydrate, which held on this laptop and LOST on
 // ubuntu-latest, where the restart check read 64 zeros — the 150ms wait expired before `_initDb` had opened

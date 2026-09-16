@@ -3,7 +3,7 @@
 //
 // CLAIM: two nodes that apply the same canonical set hold the same verkle state root, whatever order the set
 // arrives in and whatever either held before; and a node that restarts comes back with the SAME root rather
-// than an empty one. The first half is what lets the fleet compare roots at all. The second half is what makes
+// than an empty one. The first half is what lets the nodes compare roots at all. The second half is what makes
 // that comparison mean anything after a reboot.
 //
 // WHY BOTH HALVES ARE MEASURED HERE — each was measured failing:
@@ -12,7 +12,7 @@
 //   • rebuildFromCanonical cleared `this.diffs` in memory while leaving 92,505 `diff:` rows on disk, so the
 //     "authoritative" rebuild lasted exactly until the next boot read them back.
 //   • It also wrote into the tree without recording a diff, and applied_tx_count is derived from the diff log —
-//     so running the convergence primitive reset the one number the fleet reads as "is this node applying
+//     so running the convergence primitive reset the one number the nodes read as "is this node applying
 //     anything" to 0 and left it there. MEASURED 2026-09-15: 42 of 46 reporting nodes published 0, and a design
 //     ruling was written on the premise that they had applied nothing. They had applied thousands.
 //

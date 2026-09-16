@@ -27,11 +27,11 @@
 // whichever node saw the forgery first. Anyone could have done it to any transaction, since every xid is
 // public. Fixed: a forgery is now evicted under a digest of its OWN bytes.
 //
-// TWO PHASES, because the fleet has two sealing modes and they do not converge alike:
+// TWO PHASES, because the nodes have two sealing modes and they do not converge alike:
 //   1. EAGER LOCAL SEALING (the default: XPC_CONSENSUS_V2 unset) — a node seals hash-sorted nines out of its
 //      own pool the moment it holds nine. The partition is therefore a function of WHEN transactions arrived,
 //      not only of WHICH: the block SET converges, the cube partition does not. This phase measures exactly
-//      that, and it is why the live fleet converges through the canonical rebuild rather than through live
+//      that, and it is why the live nodes converge through the canonical rebuild rather than through live
 //      sealing.
 //   2. AGREED SEALING (XPC_CONSENSUS_V2=1) — the seal boundary is agreed before it is cut. Same chaos, same
 //      forgeries, and now the cubes, the cube set_digest and the state root are identical on all three.
@@ -67,7 +67,7 @@ const shuffle = (arr, rand) => {
 };
 const sha = (s) => createHash('sha256').update(String(s)).digest('hex');
 
-// The cube set digest exactly as the control socket's `list_cube_keys` computes it — the number the fleet
+// The cube set digest exactly as the control socket's `list_cube_keys` computes it — the number the nodes
 // compares after a coordinated rebuild.
 function setDigest(core) {
   const cubes = [];
@@ -157,7 +157,7 @@ for (let run = 0; run < RUNS; run++) {
   const rand = prng(seed);
   console.log(`\u2500\u2500 run ${run + 1}/${RUNS}  seed 0x${seed.toString(16)} \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`);
 
-  // ONE transaction set, typed exactly as the fleet types them.
+  // ONE transaction set, typed exactly as the nodes type them.
   const set = Array.from({ length: TXS }, (_, i) =>
     micromineTx({ type: 'anchor', event: i % 3 === 0 ? 'task.created' : i % 3 === 1 ? 'value.transfer' : 'soc.posted',
                   hash: sha(`run${run}-tx${i}`), ts: 1789500000000 + i }));
@@ -194,7 +194,7 @@ for (let run = 0; run < RUNS; run++) {
     note('phase 1: cube set_digest agreement',
          new Set(digests).size === 1
            ? 'IDENTICAL (this run happened to seal on the same boundaries)'
-           : `${new Set(digests).size} distinct — eager sealing cuts the pool wherever a node happens to hold nine, so the PARTITION follows arrival time. The block set still matches. This is why the fleet converges through the canonical rebuild, and why agreed sealing exists (phase 2).`);
+           : `${new Set(digests).size} distinct — eager sealing cuts the pool wherever a node happens to hold nine, so the PARTITION follows arrival time. The block set still matches. This is why the nodes converge through the canonical rebuild, and why agreed sealing exists (phase 2).`);
     await teardown(nodes, dirs);
   }
 
@@ -241,7 +241,7 @@ for (let run = 0; run < RUNS; run++) {
     ok('phase 2: at least one cube was sealed (a real chain, not an empty one)', cubes[0] >= 1, `cubes=${cubes[0]}`);
     ok('phase 2: all three sealed the SAME number of cubes', new Set(cubes).size === 1, `cubes=${cubes.join('/')}`);
     ok('phase 2: all three agree on the BLOCK SET digest', new Set(bDigests).size === 1);
-    ok('phase 2: all three agree on the CUBE set_digest — the number the fleet compares', new Set(digests).size === 1);
+    ok('phase 2: all three agree on the CUBE set_digest — the number the nodes compare', new Set(digests).size === 1);
     ok('phase 2: all three agree on the state root', new Set(roots.map(String)).size === 1);
     await teardown(nodes, dirs);
   }

@@ -2,7 +2,7 @@
 
 Plain English. Written 2026-09-16 against `MAINNET-GATES.md` (14 of 62 gates open, 7 of them
 external ⛔ audits that are out of scope here), `MODULE-STATUS.md`, `DEVNET-SEAM-FINDING.md`,
-`docs/audits/2026-09-16-block-store-audit.md`, and the live fleet inventory handoff-claude gave.
+`docs/audits/2026-09-16-block-store-audit.md`, and the live node inventory handoff-claude gave.
 
 Two lists. **Part A** is the questions only the operator can answer — each is a fork where either
 answer is buildable, but building the wrong one is wasted work. **Part B** is the work that needs
@@ -60,7 +60,7 @@ every signed transaction is verified twice. Anchors' ids and hashes do not move,
 re-anchor — only A7 (content-only `hash` for cube placement) touches the wire. Rolled into **B7**.
 
 ### A6. The canonical anchor feed carries the mined identity — SENT 2026-09-16
-Not a question: the fleet contract is mine to require. handoff-claude has the requirement (`xid` +
+Not a question: the node contract is mine to require. handoff-claude has the requirement (`xid` +
 `nonce` on `/api/v1/xmbl/anchors/canonical`; envelope 099e46a4). **Proof:** after a rebuild,
 anchors carrying an xid == anchors in the feed.
 
@@ -73,7 +73,7 @@ changed: one canonical rebuild on every node follows the rollout — sent to han
 and broker-side requirements. **Proof:** every live node's claim carries the same `build` digest and
 `list_cube_keys` returns the same `set_digest` everywhere.
 
-### A8. The fleet runs `@xmbl/core` — SENT 2026-09-16; MEASURED 2026-09-16: NOT DONE, and now unblocked
+### A8. The nodes runs `@xmbl/core` — SENT 2026-09-16; MEASURED 2026-09-16: NOT DONE, and now unblocked
 Not a question. handoff-claude has the requirement (bundle = `@xmbl/core@^0.1.11` running its
 `xmbl-node` bin; no vendored `core/` or `node.js`; envelope 099e46a4). **Proof:**
 `status.versions.core == '0.1.11'` on every node; `core/` absent from the served tarball.
@@ -90,7 +90,7 @@ Not a question. handoff-claude has the requirement (bundle = `@xmbl/core@^0.1.11
   consensus 0.1.3, cubic-ledger 0.1.9, identity 0.1.4, networking 0.1.4, state-machine 0.1.5,
   storage-compute 0.1.2, zero-knowledge 0.1.1.
 
-**Two consequences worth stating plainly.** First, publishing 0.1.11 did NOT suspend the fleet: the
+**Two consequences worth stating plainly.** First, publishing 0.1.11 did NOT suspend the nodes: the
 suspend-gate and the OTA loop both live in `@xmbl/core`, which this node does not run, so the
 "latest-or-suspended" rule (A7) is not in force on it — it is not suspended, and it is also not
 updating. Second, this node cannot be OTA'd at all in its present shape; `npm install` would move the
@@ -411,7 +411,7 @@ A3 EVM backend:          DONE — deployed + executed in-process (16 checks); pu
 A4 EVM comparison:       CLOSED BY SCOPE — no claim exists to prove
 A5 signature domain:     DONE 2026-09-16 — clock moved beside the tx; ledger re-verification ON (B7)
 A6 xid in canonical feed: SENT to handoff-claude (099e46a4)
-A7 fleet re-anchor:      DECIDED 2026-09-16 — with the rollout; latest-or-suspended + OTA built
+A7 re-anchor:            DECIDED 2026-09-16 — with the rollout; latest-or-suspended + OTA built
 A8 bundle on @xmbl/core: SENT to handoff-claude (099e46a4) — MEASURED NOT DONE: the live node
                          still runs the vendored slim node (`release` = unknown op). Unblocked now.
 A9 crossed keypairs:     SENT to handoff-claude (099e46a4) — owner = ____ if it is not usr_fb2446eb53

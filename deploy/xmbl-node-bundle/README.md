@@ -1,6 +1,6 @@
-# xmbl-node-bundle — the fleet bundle that RUNS `@xmbl/core`
+# xmbl-node-bundle — the node bundle that RUNS `@xmbl/core`
 
-This replaces `xmbl-slim-node@0.1.8`, the bundle the fleet ran until 2026-09-17, which vendored a
+This replaces `xmbl-slim-node@0.1.8`, the bundle the nodes ran until 2026-09-17, which vendored a
 hand-copied `core/` and declared **no `@xmbl/core` dependency at all**. Measured consequences of that
 shape, on the live node (pid 32869, `~/.handoff/xmbl-node.old`), are in `docs/MAINNET-CLOSEOUT.md` §A8:
 its control socket answers `{"ok":false,"error":"unknown op"}` to `release`, `identity_status` and
@@ -15,7 +15,7 @@ storage-compute 0.1.2 / zero-knowledge 0.1.1 the day twelve packages went to 0.1
    protocol packages at `^0.1.11` itself, so they cannot skew against it.
 2. **Pin it EXACTLY — never `"latest"`.** `latest` is resolved once, at install time, and then frozen in
    `node_modules`; it is not a self-updating channel. That single word is why publishing 0.1.11 moved
-   nothing on the fleet. The exact pin is the version a box STARTS on: the OTA loop inside `@xmbl/core`
+   nothing on the nodes. The exact pin is the version a box STARTS on: the OTA loop inside `@xmbl/core`
    is what moves it afterwards (`npm install @xmbl/core@<latest>` on its own schedule, A7).
 
 ## Install

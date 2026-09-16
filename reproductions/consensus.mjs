@@ -10,7 +10,7 @@
 //   1. can-happen — a known type carrying its required fields, AUTHORIZED, with a value that can exist.
 //      Authorization is read from the type table (tokens.json `authority`), never hardcoded: type 6 and the
 //      type-7 anchor are CONTENT-ADDRESSED, so their authority is their xid and they need no signature; the
-//      other five types must be signed by a sender. That distinction is not cosmetic — the fleet's anchors are
+//      other five types must be signed by a sender. That distinction is not cosmetic — those anchors are
 //      minted by a node-less custodial broker that no end user ever signs for, and before the table was read
 //      every one of them was refused here as "unsigned".
 //   2. xid — the micromined identity: the right type prefix, a re-derivable body, a verifiable nonce.

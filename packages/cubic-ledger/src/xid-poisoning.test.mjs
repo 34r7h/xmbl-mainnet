@@ -117,7 +117,7 @@ const honest = (label) => micromineTx({ type: 'anchor', event: 'task.created', h
 // node is consensus `tx:finalized` → lead-worker.handleFinalizedTx → addSealedBatch. That function claims the
 // anchor content key before validation exactly as addTransaction did, and had no failure handling at all — so
 // both doors the sections above closed were still standing behind it, on the only path that carries real
-// fleet traffic. A fix that handles one entry point and not the other is not a fix.
+// node traffic. A fix that handles one entry point and not the other is not a fix.
 {
   const dir = mkdtempSync(join(tmpdir(), 'xmbl-poison-e-'));
   const l = new Ledger({ dbPath: dir }); await l.initialize?.();

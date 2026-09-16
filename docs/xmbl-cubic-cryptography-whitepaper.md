@@ -579,7 +579,7 @@ composes that hook into a single `init` that runs **once per guest instantiation
 `host.call`, and only when the guest declared `env.xmbl_mayo_verify`. Every signature a contract
 verifies inside one call shares that one load. So this finding is a fix to the identity API's
 lifecycle, not to the ContractHost crypto ABI, which is already correct at the call site that
-carries fleet traffic.
+carries node traffic.
 
 *The expanded public key.* Of the verification itself, 0.524 ms of 0.612 ms is re-deriving a
 value that depends only on the signer's `seed_pk`. A verifier that keeps the expanded key

@@ -137,7 +137,7 @@ export class ConsensusWorkflow extends EventEmitter {
 
   // EVERY content-addressed type, read from the type table — type 6 above, and the type-7 ANCHOR whose authority
   // is its xid over {from:[prior],to:[hash],how:'anchor'}. The narrow type-6-only form left the anchor, the one
-  // datum the fleet actually produces, refused as "user unresolvable" at the third guard even once stage 1
+  // datum the nodes actually produces, refused as "user unresolvable" at the third guard even once stage 1
   // admitted it: an anchor's `from` is set to the SIGNING NODE's address, which resolves, but a node-less
   // broker's does not. validateXid IS the check — a forged or untyped anchor still fails it.
   _isContentAddressed(txData) {
@@ -153,7 +153,7 @@ export class ConsensusWorkflow extends EventEmitter {
   // the dominant real traffic on this network (13,368 of 13,740 pooled on one box, 15,526 of 15,959 on
   // another), so the guard blackholed the chain's main input while calling it "confirmed spam".
   //
-  // THE REAL DISQUALIFIER IS A MISSING SIGNATURE. Measured 2026-08-02 across the fleet: laptop 856/856 signed,
+  // THE REAL DISQUALIFIER IS A MISSING SIGNATURE. Measured 2026-08-02 across the nodes: laptop 856/856 signed,
   // agentic 13,740/13,740 signed, ifix 15,959/15,959 signed — but prod carried 31 UNSIGNED, 30 of them from a
   // sender literally named `xmbl-seal-driver-payer`. That is the junk: chain-fill artifacts with no `sig`.
   //
@@ -606,7 +606,7 @@ export class ConsensusWorkflow extends EventEmitter {
   // An earlier version of this fix rejected txs at ingress whose signature failed verification; it was
   // REMOVED after the verifier was shown to return false for transactions signed by a legitimate
   // identity holding an older SPKI-DER-format key (see README.md). That would have converted a visible
-  // clog into silent, fleet-wide loss of valid chain writes. "Our verifier said no" is not "provably
+  // clog into silent, network-wide loss of valid chain writes. "Our verifier said no" is not "provably
   // invalid", and a mempool bound must not depend on a cryptographic judgment to be safe.
   //
   // Fork-safety: a tx older than maxAgeMs has already been abandoned by validation-retry and can never be

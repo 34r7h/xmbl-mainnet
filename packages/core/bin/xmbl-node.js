@@ -3,7 +3,7 @@
 // with every protocol module wired (identity, networking, cubic-ledger, state-machine, consensus,
 // storage-compute) and exposes the control socket + metrics endpoint a supervisor talks to.
 //
-// This is the SAME daemon the handoff fleet's coordinators supervise; it ships here so a deployment can depend
+// This is the SAME daemon the handoff coordinators supervise; it ships here so a deployment can depend
 // on the published package instead of vendoring a copy of core/ that drifts from it.
 //
 // Lifecycle around XMBLCore (core/index.js), driven by the node config
@@ -51,7 +51,7 @@ const CORE_VERSION = JSON.parse(fs.readFileSync(path.join(CORE_DIR, 'package.jso
 // Every change rolls out to every node; a node must PROVE it runs the latest version or be SUSPENDED until it
 // is updated; updates happen automatically. The loop: every XMBL_OTA_CHECK_MS (default 10 min, first check 5 s
 // after boot) ask the release source (XMBL_RELEASE_URL, default the npm registry's @xmbl/core document — the
-// fleet's rule is "xmbl npm always latest") for the latest version. Behind → SUSPEND FIRST (the node stops
+// nodes's rule is "xmbl npm always latest") for the latest version. Behind → SUSPEND FIRST (the node stops
 // producing: no submits, anchors, validations or seals on stale code; reads and the control socket stay up),
 // then `npm install @xmbl/core@<latest>` in the install that owns this core (XMBL_INSTALL_DIR overrides; a
 // source checkout has none and only suspends — git updates it), then RESTART onto the new code: exit with

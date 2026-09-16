@@ -2,7 +2,7 @@
 //
 // CLAIM: two ledgers handed the same canonical anchor set rebuild to the SAME chain — the same blocks, the
 // same faces, the same cubes, the same cube `set_digest` — regardless of the order the anchors arrive in or
-// what either node held before. That is the property the whole fleet's convergence rests on, and the number
+// what either node held before. That is the property every node's convergence rests on, and the number
 // the coordinated rebuild compares.
 //
 // AND THE THREE THINGS A REBUILD MUST NOT DO, each measured here because each was measured FAILING:

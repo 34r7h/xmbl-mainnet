@@ -144,7 +144,7 @@ continue-on-error, and in the release workflow before any publish).
       transpiles, `typeof process`/`Buffer` both undefined — RESULT=PASS. The sources no longer assume Node (`run`'s default sink,
       `TextEncoder` for names). The hand-synced copies in the handoff repo
       (`web/views/config-panels/lng-{interp,evm,wasm,typecheck}.js`, 4 files) are the CONSUMER's to delete for
-      one `import … from '@xmbl/lng/browser'` — sent to handoff-claude 2026-09-16 as a fleet-contract
+      one `import … from '@xmbl/lng/browser'` — sent to handoff-claude 2026-09-16 as a node-contract
       requirement; closes when that repo counts 0 `lng-*.js` ports. — *lng/build-browser.mjs;
       lng/dist/lng.browser.js; lng/src/browser-bundle.test.mjs (34/34)*
 - [x] **Solidity → LNG importer** (`import-solidity.js`, the reverse of the EVM backend): an
@@ -384,14 +384,14 @@ continue-on-error, and in the release workflow before any publish).
       Producers mine BEFORE signing (the node, the CLI, the devnet) so the signature covers the xid.
       MEASURED before the rule: 16,313 of 17,628 anchors on the audited node carried no xid. An anchor's wire
       tx must now carry `prior` (the previous anchor xid, '' for the first) — the pointer body cannot be
-      re-mined without it; sent to handoff-claude as a fleet-contract requirement together with the canonical
+      re-mined without it; sent to handoff-claude as a node-contract requirement together with the canonical
       feed carrying xid + nonce + prior. — *cubic-ledger/tokens.json; transaction-validator.js; block.js;
       ledger.js; consensus/validate.js; ingress-guard.test.mjs (+7 refusals); content-id-rekey-on-boot.test.mjs*
 - [x] **AUTHORIZATION IS READ FROM THE TYPE TABLE — "signed by a sender, OR content-addressed" (operator).**
       tokens.json now carries `authority` per type: `content-addressed` for type 6 and type 7, `signed` for the
       other five; `authorityOf()` / `contentAddressedTypes()` export it and stage 1 reads it instead of testing
       `tx.type === 'tx'`. MEASURED 2026-09-16 before the fix, on the real ingress: a correctly typed broker
-      anchor whose xid verifies was refused `REJECT [can-happen] unsigned` — so every anchor the fleet produces
+      anchor whose xid verifies was refused `REJECT [can-happen] unsigned` — so every anchor the nodes produce
       died at the first door and "0 untyped anchors" was unreachable. An ANCHOR is a pointer to a digest: it
       moves no value, its body is {from:[prior],to:[hash],how:'anchor'}, and the broker that mints it is
       node-less and custodial, so no end user ever signs one. Its authority IS its xid, re-derived at stage 2 —
@@ -414,7 +414,7 @@ continue-on-error, and in the release workflow before any publish).
       `block.hash` = sha256 of the consensus body (the xid; for an anchor {type,event,hash,ts,xid}), never the
       envelope (relayer, signature, validator clock, submitter id), so two honest nodes holding the same typed
       set hash-sort identical faces and seal identical cubes; `block.id` is its first 16 hex. A wire-format
-      change: old and new nodes cannot verify each other's cubes, so it ships with the fleet-wide canonical
+      change: old and new nodes cannot verify each other's cubes, so it ships with the network-wide canonical
       rebuild the operator ordered. — *block.js; cube-sync.js; content-id-eviction.test.mjs; ledger-determinism.test.mjs*
 
 - [x] Ingress guard + invalid-eviction covered by node tests. — *ingress-guard, invalid-eviction*
@@ -592,11 +592,11 @@ continue-on-error, and in the release workflow before any publish).
 - [x] **THREE FULL NODES CONVERGE UNDER ADVERSARIAL DELIVERY (B2 / T6.2 c).**
       `reproductions/three-nodes.mjs` boots three real `XMBLCore` instances per run and delivers the same
       typed set to each in its own seeded shuffle, with ~20% re-gossiped duplicates and two forgeries spliced
-      mid-stream. Two phases, because the fleet has two sealing modes and they do not converge alike:
+      mid-stream. Two phases, because the nodes have two sealing modes and they do not converge alike:
       **eager local sealing** (the default, `XPC_CONSENSUS_V2` unset) converges the BLOCK SET on every run
       (36/36/36, identical block digest) but the cube partition follows arrival time — measured 3 distinct
       cube `set_digest`s in 2 of 3 runs, because a node cuts a hash-sorted nine whenever it happens to hold
-      nine. That is why the live fleet converges through the canonical rebuild rather than through live
+      nine. That is why the live nodes converge through the canonical rebuild rather than through live
       sealing. **Agreed sealing** (`XPC_CONSENSUS_V2=1`) cuts the boundary before it is sealed and all three
       agree on blocks, faces, cubes, the cube `set_digest` AND the state root. Runs in ~2s for 3 runs, so it
       sits in the hard gate. — *reproductions/three-nodes.mjs*
@@ -619,7 +619,7 @@ continue-on-error, and in the release workflow before any publish).
       (`release.js codeDigest`, sorted paths, tests excluded); `release` serves the per-package digests. A
       version string can be typed; the digest of the code cannot. — *core/release.js; control-socket.js;
       suspension.test.mjs; release.test.mjs (23/23)*
-- [x] **A node behind the fleet's latest version SUSPENDS ITSELF.** The daemon asks the release source
+- [x] **A node behind the latest published version SUSPENDS ITSELF.** The daemon asks the release source
       (`XMBL_RELEASE_URL`, default the npm registry's `@xmbl/core` dist-tag — "xmbl npm always latest") every
       `XMBL_OTA_CHECK_MS` (10 min; first check 5 s after boot); behind → `core.suspend()`: no submits (control
       socket `submit_tx`/`submit_batch` answer `ok:false, suspended`), no `submitTransaction`, no validation
@@ -659,7 +659,7 @@ continue-on-error, and in the release workflow before any publish).
       feed rebuilds 3 of 3 with 0 rejected; `apply_canonical` applies all 3 untyped rows, leaves the block store
       byte-identical and lands on the same root in either order. — *control-socket.js TYPED_ANCHOR_POLICY;
       ledger-capabilities.test.mjs (11/11)*
-- [ ] **The broker enforces it fleet-wide** — handoff-claude's: a node whose signed `chain` claim carries
+- [ ] **The broker enforces it network-wide** — handoff-claude's: a node whose signed `chain` claim carries
       `versions.core` below npm latest, or a `build` digest that is not the published release's, is suspended
       at the broker (no chain blocks, no anchors accepted) until its next claim proves the latest; the bundle
       runs `@xmbl/core`'s `xmbl-node` under a supervisor that respawns on exit 75; one coordinated canonical

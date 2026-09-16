@@ -53,7 +53,7 @@ export class VerkleStateTree {
     // `this.root` a fresh empty VerkleNode. So a node that had loaded EVERY key off disk answered getRoot()
     // with 64 zeros: a tree that holds the whole state and commits to nothing. MEASURED 2026-09-15: after a
     // canonical rebuild of 10 anchors, restart loaded all 10 keys and published root 0000…0000; across the
-    // fleet 39 of 44 reporting nodes published exactly that, including one with 11,691 blocks persisted. The
+    // nodes 39 of 44 reporting nodes published exactly that, including one with 11,691 blocks persisted. The
     // only boxes showing a real root were showing it by accident, via XVSM's diff replay re-inserting keys
     // through insert(). The state map is not the commitment — the hashed trie over it is, and it has to be
     // reconstructed on open or every restart silently un-commits the node's entire state.

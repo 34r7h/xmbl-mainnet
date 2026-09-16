@@ -54,7 +54,7 @@ const RUNNING_BUILD = (() => {
     return Object.freeze({ digest: b.digest, packages: Object.freeze(Object.fromEntries(Object.entries(b.packages).map(([n, p]) => [n, p ? { version: p.version, files: p.files, digest: p.digest } : null]))) });
   } catch (e) { return Object.freeze({ digest: null, error: e.message, packages: {} }); }
 })();
-// The suspension a caller sees on every producing op: a node behind the fleet's latest version has stopped
+// The suspension a caller sees on every producing op: a node behind the latest published version has stopped
 // producing until it is updated (the daemon's OTA loop suspends, updates and restarts it).
 const suspendedReply = (core) => ({ ok: false, suspended: core.suspended, error: `node suspended: ${core.suspended.reason}${core.suspended.detail ? ' — ' + core.suspended.detail : ''}` });
 
@@ -390,7 +390,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
             // broker's head-advance-at-mint does not block a rebuild. Order of arrival cannot change the result.
             rebuild_is_content_addressed: rescues,
             // apply_canonical reads only {event, hash, ts} and leaves the block store untouched, so it is safe
-            // on ANY feed, typed or not — the correct holding pattern while a fleet is mid-rollout.
+            // on ANY feed, typed or not — the correct holding pattern while a rollout is mid-flight.
             apply_canonical_accepts_untyped: typeof core.xvsm?.rebuildFromCanonical === 'function',
           },
         };
@@ -674,7 +674,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
           mempool: mempool ? { raw: mempool.raw ?? 0, processing: mempool.processing ?? 0, final: mempool.final ?? 0 } : null,
           versions: RUNNING_VERSIONS,
           // THE VERSION PROOF, inside the signature: the digest of the code this process loaded (see RUNNING_BUILD),
-          // and whether this node has suspended itself for running behind the fleet's latest version.
+          // and whether this node has suspended itself for running behind the latest published version.
           build: RUNNING_BUILD.digest,
           suspended: core.suspended ? { reason: core.suspended.reason, since: core.suspended.since, running: core.suspended.running ?? null, latest: core.suspended.latest ?? null } : null,
           // THE NODE'S OWN CLOCK, inside the signature — the one field a freshness gate depends on is the one

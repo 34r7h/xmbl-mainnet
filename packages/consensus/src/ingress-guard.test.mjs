@@ -1,7 +1,7 @@
 // INGRESS GUARD POLICY TEST.
 //
 // ⛔ POLICY CHANGED 2026-08-02, and the previous test asserted the OLD policy verbatim: "DROPS a type=anchor
-// (the confirmed spam)" while ADMITTING unsigned value-txs. That is backwards, and the fleet data says so:
+// (the confirmed spam)" while ADMITTING unsigned value-txs. That is backwards, and the node data says so:
 //
 //   laptop  856 raw  — 826 anchors, 856/856 SIGNED
 //   agentic 13,740   — 13,368 anchors, 13,740/13,740 SIGNED
@@ -96,7 +96,7 @@ const mined6 = () => { const t = { chain: 'xmbl', from: ['a'], to: ['b'], asset:
 }
 
 // (e) CONTENT-ADDRESSED ADMISSION (operator: "signed by a sender, OR content-addressed"; measured 2026-09-16).
-// The broker that mints the fleet's anchors is NODE-LESS and CUSTODIAL: its type-7 pointer is authorized by its
+// The broker that mints those anchors is NODE-LESS and CUSTODIAL: its type-7 pointer is authorized by its
 // xid, not by an end-user signature. Before this, stage 1 refused it as "unsigned" and every typed anchor died
 // at the door — "0 untyped anchors" was unreachable no matter what the broker did.
 {
