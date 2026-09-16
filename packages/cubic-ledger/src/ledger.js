@@ -8,6 +8,26 @@ import { sortFacesByHash } from './placement.js';
 import { sealBlocksIntoFaces } from './face-sealing.js';
 import { Level } from 'level';
 
+// PARSE THE ANCHOR ts THE WAY THE BROKER ACTUALLY SENDS IT. The canonical feed carries `ts` as an ISO
+// STRING ("2026-07-08T22:54:11.727Z"); the previous line here did `Number(a.ts)`, which is NaN for every
+// one of them, and `NaN || 0` is 0. MEASURED on a live ledger 2026-09-16: all 17,628 stored anchor `ts`
+// values are strings, and all 3,967 rows this rebuild had written carried `timestamp` 0n — so cube
+// placement was pinned to the epoch for the entire canonical set and every rebuilt face averaged to 0.
+// The rest of the ledger measures block timestamps in NANOSECONDS (face.getAverageTimestamp multiplies a
+// non-BigInt by 1e6 to get there), so epoch-ms is scaled here rather than stored raw, which the old line
+// also got wrong for the numeric case it was written for. Anything unparseable still yields 0n — that is
+// the honest answer for an anchor that recorded no time, and it is never guessed at from local wall clock.
+export function anchorTimestampNanos(ts) {
+  let ms = null;
+  if (typeof ts === 'bigint') return ts < 0n ? 0n : ts;          // already nanoseconds
+  if (typeof ts === 'number' && Number.isFinite(ts)) ms = ts;
+  else if (typeof ts === 'string' && ts !== '') {
+    ms = /^-?\d+$/.test(ts) ? Number(ts) : Date.parse(ts);       // numeric string, else ISO-8601
+  }
+  if (ms === null || !Number.isFinite(ms) || ms <= 0) return 0n;
+  return BigInt(Math.floor(ms)) * 1000000n;
+}
+
 export class Ledger extends EventEmitter {
   constructor(options = {}) {
     super();
@@ -379,7 +399,7 @@ export class Ledger extends EventEmitter {
       // validator-average math) so cube placement is identical across nodes instead of falling back to a
       // per-node hrtime. Face membership is already deterministic via the content hash; this makes the CUBE
       // key deterministic too, so the whole sealed chain is one function of the canonical set.
-      block.timestamp = BigInt(Math.max(0, Math.floor(Number(a.ts) || 0)));
+      block.timestamp = anchorTimestampNanos(a.ts);
       this.blocks.set(block.id, block);
       this._membershipPool.push(block);
     }
