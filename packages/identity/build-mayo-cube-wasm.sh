@@ -53,6 +53,14 @@ EMSDK_PIN="6.0.9"
 RECORDED_WASM_SHA="c972bba439427918b63d9308f368f3f530cf929845b6bae2a586765c5b715393"
 RECORDED_CJS_SHA="27634e618002c35e6d71bb144f1e0916a11cca313dee83aeadead96497ba0c45"
 
+# sha256 of a file, on both hosts this build runs on: macOS ships `shasum`, the Debian-based emsdk
+# container ships `sha256sum`. Prints the bare digest, nothing else.
+sha256() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else echo "ERROR: neither shasum nor sha256sum on PATH" >&2; exit 1; fi
+}
+
 command -v emcc >/dev/null 2>&1 || { echo "ERROR: emcc (Emscripten) not on PATH" >&2; exit 1; }
 EMCC_LINE="$(emcc --version | head -1)"
 EMCC_VER="$(printf '%s' "$EMCC_LINE" | sed -n 's/.*replacement + linker emulating GNU ld) \([^ ]*\).*/\1/p')"
@@ -106,15 +114,15 @@ emcc -O2 "${DEFINES[@]}" "${INCLUDES[@]}" "${SOURCES[@]}" \
   -o "$OUT/mayo.cjs"
 
 echo "built: $OUT/mayo.cjs $OUT/mayo.wasm"
-if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$OUT/mayo.wasm" "$OUT/mayo.cjs"; fi
+for f in mayo.wasm mayo.cjs; do echo "$(sha256 "$OUT/$f")  $OUT/$f"; done
 
 if [ "$MODE" = "check" ]; then
   echo "--- reproducibility check vs committed artifact AND recorded digest ---"
   rc=0
   for f in mayo.wasm mayo.cjs; do
     case "$f" in mayo.wasm) rec="$RECORDED_WASM_SHA" ;; *) rec="$RECORDED_CJS_SHA" ;; esac
-    got="$(shasum -a 256 "$OUT/$f" | awk '{print $1}')"
-    want="$(shasum -a 256 "$SRC/$f" | awk '{print $1}')"
+    got="$(sha256 "$OUT/$f")"
+    want="$(sha256 "$SRC/$f")"
     if [ "$got" = "$want" ] && [ "$got" = "$rec" ]; then echo "OK    $f  $got"
     elif [ "$got" != "$want" ]; then echo "DIFF  $f  rebuilt=$got  committed=$want"; rc=1
     else echo "DIFF  $f  rebuilt=$got  committed=$want  BUT recorded=$rec — the committed artifact and the record disagree"; rc=1; fi

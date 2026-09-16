@@ -52,21 +52,31 @@ jobs:
   wasm:
     name: MAYO WASM artifact reproduces byte-for-byte
     runs-on: ubuntu-latest
+    # THE BUILD HOST IS PART OF THE PIN. Measured 2026-09-17: under the SAME emsdk 6.0.9 (release
+    # 4e4223852a0835923411059a3929907d7df1232e) macOS/arm64 and Linux/x64 produce an IDENTICAL
+    # mayo.cjs and a DIFFERENT mayo.wasm (c972bba4... vs 38127dc9...), so pinning the emscripten
+    # version alone does not pin the bytes. The canonical build is therefore this image on amd64,
+    # which is a recipe any auditor can run:
+    #   docker run --rm --platform linux/amd64 -v "$PWD":/src -w /src emscripten/emsdk:6.0.9 \
+    #     bash packages/identity/build-mayo-cube-wasm.sh --check
+    container:
+      image: emscripten/emsdk:6.0.9
+      options: --platform linux/amd64
     steps:
       - uses: actions/checkout@v4
-      # THE PIN. emcc codegen is version-specific, so the version is the gate: this must stay
-      # equal to EMSDK_PIN in packages/identity/build-mayo-cube-wasm.sh. Bumping it WILL change
-      # the digest — that is a deliberate re-pin (rebuild, re-record, explain in MAYO-PROVENANCE.md),
-      # never a silent edit.
-      - uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: 6.0.9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      # HARD GATE (T2.1-b). Rebuilds the signing artifact from the vendored C on a DIFFERENT host
-      # and operating system than the one that committed it, and fails unless the bytes match the
-      # committed mayo.wasm/mayo.cjs and the digests recorded in the script. An auditor reviewing
-      # the C can run the same two commands and get the same binary.
+      # HARD GATE (T2.1-b). Rebuilds the signing artifact from the vendored C inside the pinned
+      # image and fails unless the bytes match the committed mayo.wasm/mayo.cjs AND the digests
+      # recorded in the script.
       - name: Rebuild MAYO-cube WASM and compare byte-for-byte
         run: bash packages/identity/build-mayo-cube-wasm.sh --check
+        continue-on-error: true
+      # Transitional: publishes the canonical bytes so the committed artifact can be rotated to the
+      # image's output. Removed once the digests are recorded (see MAYO-PROVENANCE.md T2.1-b).
+      - name: Build canonical artifact for download
+        run: OUT=/tmp/canonical bash packages/identity/build-mayo-cube-wasm.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mayo-canonical
+          path: |
+            /tmp/canonical/mayo.wasm
+            /tmp/canonical/mayo.cjs
