@@ -212,27 +212,34 @@ continue-on-error, and in the release workflow before any publish).
       math into the eval'd string — the "capability by real module, not eval'd source" direction C2 in
       COMPUTE-ISOLATION-THREAT-MODEL.md asks for, so this SHRINKS the eval surface. DETERMINISM
       (ContractHost drives a shared root): the signature MATERIAL is chain-staged via `ctx.data.crypto`
-      (identical on every node); the guest supplies only the message bytes. Proven by a hand-encoded
-      contract (no LNG dependency, like COUNTER) whose call returns 1 for a VALID Cubic-SIG / MAYO
-      signature and 0 for one over a different message — a real cryptographic verdict — plus a
+      (identical on every node); the guest supplies only the message bytes. Proven by a contract WRITTEN IN
+      LNG (it was hand-encoded WASM until B1 landed the `~bytes` type; that module is deleted) that commits
+      the verdict to a `~u256` field — 1 for a VALID Cubic-SIG / MAYO signature, 0 for one over a different
+      message, read back out of committed chain state — a real cryptographic verdict, plus a
       deny-by-default check that the same import without the `cryptoHost` flag is refused. — *xcl/abi.js
       (`HOST_ABI_CRYPTO_INIT_SOURCE`); xcl/contract-host.js; storage-compute/compute.js;
-      identity/wasm-wrapper.js (`verifySync`); contract-host.test.mjs (21/21)*
-- [ ] **T6.1-d — LNG source can CALL the crypto verifiers, and `xmbl_lwe_decrypt` (open).** The
-      runtime/ABI half of the crypto calls (T6.1-c) is reachable today only from a hand-encoded WASM
-      contract; the LNG compiler does not yet emit `env.xmbl_cubic_sig_verify` / `env.xmbl_mayo_verify`
-      from `~contract` source. This is a LANGUAGE-DESIGN task, not compiler wiring: both verifiers take
-      a MESSAGE as `(msg_ptr, msg_len)` bytes (see `abi.js` `HOST_ABI_CRYPTO_INIT_SOURCE`), and the WASM
-      backend's value model is 32-byte `~u256` words only — it has no bytes/`str` surface (the same
-      reason word-READ names field INDICES, not string names). Emitting these needs a new LNG byte-string
-      type (surface syntax + typecheck + a memory layout the backend can lower for BOTH backends), which
-      is out of scope for the composition increments and is tracked as its own language feature. Separately,
-      `xmbl_lwe_decrypt` is deliberately NOT provided: decryption needs a SECRET key, which is neither
-      chain-derivable nor safe to place in a guest's reach — its determinism and key-custody model is
-      an open design question, not a build task. **DECIDED 2026-09-16: `xmbl_lwe_decrypt` is WON'T-BUILD —**
-      decryption stays off-host by design (a guest never holds a secret key; contracts ADD ciphertexts via
-      `env.xmbl_he_add` and never read them). What keeps this row `[ ]` is the byte-string type alone
-      (docs/MAINNET-CLOSEOUT.md B1).
+      identity/wasm-wrapper.js (`verifySync`); contract-host.test.mjs (41/41)*
+- [x] **T6.1-d — LNG source CALLS the crypto verifiers and the UTXO value ABI (the `~bytes` type).**
+      The runtime/ABI half (T6.1-c) was reachable only from hand-encoded WASM, because the backend's value
+      model is 32-byte `~u256` words and both verifiers take a MESSAGE as `(msg_ptr, msg_len)`. `~bytes`
+      closes it: a byte-string value is a **(pointer, length) pair on the operand stack**, never a word —
+      a literal's bytes live in a data segment with a compile-time length, a runtime value (an id from
+      `xmbl_input_id`) is host-written into fresh memory with its length in a local. `~bytes` as a FIELD or
+      PARAM is REFUSED (committed state and the call ABI are both words, with nowhere to put a length);
+      until now both compiled *silently* as words. `compile(src, { crypto: true })` emits both verifiers,
+      `{ utxo: true }` the five value-ABI entries. `xmbl.mayo.verify(msg)` takes ONE argument on-chain, not
+      the interpreter's three — the signature and public key are chain-staged, which is what makes the
+      verdict deterministic; the interpreter arity is an arity ERROR here, never a silent drop of the two
+      arguments the chain supplies. The value ABI's `-1` sentinel TRAPS rather than widening to 2^256-1,
+      where it would be indistinguishable from an enormous legitimate amount. Proven by ONE LNG-authored
+      contract that verifies a real MAYO signature and spends a real UTXO through ContractHost — conserved
+      output to a recipient named by a `~bytes` literal, spend-marker written, root moved — while a
+      signature over a different message reverts with nothing spent and the root unmoved. The typechecker
+      refuses arithmetic/bitwise/ordering on `~bytes` and now walks `~contract` method bodies at all, which
+      it never did. Separately, `xmbl_lwe_decrypt` is **WON'T-BUILD (decided 2026-09-16)**: decryption needs
+      a SECRET key, which is neither chain-derivable nor safe in a guest's reach — contracts ADD ciphertexts
+      via `env.xmbl_he_add` and never read them. — *lng/compile-wasm.js; lng/typecheck.js;
+      compile-wasm.test.mjs (29 → 47); contract-host.test.mjs (41/41, `cryptoContract` deleted)*
 - [x] **T6.2 — contracts LINK xmbl UTXOs to the Verkle state machine, provably and reproducibly.** A
       contract can now SPEND committed xmbl UTXOs and CREATE new ones, into the SAME Verkle tree the
       state machine already commits ledger blocks to (`state-machine.js` maps a `utxo` block to

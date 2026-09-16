@@ -223,6 +223,94 @@ ok('~decimal rejected', (() => { try { compile("~contract `D { ~state { ~public 
   ok('compose: xmbl_read received peer 0 / field 0 and its returned word is the full 256-bit value',
      readArgs !== null && readArgs.peer === 0n && readArgs.field === 0n && rdWord(rinst, retPtr) === RVAL);
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // ~bytes (B1) — THE ONE MISSING LANGUAGE FEATURE. A 256-bit word cannot carry a message or a UTXO id,
+  // so every host call that takes a (pointer, length) pair was unreachable from LNG source and the
+  // contracts that used them had to be hand-assembled. A ~bytes value is that pair: literal bytes from a
+  // data segment with a compile-time length, or bytes the host writes back with the length in a local.
+  // ────────────────────────────────────────────────────────────────────────────
+  const refused = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+  const bytesOf = (inst, p, l) => Array.from(new Uint8Array(inst.exports.memory.buffer.slice(p, p + l)));
+
+  // The forms that have NOWHERE to carry a length are refused, never silently compiled as a word. Before
+  // this, both produced a valid module in which the ~bytes annotation simply evaporated.
+  ok('~bytes FIELD is refused with a reason (it used to compile silently as a 256-bit word)',
+     /~bytes field `x has nowhere to carry its length/.test(refused(() => compile("~contract `S { ~state { ~public { `x ~bytes 0 } } ~on `f(){ return 1 } }")) || ''));
+  ok('~bytes PARAM is refused with a reason (it used to compile silently as a 256-bit word)',
+     /~bytes param `b has nowhere to carry its length/.test(refused(() => compile("~contract `S { ~on `f(`b ~bytes){ return 1 } }")) || ''));
+  ok('a ~bytes literal in arithmetic position is still a hard error (a byte string is not a number)',
+     refused(() => compile("~contract `S { ~on `f(){ return '0x01' + 1 } }")) !== null);
+  ok('xmbl.utxo.input_id(i) has no word form and says so',
+     /has no 256-bit word form/.test(refused(() => compile("~contract `T { ~on `n() { return `xmbl.utxo.input_id(0) } }", { utxo: true })) || ''));
+
+  // Opt-in, exactly like hostState and compose: the DEFAULT module must stay import-free, and a contract
+  // with no byte literals must emit the SAME bytes it emitted before ~bytes existed (the blob region is
+  // zero-sized, so the 32-byte literal pool keeps its old base).
+  const PLAIN = "~contract `C { ~on `f(`a ~u256) { return `a + 1 } }";
+  ok('~bytes did not move the literal pool: a contract with no byte literals is unchanged (import-free, 5598 bytes)',
+     compile(PLAIN).length === 5598 && WebAssembly.Module.imports(new WebAssembly.Module(compile(PLAIN))).length === 0);
+  ok('crypto/utxo are opt-in: xmbl.mayo.verify without { crypto: true } is refused',
+     /requires compile\(src, \{ crypto: true \}\)/.test(refused(() => compile("~contract `V { ~on `c() { return `xmbl.mayo.verify('0x01') } }")) || ''));
+  ok('xmbl.mayo.verify(msg, sig, pk) — the interpreter arity — is an arity error on-chain, not a silent drop',
+     /chain-staged, not guest-supplied/.test(refused(() => compile("~contract `V { ~on `c() { return `xmbl.mayo.verify('0x01','s','p') } }", { crypto: true })) || ''));
+
+  // The literal's bytes reach the host EXACTLY: the import sees (ptr, len) pointing at the source bytes.
+  {
+    const V = new WebAssembly.Module(compile("~contract `V { ~on `check() { return `xmbl.mayo.verify('0xdeadbeef') } }", { crypto: true }));
+    ok('crypto: imports exactly the two §3.1 verifiers',
+       WebAssembly.Module.imports(V).map((i) => i.module + '.' + i.name).join(',') === 'env.xmbl_cubic_sig_verify,env.xmbl_mayo_verify');
+    let seen = null; let inst;
+    inst = new WebAssembly.Instance(V, { env: { xmbl_cubic_sig_verify: () => 0, xmbl_mayo_verify: (p, l) => { seen = bytesOf(inst, p, l); return 1; } } });
+    inst.exports.__reset();
+    const one = rdWord(inst, inst.exports.check());
+    ok('~bytes literal: the host received the EXACT four bytes of the source literal', seen !== null && seen.join(',') === '222,173,190,239');
+    let inst0; inst0 = new WebAssembly.Instance(V, { env: { xmbl_cubic_sig_verify: () => 0, xmbl_mayo_verify: () => 0 } });
+    inst0.exports.__reset();
+    ok('crypto: a 1 verdict becomes the word 1 and a 0 verdict becomes the word 0 (never a pointer mistaken for truth)',
+       one === 1n && rdWord(inst0, inst0.exports.check()) === 0n);
+    // A UTF-8 literal is carried as its bytes — a UTXO recipient is an ASCII string on the wire, not a digest.
+    let seenU; let instU;
+    instU = new WebAssembly.Instance(new WebAssembly.Module(compile("~contract `V { ~on `check() { return `xmbl.mayo.verify('BENEF01') } }", { crypto: true })),
+      { env: { xmbl_cubic_sig_verify: () => 0, xmbl_mayo_verify: (p, l) => { seenU = new TextDecoder().decode(new Uint8Array(instU.exports.memory.buffer.slice(p, p + l))); return 1; } } });
+    instU.exports.__reset(); instU.exports.check();
+    ok('~bytes literal: a non-hex literal is carried as its UTF-8 bytes', seenU === 'BENEF01');
+  }
+
+  // Bytes the contract could NOT have known at compile time: the caller presents the UTXO, the host writes
+  // its id back, and the contract spends by that id — the whole reason a runtime ~bytes value must exist.
+  {
+    const SPEND = "~contract `T { ~on `go() { `amt `xmbl.utxo.spend(`xmbl.utxo.input_id(0))\n `xmbl.utxo.create('BENEF01', `amt)\n return `amt } }";
+    const M = new WebAssembly.Module(compile(SPEND, { utxo: true }));
+    ok('utxo: imports exactly the five value-ABI entries, in the ABI order',
+       WebAssembly.Module.imports(M).map((i) => i.name).join(',') === 'xmbl_input_count,xmbl_input_id,xmbl_utxo_amount,xmbl_utxo_spend,xmbl_utxo_create');
+    const ID = 'abc123def4567890';                       // a 16-hex-char ledger block id
+    let spent = null, created = null, inst;
+    const env = {
+      xmbl_input_count: () => 1,
+      xmbl_input_id: (i, out) => { if (i !== 0) return -1; const v = new Uint8Array(inst.exports.memory.buffer); for (let k = 0; k < ID.length; k++) v[out + k] = ID.charCodeAt(k); return ID.length; },
+      xmbl_utxo_amount: () => 0n,
+      xmbl_utxo_spend: (p, l) => { spent = new TextDecoder().decode(new Uint8Array(inst.exports.memory.buffer.slice(p, p + l))); return 100n; },
+      xmbl_utxo_create: (p, l, amt) => { created = [new TextDecoder().decode(new Uint8Array(inst.exports.memory.buffer.slice(p, p + l))), amt]; return 0n; },
+    };
+    inst = new WebAssembly.Instance(M, { env });
+    inst.exports.__reset();
+    const amt = rdWord(inst, inst.exports.go());
+    ok('utxo: the contract spent the id the HOST supplied, not one it was compiled with', spent === ID);
+    ok('utxo: the i64 amount was widened to the full 256-bit word', amt === 100n);
+    ok('utxo: create received the literal recipient and the spent amount', created !== null && created[0] === 'BENEF01' && created[1] === 100n);
+
+    // THE -1 SENTINEL. Widened to an unsigned word it reads as 2^256-1, indistinguishable from an enormous
+    // legitimate amount — a contract could "spend" a UTXO it does not hold and carry the error on as money.
+    // Both failure forms therefore TRAP.
+    let bad; bad = new WebAssembly.Instance(M, { env: { ...env, xmbl_utxo_spend: () => -1n,
+      xmbl_input_id: (i, out) => { new Uint8Array(bad.exports.memory.buffer)[out] = 65; return 1; } } });
+    bad.exports.__reset();
+    ok('utxo: a -1 spend TRAPS — it never becomes 2^256-1', (() => { try { bad.exports.go(); return false; } catch { return true; } })());
+    let oob; oob = new WebAssembly.Instance(M, { env: { ...env, xmbl_input_id: () => -1 } });
+    oob.exports.__reset();
+    ok('utxo: an input index the caller never presented TRAPS (fail-closed)', (() => { try { oob.exports.go(); return false; } catch { return true; } })());
+  }
+
   console.log(`\n${pass}/${pass + fail} passed`);
   process.exit(fail ? 1 : 0);
 })();

@@ -1140,6 +1140,7 @@ const __typecheck = (() => {
  *   - mixing ~decimal with an integer type in one arithmetic expression
  *   - bitwise operators applied to non-integer operands
  *   - a float (fractional) literal inside integer arithmetic
+ *   - ~bytes used as a number (arithmetic, bitwise or ordering)
  *
  * It is intentionally conservative: anything it cannot prove is treated as
  * 'unknown' and left to the runtime's checked arithmetic. Returns a list of
@@ -1189,6 +1190,12 @@ function check(src) {
       case 'unary': return n.op === '!' ? 'bool' : infer(n.operand, env);
       case 'ternary': { const a = infer(n.thenB, env), b = infer(n.elseB || n.thenB, env); return a === b ? a : 'unknown'; }
       case 'binary': {
+        // Ordering short-circuits to `bool` before combine() ever runs, so the ~bytes rule has to be applied
+        // here too — otherwise `a > b` on two byte strings is the one nonsense the checker waves through.
+        if (['>', '<', '!>', '!<'].includes(n.op) && (infer(n.left, env) === 'bytes' || infer(n.right, env) === 'bytes')) {
+          err(lineOf(n), `~bytes is a byte string, not a number — \`${n.op}\` has no meaning on it`);
+          return 'bool';
+        }
         if (['==', '!==', '>', '<', '!>', '!<', '&', '|'].includes(n.op)) return 'bool';
         return combine(n, env);
       }
@@ -1199,6 +1206,18 @@ function check(src) {
   function combine(n, env) {
     const lt = infer(n.left, env), rt = infer(n.right, env);
     const bitwise = n.op.startsWith('b');
+    // ~bytes IS NOT A NUMBER. It is a byte string — a message, a UTXO id, a digest. Every backend represents
+    // it as a reference to bytes held somewhere else (a Solidity `bytes memory`, a (pointer, length) pair on
+    // the XCL backend), so `b + 1` is arithmetic on a location, not on a value: it would compile, and it would
+    // compute nonsense. Comparing two ~bytes for equality is fine and stays allowed.
+    if (lt === 'bytes' || rt === 'bytes') {
+      const arith = ['+', '-', '*', '/', '%'].includes(n.op);
+      const ordered = ['>', '<', '!>', '!<'].includes(n.op);
+      // `ordered` is unreachable through infer() (it short-circuits above); kept so a direct combine() call
+      // is checked the same way.
+      if (arith || bitwise || ordered) { err(lineOf(n), `~bytes is a byte string, not a number — \`${n.op}\` has no meaning on it`); return 'unknown'; }
+      return lt === rt ? 'bool' : 'unknown';
+    }
     // string concat
     if (n.op === '+' && (lt === 'string' || rt === 'string')) return 'string';
     // decimal / int mix
@@ -1256,6 +1275,19 @@ function check(src) {
         break;
       }
       case 'block': { const child = Object.create(env); walk(n.body, child); break; }
+      // A ~contract's methods are the code that actually goes on chain — they were never walked, so every
+      // diagnostic above was blind to exactly the programs that matter most. Each method gets its own scope
+      // seeded with its declared parameter types, and the contract's fields are visible in all of them.
+      case 'contract': {
+        const outer = Object.create(env);
+        for (const f of n.fields) { if (f.type) outer[f.name] = f.type; if (f.init) walkExpr(f.init, outer); }
+        for (const mth of n.methods) {
+          const child = Object.create(outer);
+          for (const prm of mth.params) child[prm.name] = prm.type || 'unknown';
+          walkNode(mth.body, child);
+        }
+        break;
+      }
       case 'exprstmt': walkExpr(n.expr, env); break;
       case 'forin': { walkExpr(n.coll, env); const child = Object.create(env); if (n.asVar) child[n.asVar] = 'unknown'; walkNode(n.body, child); break; }
       case 'countedfor': { walkExpr(n.start, env); walkExpr(n.end, env); const child = Object.create(env); child[n.varName] = 'intlit'; walkNode(n.body, child); break; }
@@ -1543,10 +1575,29 @@ const __compile_wasm = (() => {
  * set (indices 0/1); every entrypoint loads its fields from the host on entry and flushes each
  * field to the host immediately on assignment (so early `return` never drops a write). This is
  * strictly opt-in: the default stays import-free so it still clears the deny-by-default runtime
- * on the raw market path. The §3.1 crypto host calls (cubic_sig/mayo/lwe verify) are NOT
- * emitted — see abi.js for why (sync host imports vs async MAYO; eval'd-source growth).
+ * on the raw market path.
  * NOTE: `~u256` PARAMS still arrive as memory pointers; passing plain-int args through
  * ContractHost is a separate, unbuilt marshalling concern.
+ *
+ * CRYPTO MODE — `compile(src, { crypto: true })`: emits the §3.1 signature verifiers
+ * (env.xmbl_cubic_sig_verify / env.xmbl_mayo_verify) so `~xmbl.mayo.verify('0x…')` and
+ * `~xmbl.cubic.verify('0x…')` are reachable from LNG source. ONE argument, not the
+ * interpreter's three: the signature and public key are CHAIN-STAGED, identical on every node,
+ * which is what makes the verdict deterministic — a guest that chose its own public key would
+ * be verifying nothing. MAYO's async load is the host's `init` hook, awaited before the guest
+ * is instantiated, so the import itself stays synchronous.
+ *
+ * UTXO MODE — `compile(src, { utxo: true })`: emits the value ABI (input_count, input_id,
+ * utxo_amount, utxo_spend, utxo_create), so a contract spends the UTXOs its CALLER presented —
+ * ids it could not have known at compile time. The ABI's -1 error sentinel TRAPS rather than
+ * widening into a 256-bit word, where it would read as an enormous legitimate amount.
+ *
+ * ~bytes — the byte-string type (see the layout note beside BYTES/LIT_BASE). A ~bytes value is
+ * a (pointer, length) pair pushed onto the operand stack, never a 256-bit word: a LITERAL's
+ * bytes sit in a data segment with a compile-time length, and a RUNTIME value (an id from
+ * xmbl_input_id) is host-written into fresh memory with its length in a local. A ~bytes FIELD
+ * or PARAM is REJECTED — committed state and the call ABI are both 32-byte words with nowhere
+ * to put a length (the interpreter and EVM backend carry those forms).
  *
  * Signed integer types (~i8..~i256) and ~decimal are REJECTED with a clear error (the
  * interpreter and EVM backend support them; this backend is unsigned-only) — never silently
@@ -1572,7 +1623,7 @@ const O = {
   i32load: 0x28, i64load: 0x29, i32store: 0x36, i64store: 0x37,
   i32const: 0x41, i64const: 0x42,
   i32eqz: 0x45, i32ne: 0x47, i32lts: 0x48, i32gts: 0x4a, i32ges: 0x4e,
-  i64eqz: 0x50, i64ne: 0x52, i64ltu: 0x54,
+  i64eqz: 0x50, i64eq: 0x51, i64ne: 0x52, i64ltu: 0x54,
   i32add: 0x6a, i32sub: 0x6b, i32mul: 0x6c, i32and: 0x71, i32or: 0x72, i32shru: 0x76,
   i64add: 0x7c, i64sub: 0x7d, i64mul: 0x7e, i64and: 0x83, i64or: 0x84, i64xor: 0x85, i64shl: 0x86, i64shru: 0x88,
   i64extendi32u: 0xad, i32wrapi64: 0xa7,
@@ -1582,7 +1633,30 @@ const m32 = (off) => [0x02, ...uleb(off)];
 
 const SLOT = 32;
 const SCRATCH_BASE = 16;              // 16 i64 mul accumulators (128 bytes) — full product
-const LIT_BASE = SCRATCH_BASE + 128;
+const LIT_BASE = SCRATCH_BASE + 128;  // start of the constant data region
+
+// ~bytes — THE BYTE-STRING LAYOUT. A 256-bit word cannot carry a message or a UTXO id: the host ABI takes a
+// (pointer, length) pair, and the backend's only value shape is a 32-byte word. So a ~bytes value is NOT a
+// word at all here — it is a (ptr, len) pair pushed straight onto the operand stack by emitBytes, consumed by
+// the host call that needs it. A LITERAL's bytes are placed in a data segment at BYTES_BASE and its length is
+// a compile-time i32; a RUNTIME value (an id the contract could not have known, from xmbl_input_id) is written
+// into freshly __alloc'd memory with its length in a local. Nothing needs an in-memory length prefix, because
+// a length is always either a constant or a live local. A ~bytes value is therefore usable EXACTLY where the
+// host ABI takes one, and nowhere else — arithmetic on it is a hard error, never a pointer silently added to.
+// A `~bytes` FIELD or PARAM is refused (see bad() below): committed state and the call ABI are both 32-byte
+// words, so neither has a place to put the length. The interpreter and the EVM backend carry those forms.
+const align32 = (n) => Math.ceil(n / SLOT) * SLOT;
+// A ~bytes literal's bytes: `0x…` is a hex digest (the form the interpreter's ~bytes cast accepts), anything
+// else is its UTF-8 bytes (a UTXO id is an ASCII string on the wire, so this is the form the host compares).
+function literalBytes(v) {
+  const s = String(v);
+  if (/^0x[0-9a-fA-F]*$/.test(s)) {
+    if ((s.length - 2) % 2 !== 0) throw new Error(`WASM backend: ~bytes literal '${s}' has an odd number of hex digits`);
+    const out = []; for (let i = 2; i < s.length; i += 2) out.push(parseInt(s.slice(i, i + 2), 16));
+    return out;
+  }
+  return utf8(s);
+}
 
 function compile(src, opts = {}) {
   assertDeterministic(src, 'WASM compile');
@@ -1607,21 +1681,53 @@ function compile(src, opts = {}) {
   const COMPOSE_BASE = hostState ? 2 : 0;   // compose imports sit just above the state imports
   const READ_IDX = COMPOSE_BASE;            // env.xmbl_read is first
   const SEND_IDX = COMPOSE_BASE + 1;        // env.xmbl_send follows it
-  const IMPORT_COUNT = COMPOSE_BASE + (compose ? 2 : 0);
+  // crypto / utxo (opt-in, same rule as the two above): the §3.1 signature verifiers and the UTXO value ABI.
+  // They are what a ~bytes value exists FOR — a contract hands the chain a message to verify, or an id to
+  // spend. Import indices are assigned in ONE fixed order (state, compose, crypto, utxo) and every emitted
+  // index derives from the same bases, so a mis-ordered import list cannot silently produce a valid module
+  // that calls the wrong host function.
+  const crypto = !!(opts && opts.crypto);
+  const utxo = !!(opts && opts.utxo);
+  const CRYPTO_BASE = COMPOSE_BASE + (compose ? 2 : 0);
+  const CUBIC_IDX = CRYPTO_BASE, MAYO_IDX = CRYPTO_BASE + 1;
+  const UTXO_BASE = CRYPTO_BASE + (crypto ? 2 : 0);
+  const UCOUNT_IDX = UTXO_BASE, UID_IDX = UTXO_BASE + 1, UAMT_IDX = UTXO_BASE + 2,
+        USPEND_IDX = UTXO_BASE + 3, UCREATE_IDX = UTXO_BASE + 4;
+  const IMPORT_COUNT = UTXO_BASE + (utxo ? 5 : 0);
 
-  const bad = (t, w) => { if (t && (t in INT_WIDTHS) && INT_WIDTHS[t][0]) throw new Error(`WASM backend is unsigned-only: signed ~${t} ${w} unsupported (use the EVM backend)`); if (t === 'decimal') throw new Error(`WASM backend does not support ~decimal ${w} (use the EVM backend)`); };
+  const bad = (t, w) => { if (t && (t in INT_WIDTHS) && INT_WIDTHS[t][0]) throw new Error(`WASM backend is unsigned-only: signed ~${t} ${w} unsupported (use the EVM backend)`); if (t === 'decimal') throw new Error(`WASM backend does not support ~decimal ${w} (use the EVM backend)`); if (t === 'bytes') throw new Error(`WASM backend: ~bytes ${w} has nowhere to carry its length — a committed field and a call argument are both 32-byte words. Pass a ~bytes LITERAL or xmbl.utxo.input_id(i) directly to the host call that consumes it (the interpreter and EVM backend carry ~bytes fields/params).`); };
   for (const f of c.fields) bad(f.type, `field \`${f.name}`);
   for (const mth of c.methods) for (const p of mth.params) bad(p.type, `param \`${p.name}`);
 
   const slot = new Map(); c.fields.forEach((f, i) => slot.set(f.name, i));
+
+  // ~bytes literals are laid out FIRST, so the 32-byte word pool that follows keeps its alignment and a
+  // contract with no byte literals emits a BYTE-IDENTICAL module to the one it emitted before ~bytes existed
+  // (blobSize is 0, so POOL_BASE === LIT_BASE).
+  const blobs = new Map(); const blobBytes = [];
+  let blobsFrozen = false;   // the region's size is fixed once laid out; a literal the gatherer missed would
+                             // otherwise be appended past the end of the emitted data segment and read as zeros
+  const blob = (v) => {
+    const key = String(v);
+    if (!blobs.has(key)) {
+      if (blobsFrozen) throw new Error(`WASM backend: internal — ~bytes literal '${key}' was not gathered before layout`);
+      const b = literalBytes(v); blobs.set(key, { ptr: LIT_BASE + blobBytes.length, len: b.length }); blobBytes.push(...b);
+    }
+    return blobs.get(key);
+  };
+  for (const mth of c.methods) gatherBytes(mth.body.body, blob);
+  const BLOB_SIZE = align32(blobBytes.length);
+  const POOL_BASE = LIT_BASE + BLOB_SIZE;
+  blobsFrozen = true;
+
   const lits = new Map();
-  const lit = (v) => { v = BigInt(v); if (v < 0n) v = (1n << 256n) + v; if (!lits.has(v)) lits.set(v, LIT_BASE + lits.size * SLOT); return lits.get(v); };
+  const lit = (v) => { v = BigInt(v); if (v < 0n) v = (1n << 256n) + v; if (!lits.has(v)) lits.set(v, POOL_BASE + lits.size * SLOT); return lits.get(v); };
   const Z = lit(0n), ONE = lit(1n), ONES = lit((1n << 256n) - 1n);
   for (const mth of c.methods) gatherLits(mth.body.body, lit);
   // State-field byte keys (hostState only) live in a data region between the literal pool
   // and the field storage, so the guest can pass (key_ptr, key_len) to the host ABI. Each
   // field's key is its own UTF-8 name; per-contract namespacing is the host's job (byteKey).
-  const KEYS_BASE = LIT_BASE + lits.size * SLOT;
+  const KEYS_BASE = POOL_BASE + lits.size * SLOT;
   const keyPtr = [], keyLen = [], keyBytes = [];
   if (hostState) {
     let off = KEYS_BASE;
@@ -1631,7 +1737,7 @@ function compile(src, opts = {}) {
     }
   }
   const KEYS_SIZE = hostState ? Math.ceil(keyBytes.length / SLOT) * SLOT : 0;
-  const FIELD_BASE = KEYS_BASE + KEYS_SIZE;   // == LIT_BASE + lits.size*SLOT when !hostState
+  const FIELD_BASE = KEYS_BASE + KEYS_SIZE;   // == POOL_BASE + lits.size*SLOT when !hostState
   const EVENTS_ADDR = FIELD_BASE + c.fields.length * SLOT;
   const HEAP_BASE = EVENTS_ADDR + 8;
 
@@ -1673,7 +1779,10 @@ function compile(src, opts = {}) {
     const built = compileMethod(mth, { slot, FIELD_BASE, lit, Z, ONE, ONES, H, EVENTS_ADDR,
       fields: c.fields.length,
       hostState: hostState ? { vget: 0, vset: 1, keyPtr, keyLen } : null,
-      compose: compose ? { readIdx: READ_IDX, sendIdx: SEND_IDX } : null });
+      compose: compose ? { readIdx: READ_IDX, sendIdx: SEND_IDX } : null,
+      crypto: crypto ? { cubicIdx: CUBIC_IDX, mayoIdx: MAYO_IDX } : null,
+      utxo: utxo ? { countIdx: UCOUNT_IDX, inputIdIdx: UID_IDX, amountIdx: UAMT_IDX, spendIdx: USPEND_IDX, createIdx: UCREATE_IDX } : null,
+      blob });
     F(ti, built.locals, built.code);
     exports.push([...nm(finalName(mth)), 0x00, ...uleb(ENTRY0 + mi)]);
   });
@@ -1687,6 +1796,13 @@ function compile(src, opts = {}) {
   // unconditionally when compose is on (NOT gated on hostState) so the stateless-compose path has a
   // live type index — T() deduplicates, so it collapses onto T_get's shape when hostState is on too.
   const T_read = compose ? T([I32, I32, I32], [I32]) : 0;
+  // crypto: both verifiers are (msg_ptr, msg_len)->i32 — the same shape as T_2, which T() collapses onto.
+  const T_verify = crypto ? T([I32, I32], [I32]) : 0;
+  // utxo: count ()->i32, input_id (i,out)->i32 len, amount/spend (ptr,len)->i64, create (ptr,len,amount)->i64.
+  const T_ucount = utxo ? T([], [I32]) : 0;
+  const T_uid = utxo ? T([I32, I32], [I32]) : 0;
+  const T_uamt = utxo ? T([I32, I32], [I64]) : 0;
+  const T_ucreate = utxo ? T([I32, I32, I64], [I64]) : 0;
   const typeSec = section(1, vec(types));
   // Import entries in the SAME order the indices were assigned: state imports (0,1), then the
   // compose imports read THEN send — so READ_IDX / SEND_IDX above match these entries' positions.
@@ -1699,6 +1815,17 @@ function compile(src, opts = {}) {
   if (compose) {
     importEntries.push([...nm('env'), ...nm('xmbl_read'), 0x00, ...uleb(T_read)]);
     importEntries.push([...nm('env'), ...nm('xmbl_send'), 0x00, ...uleb(T_read)]);
+  }
+  if (crypto) {
+    importEntries.push([...nm('env'), ...nm('xmbl_cubic_sig_verify'), 0x00, ...uleb(T_verify)]);
+    importEntries.push([...nm('env'), ...nm('xmbl_mayo_verify'), 0x00, ...uleb(T_verify)]);
+  }
+  if (utxo) {
+    importEntries.push([...nm('env'), ...nm('xmbl_input_count'), 0x00, ...uleb(T_ucount)]);
+    importEntries.push([...nm('env'), ...nm('xmbl_input_id'), 0x00, ...uleb(T_uid)]);
+    importEntries.push([...nm('env'), ...nm('xmbl_utxo_amount'), 0x00, ...uleb(T_uamt)]);
+    importEntries.push([...nm('env'), ...nm('xmbl_utxo_spend'), 0x00, ...uleb(T_uamt)]);
+    importEntries.push([...nm('env'), ...nm('xmbl_utxo_create'), 0x00, ...uleb(T_ucreate)]);
   }
   const importSec = importEntries.length ? section(2, vec(importEntries)) : [];
   const funcSec = section(3, vec(defined.map(f => uleb(f.ti))));
@@ -1715,7 +1842,8 @@ function compile(src, opts = {}) {
   const litBytes = [];
   [...lits.entries()].sort((a, b) => a[1] - b[1]).forEach(([v]) => { for (let i = 0; i < 32; i++) litBytes.push(Number((v >> BigInt(i * 8)) & 0xffn)); });
   const dataSegs = [];
-  if (lits.size) dataSegs.push([0x00, O.i32const, ...sleb(LIT_BASE), O.end, ...uleb(litBytes.length), ...litBytes]);
+  if (blobBytes.length) dataSegs.push([0x00, O.i32const, ...sleb(LIT_BASE), O.end, ...uleb(blobBytes.length), ...blobBytes]);
+  if (lits.size) dataSegs.push([0x00, O.i32const, ...sleb(POOL_BASE), O.end, ...uleb(litBytes.length), ...litBytes]);
   if (hostState && keyBytes.length) dataSegs.push([0x00, O.i32const, ...sleb(KEYS_BASE), O.end, ...uleb(keyBytes.length), ...keyBytes]);
   const dataSec = dataSegs.length ? section(11, vec(dataSegs)) : [];
   return Uint8Array.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, ...typeSec, ...importSec, ...funcSec, ...memSec, ...globalSec, ...exportSec, ...codeSec, ...dataSec]);
@@ -1852,6 +1980,19 @@ function gatherLits(nodes, lit) {
   for (const s of nodes) { if (s.kind === 'block') gatherLits(s.body, lit); else if (s.kind === 'countedfor') { ex(s.start); ex(s.end); gatherLits(s.body.body, lit); } else ex(s); }
 }
 
+// Every ~bytes literal reachable from a method body, interned into the blob region before layout. The walk
+// mirrors gatherLits exactly, so the two regions are gathered by one traversal shape and neither can see a
+// literal the other misses.
+function gatherBytes(nodes, blob) {
+  const ex = (n) => {
+    if (!n || typeof n !== 'object') return;
+    if (n.kind === 'str') blob(n.value);
+    for (const k of ['arg', 'value', 'expr', 'operand', 'cond', 'thenB', 'elseB', 'obj', 'coll', 'callee', 'left', 'right', 'index', 'start', 'end', 'body']) if (n[k]) ex(n[k]);
+    for (const k of ['elements', 'args', 'body']) if (Array.isArray(n[k])) n[k].forEach(ex);
+  };
+  for (const s of nodes) { if (s.kind === 'block') gatherBytes(s.body, blob); else if (s.kind === 'countedfor') { ex(s.start); ex(s.end); gatherBytes(s.body.body, blob); } else ex(s); }
+}
+
 // ===== codegen =====
 const BINCALL = { '+': 'add', '-': 'sub', '*': 'mul', '/': 'div', '%': 'mod', 'b&': 'and', 'b|': 'or', 'b^': 'xor' };
 function compileMethod(m, ctx) {
@@ -1873,7 +2014,16 @@ function compileMethod(m, ctx) {
   const st = ctx.compose ? next++ : -1; if (ctx.compose) localTypes.push(I32);
   const sb = ctx.compose ? next++ : -1; if (ctx.compose) localTypes.push(I32);
   const sc = ctx.compose ? next++ : -1; if (ctx.compose) localTypes.push(I32);
-  ctx = Object.assign({}, ctx, { vt, rt, st, sb, sc });
+  // Scratch for the UTXO value ABI: bx = the base of a fresh 256-byte buffer an id is written into, bl = the
+  // length the host reported for it, bp/bq = the word a returned i64 amount is widened into. Allocated ONLY
+  // under utxo, so every other path's local section stays byte-identical. The crypto verifiers need none of
+  // these — their argument is a (ptr,len) pair on the stack and their result is an i32 the frombool helper
+  // already turns into a word.
+  const bx = ctx.utxo ? next++ : -1; if (ctx.utxo) localTypes.push(I32);
+  const bl = ctx.utxo ? next++ : -1; if (ctx.utxo) localTypes.push(I32);
+  const bp = ctx.utxo ? next++ : -1; if (ctx.utxo) localTypes.push(I32);
+  const bq = ctx.utxo ? next++ : -1; if (ctx.utxo) localTypes.push(I64);
+  ctx = Object.assign({}, ctx, { vt, rt, st, sb, sc, bx, bl, bp, bq });
   const code = []; let ret = false;
   const get = (name) => params.has(name) ? params.get(name) : idx.get(name);
   // hostState prologue: load every committed field from Verkle into its memory word BEFORE
@@ -2067,11 +2217,106 @@ function emitP(n, code, ctx, params, get) {
         code.push(O.lget, ...uleb(ctx.rt));                     // expression value = the result word pointer
         return;
       }
+      // `xmbl.mayo.verify(msg)` / `xmbl.cubic.verify(msg)` — THE CONTRACT ASKS THE CHAIN TO
+      // VERIFY A SIGNATURE. The signature material itself is chain-staged (ctx.data.crypto, identical on every
+      // node, so the verdict is too); the guest supplies only the MESSAGE, which is exactly what ~bytes is for.
+      // The import takes (msg_ptr, msg_len) — the pair emitBytes pushes — and answers i32 1/0, which frombool
+      // turns into the backend's word for true/false. Never traps: an invalid signature is a 0, not a fault.
+      if (path && path.length === 2 && path[1] === 'verify' && (path[0] === 'mayo' || path[0] === 'cubic')) {
+        if (!ctx.crypto) throw new Error(`WASM backend: xmbl.${path[0]}.verify requires compile(src, { crypto: true })`);
+        // ONE argument, not the interpreter's three. Off-chain, `xmbl.mayo.verify(msg, sig, pk)` is handed its
+        // own material; on-chain the material is CHAIN-STAGED (ctx.data.crypto) precisely so every node
+        // verifies against the same bytes and reaches the same verdict — a guest that could choose its own
+        // public key would be verifying nothing. An interpreter-shaped call is a hard arity error here, never
+        // a silent drop of the two arguments the chain supplies.
+        if (n.args.length !== 1) throw new Error(`WASM backend: xmbl.${path[0]}.verify(msg) takes exactly one ~bytes argument on-chain — the signature and public key are chain-staged, not guest-supplied`);
+        emitBytes(n.args[0], code, ctx, params, get);
+        code.push(O.call, ...uleb(path[0] === 'mayo' ? ctx.crypto.mayoIdx : ctx.crypto.cubicIdx));
+        code.push(O.call, ...uleb(ctx.H.frombool));
+        return;
+      }
+      // `xmbl.utxo.*` — THE VALUE ABI. `count()` and `input_id(i)` enumerate the UTXOs the CALLER presented,
+      // so a contract spends a content-addressed ledger id it could never have known at compile time;
+      // `amount`/`spend` take that id, `create` pays an amount out to a recipient.
+      if (path && path.length === 2 && path[0] === 'utxo') {
+        const fn = path[1];
+        if (!ctx.utxo) throw new Error(`WASM backend: xmbl.utxo.${fn} requires compile(src, { utxo: true })`);
+        if (fn === 'count') {
+          if (n.args.length !== 0) throw new Error('WASM backend: xmbl.utxo.count() takes no arguments');
+          code.push(O.call, ...uleb(ctx.utxo.countIdx), O.i64extendi32u);
+          emitI64Word(code, ctx, false);   // a count is never the -1 sentinel
+          return;
+        }
+        if (fn === 'amount' || fn === 'spend') {
+          if (n.args.length !== 1) throw new Error(`WASM backend: xmbl.utxo.${fn}(id) takes exactly one ~bytes argument`);
+          emitBytes(n.args[0], code, ctx, params, get);
+          code.push(O.call, ...uleb(fn === 'spend' ? ctx.utxo.spendIdx : ctx.utxo.amountIdx));
+          emitI64Word(code, ctx, true);
+          return;
+        }
+        if (fn === 'create') {
+          if (n.args.length !== 2) throw new Error('WASM backend: xmbl.utxo.create(to, amount) takes a ~bytes recipient and an amount');
+          emitBytes(n.args[0], code, ctx, params, get);
+          emitP(n.args[1], code, ctx, params, get);
+          code.push(O.i64load, ...m64(0));               // the amount's low limb — the ABI carries value as i64
+          code.push(O.call, ...uleb(ctx.utxo.createIdx));
+          emitI64Word(code, ctx, true);
+          return;
+        }
+        if (fn === 'input_id') throw new Error('WASM backend: xmbl.utxo.input_id(i) is a ~bytes value — pass it straight to the host call that consumes it (xmbl.utxo.spend / amount / create, xmbl.mayo.verify, xmbl.cubic.verify), it has no 256-bit word form');
+        throw new Error('WASM backend: unsupported call xmbl.utxo.' + fn);
+      }
       throw new Error('WASM backend: unsupported call ' + (path ? 'xmbl.' + path.join('.') : n.callee && n.callee.kind));
     }
     default: throw new Error('WASM backend: cannot compile expression ' + n.kind);
   }
 }
+// A ~bytes value, pushed as the (ptr, len) pair every host call that takes bytes expects. Only two forms
+// exist, and BOTH are checked here rather than inferred: a LITERAL (bytes in a data segment, length a
+// compile-time constant) and `xmbl.utxo.input_id(i)` (bytes the host writes into fresh memory, length in a
+// local). Anything else is a hard error — a ~bytes value is never a 256-bit word, so there is no expression
+// that could be silently reinterpreted as one.
+function emitBytes(n, code, ctx, params, get) {
+  if (n && n.kind === 'str') {
+    const b = ctx.blob(n.value);
+    code.push(O.i32const, ...sleb(b.ptr), O.i32const, ...sleb(b.len));
+    return;
+  }
+  const path = n && n.kind === 'call' ? xmblCallPath(n.callee) : null;
+  if (path && path.length === 2 && path[0] === 'utxo' && path[1] === 'input_id') {
+    if (!ctx.utxo) throw new Error('WASM backend: xmbl.utxo.input_id requires compile(src, { utxo: true })');
+    if (n.args.length !== 1) throw new Error('WASM backend: xmbl.utxo.input_id(i) takes exactly one argument');
+    // 8 contiguous 32-byte words = 256 bytes for the id. __alloc is a bump allocator, so back-to-back calls
+    // with nothing between them are contiguous; this MUST precede the index expression, which may allocate
+    // temporaries of its own. A ledger UTXO id is 16 hex characters, so 256 bytes is 16× the real size.
+    code.push(O.call, ...uleb(ctx.H.alloc), O.lset, ...uleb(ctx.bx));
+    for (let i = 1; i < 8; i++) code.push(O.call, ...uleb(ctx.H.alloc), O.drop);
+    emitP(n.args[0], code, ctx, params, get);
+    code.push(O.i32load, ...m32(0));                                  // the index — the word's low 32 bits
+    code.push(O.lget, ...uleb(ctx.bx));                               // out pointer
+    code.push(O.call, ...uleb(ctx.utxo.inputIdIdx), O.lset, ...uleb(ctx.bl));
+    // The host answers -1 for an index that was never presented. Continuing with a negative length would hand
+    // the next host call a nonsense region, so this TRAPS: fail-closed, the same shape as `~e`.
+    code.push(O.lget, ...uleb(ctx.bl), O.i32const, ...sleb(0), O.i32lts, O.if, 0x40, O.unreachable, O.end);
+    code.push(O.lget, ...uleb(ctx.bx), O.lget, ...uleb(ctx.bl));
+    return;
+  }
+  throw new Error('WASM backend: a ~bytes argument must be a literal or xmbl.utxo.input_id(i), got ' + ((n && n.kind) || 'nothing'));
+}
+
+// An i64 on the stack → a freshly allocated 256-bit word holding it, which is the backend's value shape.
+// `trapOnSentinel` covers the UTXO ABI's -1: widened to an unsigned word it would read as 2^256-1, a value
+// indistinguishable from an enormous legitimate amount, so a contract could "spend" a UTXO it does not hold
+// and carry the error forward as money. The guest-visible failure form is therefore a TRAP, not a number.
+function emitI64Word(code, ctx, trapOnSentinel) {
+  code.push(O.lset, ...uleb(ctx.bq));
+  if (trapOnSentinel) code.push(O.lget, ...uleb(ctx.bq), O.i64const, ...sleb(-1), O.i64eq, O.if, 0x40, O.unreachable, O.end);
+  code.push(O.call, ...uleb(ctx.H.alloc), O.lset, ...uleb(ctx.bp));
+  code.push(O.lget, ...uleb(ctx.bp), O.lget, ...uleb(ctx.bq), O.i64store, ...m64(0));
+  for (let k = 1; k < 4; k++) code.push(O.lget, ...uleb(ctx.bp), O.i64const, ...sleb(0), O.i64store, ...m64(k * 8));
+  code.push(O.lget, ...uleb(ctx.bp));
+}
+
 // A call callee that is a member chain rooted at the `xmbl` stdlib ref → the member path
 // (e.g. `xmbl.coord.send` → ['coord','send']); anything else → null (not a host call).
 function xmblCallPath(callee) {

@@ -102,14 +102,31 @@ unless you want the port scheduled.
 
 ## Part B — work with no decision attached (starts on "go")
 
-### B1. The LNG byte-string type — the one missing language feature
-The WASM backend's only value is a 32-byte word, so LNG source cannot pass a *message* or a *UTXO
-id* (both are byte strings) to the host. That single gap keeps three things hand-encoded: calling
-the signature verifiers from contract source (T6.1-d), calling `xmbl_utxo_*` from source (T6.2 a),
-and it forces `~u256` amounts to i64 in the UTXO proof contracts. Work: surface syntax + typechecker
-+ a memory layout both backends lower. **Proof:** a contract written in LNG (not by hand) verifies
-a MAYO signature and spends a UTXO on the real host; `compile-wasm` and `contract-host` suites gain
-those cases.
+### B1. The LNG byte-string type — the one missing language feature — DONE 2026-09-16
+A `~bytes` value is a **(pointer, length) pair on the operand stack**, never a 256-bit word: a
+literal's bytes sit in a data segment with a compile-time length, and a runtime value (an id the
+contract could not have known, from `xmbl_input_id`) is host-written into fresh memory with its
+length in a local. Nothing needs an in-memory length prefix, because a length is always either a
+constant or a live local. `~bytes` as a **field or param is refused** — committed state and the call
+ABI are both 32-byte words with nowhere to put a length; before this they compiled *silently* as
+words, which is the silent miscompile the backend header promises never happens. The typechecker
+refuses arithmetic, bitwise and ordering on `~bytes` (equality stays legal), and it now walks
+`~contract` method bodies at all, which it never did — every diagnostic it had was blind to exactly
+the code that goes on chain.
+
+Two opt-in host modes reach it: `{ crypto: true }` emits the §3.1 verifiers, `{ utxo: true }` the
+five-entry value ABI. `xmbl.mayo.verify(msg)` takes **one** argument on-chain, not the interpreter's
+three — the signature and public key are chain-staged, which is what makes the verdict deterministic;
+an interpreter-shaped call is an arity error, never a silent drop. The value ABI's `-1` sentinel
+**traps**: widened to an unsigned word it would read as 2^256-1, indistinguishable from an enormous
+legitimate amount, so a contract could "spend" a UTXO it does not hold and carry the error on as money.
+
+**Proof, measured:** one LNG-authored contract verifies a real MAYO signature (`@xmbl/identity`
+MAYOWasm) and spends a real UTXO through `ContractHost` — `spent: ['U1']`, one conserved output of
+100 to a recipient named by a `~bytes` literal, spend-marker written, Verkle root moved. A signature
+over a *different* message reverts: nothing spent, no marker, root unmoved. `contract-host.test.mjs`
+40 → 41 checks and the hand-encoded `cryptoContract` WASM is **deleted**; `compile-wasm.test.mjs`
+29 → 47. A contract with no byte literals still emits a byte-identical, import-free module.
 
 ### B2. Full-stack multi-node reproduction under adversarial timing (T6.2 c) — DONE 2026-09-16
 `reproductions/three-nodes.mjs`: three real XMBLCore per run, same set in three shuffles with duplicates and

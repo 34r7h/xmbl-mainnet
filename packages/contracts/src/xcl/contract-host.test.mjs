@@ -256,66 +256,104 @@ await check('word-ABI + byteState together: `inc(by)` marshals the arg AND persi
 // the guest supplies only the message bytes. A VALID signature verifies to 1, a signature
 // over a DIFFERENT message to 0 — a real cryptographic outcome, not a callable-stub check.
 // ============================================================================
-// A hand-encoded contract (like COUNTER, no LNG dependency for the runtime half) that imports
-// both crypto verifiers, holds a message in a data segment, exports its memory, and calls each
-// verifier over (msgPtr=0, msgLen=N).
-function cryptoContract(msg) {
-  const uleb = (n) => { const b = []; do { let x = n & 0x7f; n >>>= 7; if (n) x |= 0x80; b.push(x); } while (n); return b; };
-  const vec = (items) => [...uleb(items.length), ...items.flat()];
-  const section = (id, body) => [id, ...uleb(body.length), ...body];
-  const s = (t) => [...uleb(t.length), ...[...t].map((c) => c.charCodeAt(0))];
-  const N = msg.length;
-  const fnBody = (callIdx) => { const code = [0x00, 0x41, ...uleb(0), 0x41, ...uleb(N), 0x10, ...uleb(callIdx), 0x0b]; return [...uleb(code.length), ...code]; };
-  return Uint8Array.from([
-    ...HDR,
-    ...section(1, vec([[0x60, ...vec([0x7f, 0x7f]), ...vec([0x7f])], [0x60, ...vec([]), ...vec([0x7f])]])),
-    ...section(2, vec([
-      [...s('env'), ...s('xmbl_cubic_sig_verify'), 0x00, ...uleb(0)],
-      [...s('env'), ...s('xmbl_mayo_verify'), 0x00, ...uleb(0)],
-    ])),
-    ...section(3, vec([uleb(1), uleb(1)])),
-    ...section(5, vec([[0x01, ...uleb(1), ...uleb(1)]])),
-    ...section(7, vec([
-      [...s('memory'), 0x02, ...uleb(0)],
-      [...s('check_cubic'), 0x00, ...uleb(2)],
-      [...s('check_mayo'), 0x00, ...uleb(3)],
-    ])),
-    ...section(10, vec([fnBody(0), fnBody(1)])),
-    ...section(11, vec([[0x00, 0x41, ...uleb(0), 0x0b, ...vec([...msg])]])),
-  ]);
-}
+// THE CONTRACT IS WRITTEN IN LNG, NOT HAND-ENCODED (B1). It used to be a hand-assembled WASM module here,
+// because the LNG backend had no way to hand the host a message: its only value shape is a 256-bit word, and
+// a verifier takes a (pointer, length) pair. `~bytes` is that missing piece — a literal's bytes go into a data
+// segment and its length is a compile-time constant, so `~xmbl.mayo.verify('0x…')` lowers to exactly the two
+// i32s the import expects. The verdict is committed to a `~u256` field, so the test reads the value the CHAIN
+// holds rather than a return pointer.
+const sigHex = (m) => '0x' + [...m].map((b) => b.toString(16).padStart(2, '0')).join('');
+const SIGS_SRC = (msg) => `~contract \`Sigs {
+  ~state { ~public { \`cubic ~u256 0
+                     \`mayo ~u256 0 } }
+  ~on \`check_cubic() { \`cubic = \`xmbl.cubic.verify('${sigHex(msg)}'); return \`cubic }
+  ~on \`check_mayo() { \`mayo = \`xmbl.mayo.verify('${sigHex(msg)}'); return \`mayo }
+}`;
+const sigsContract = (msg) => compile(SIGS_SRC(msg), { hostState: true, crypto: true });
 
 await check('crypto host call: Cubic-SIG verifies a VALID signature to 1 and a tampered one to 0 through ContractHost', async () => {
   const msg = Uint8Array.from([11, 22, 33, 44, 55, 66]);
   const host = new ContractHost({ runtime: new ComputeRuntime({ maxTime: 10000 }), state: new VerkleStateTree() });
-  const { id, coordinates } = host.deploy(cryptoContract(msg), [], { cryptoHost: true });
+  const { id, coordinates } = host.deploy(sigsContract(msg), [], { byteState: true, wordAbi: true, cryptoHost: true });
   const { sk, pk } = cubicSigKeyGen();
   const cubeContext = { cubeAddress: id, coordinates: coordinates.coordinates };
   const good = cubicSigSign(msg, sk, pk, cubeContext);
   const bad = cubicSigSign(Uint8Array.from([1, 2, 3]), sk, pk, cubeContext); // signs a DIFFERENT message
-  const call = async (sig) => (await host.call(id, 'check_cubic', [], { crypto: { cubicSig: { sig, pk, cubeContext } } })).result;
-  assert.strictEqual(await call(good), 1, 'a valid Cubic-SIG over the presented message verifies');
-  assert.strictEqual(await call(bad), 0, 'a signature over a different message is rejected');
+  const call = async (sig) => { await host.call(id, 'check_cubic', [], { crypto: { cubicSig: { sig, pk, cubeContext } } }); return host.getBytes(id, 'cubic'); };
+  assert.strictEqual(await call(good), 1n, 'a valid Cubic-SIG over the presented message verifies');
+  assert.strictEqual(await call(bad), 0n, 'a signature over a different message is rejected');
 });
 
 await check('crypto host call: MAYO (async-loaded) verifies a VALID signature to 1 and a tampered one to 0 through ContractHost', async () => {
   const msg = Uint8Array.from([7, 7, 7, 7, 8, 8]);
   const host = new ContractHost({ runtime: new ComputeRuntime({ maxTime: 10000 }), state: new VerkleStateTree() });
-  const { id } = host.deploy(cryptoContract(msg), [], { cryptoHost: true });
+  const { id } = host.deploy(sigsContract(msg), [], { byteState: true, wordAbi: true, cryptoHost: true });
   const mayo = await MAYOWasm.load();
   const kp = await mayo.keygen();
   const good = await mayo.sign(msg, kp.privateKey);
   const bad = await mayo.sign(Uint8Array.from([9, 9, 9]), kp.privateKey); // signs a DIFFERENT message
-  const call = async (signature) => (await host.call(id, 'check_mayo', [], { crypto: { mayo: { signature, publicKey: kp.publicKey } } })).result;
-  assert.strictEqual(await call(good), 1, 'a valid MAYO signature over the presented message verifies');
-  assert.strictEqual(await call(bad), 0, 'a MAYO signature over a different message is rejected');
+  const call = async (signature) => { await host.call(id, 'check_mayo', [], { crypto: { mayo: { signature, publicKey: kp.publicKey } } }); return host.getBytes(id, 'mayo'); };
+  assert.strictEqual(await call(good), 1n, 'a valid MAYO signature over the presented message verifies');
+  assert.strictEqual(await call(bad), 0n, 'a MAYO signature over a different message is rejected');
 });
 
 await check('crypto host call: the same import declared WITHOUT cryptoHost is denied (deny-by-default holds)', async () => {
   const msg = Uint8Array.from([1, 2, 3, 4]);
   const host = new ContractHost({ runtime: runtime() });
-  const { id } = host.deploy(cryptoContract(msg), []); // NO cryptoHost → no crypto init attached
+  const { id } = host.deploy(sigsContract(msg), [], { byteState: true, wordAbi: true }); // NO cryptoHost
   await assert.rejects(() => host.call(id, 'check_cubic'), /denied import: env\.xmbl_cubic_sig_verify/);
+});
+
+// ── B1's PROOF: ONE LNG-authored contract that verifies a MAYO signature AND spends a real UTXO ──
+// This is the whole point of the byte-string type. The contract holds the message it will authorise against
+// (a ~bytes literal), asks the chain to verify the chain-staged signature over it, REVERTS if the answer is
+// no, and only then spends the input the caller presented — an id it could not have known at compile time,
+// read back through xmbl.utxo.input_id(0), which is a ~bytes value produced at RUNTIME rather than a literal.
+// Both halves of the type meet here: constant bytes going out, host-written bytes coming back.
+const VAULT_SRC = (msg, recipient) => `~contract \`Vault {
+  ~on \`claim() {
+    !\`xmbl.mayo.verify('${sigHex(msg)}') ? { ~e 'signature' }
+    \`amt \`xmbl.utxo.spend(\`xmbl.utxo.input_id(0))
+    \`xmbl.utxo.create('${recipient}', \`amt)
+    return \`amt
+  }
+}`;
+
+await check('B1: an LNG-authored contract verifies a MAYO signature and spends a UTXO — and a FORGERY spends nothing', async () => {
+  const msg = Uint8Array.from([7, 7, 7, 7, 8, 8]);
+  const bytes = compile(VAULT_SRC(msg, 'BENEF01'), { crypto: true, utxo: true });
+  const mayo = await MAYOWasm.load();
+  const kp = await mayo.keygen();
+  const good = await mayo.sign(msg, kp.privateKey);
+  const forged = await mayo.sign(Uint8Array.from([9, 9, 9]), kp.privateKey);   // a signature over ANOTHER message
+
+  const attempt = async (signature) => {
+    const state = new VerkleStateTree();
+    await state.insert(utxoKey('U1'), { from: 'genesis', to: 'alice', amount: '100' });
+    const host = new ContractHost({ runtime: new ComputeRuntime({ maxTime: 10000 }), state });
+    const { id } = host.deploy(bytes, [], { cryptoHost: true, utxoHost: true });
+    const root0 = state.getRoot();
+    try {
+      const r = await host.call(id, 'claim', [], { inputs: ['U1'], crypto: { mayo: { signature, publicKey: kp.publicKey } } });
+      return { applied: true, utxo: r.utxo, moved: state.getRoot() !== root0, spendMarker: state.get(spendKey('U1')) !== undefined };
+    } catch (e) {
+      return { applied: false, error: e.message, moved: state.getRoot() !== root0, spendMarker: state.get(spendKey('U1')) !== undefined };
+    }
+  };
+
+  const okRun = await attempt(good);
+  assert.strictEqual(okRun.applied, true, 'the valid signature let the claim run');
+  assert.deepStrictEqual(okRun.utxo.spent, ['U1'], 'the LNG contract spent the presented input');
+  assert.strictEqual(okRun.utxo.created.length, 1, 'it created exactly one output');
+  assert.strictEqual(okRun.utxo.created[0].to, 'BENEF01', 'to the recipient named by a ~bytes literal in LNG source');
+  assert.strictEqual(okRun.utxo.created[0].amount, '100', 'for the full input amount — value conserved');
+  assert.strictEqual(okRun.moved, true, 'committing the claim moved the Verkle root');
+  assert.strictEqual(okRun.spendMarker, true, 'the input carries a spend-marker');
+
+  const badRun = await attempt(forged);
+  assert.strictEqual(badRun.applied, false, 'a signature over a different message does NOT let the claim run');
+  assert.strictEqual(badRun.moved, false, 'nothing was committed — the state root is unmoved');
+  assert.strictEqual(badRun.spendMarker, false, 'and the UTXO was NOT spent');
 });
 
 // ============================================================================

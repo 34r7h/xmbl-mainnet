@@ -8,6 +8,7 @@
  *   - mixing ~decimal with an integer type in one arithmetic expression
  *   - bitwise operators applied to non-integer operands
  *   - a float (fractional) literal inside integer arithmetic
+ *   - ~bytes used as a number (arithmetic, bitwise or ordering)
  *
  * It is intentionally conservative: anything it cannot prove is treated as
  * 'unknown' and left to the runtime's checked arithmetic. Returns a list of
@@ -57,6 +58,12 @@ function check(src) {
       case 'unary': return n.op === '!' ? 'bool' : infer(n.operand, env);
       case 'ternary': { const a = infer(n.thenB, env), b = infer(n.elseB || n.thenB, env); return a === b ? a : 'unknown'; }
       case 'binary': {
+        // Ordering short-circuits to `bool` before combine() ever runs, so the ~bytes rule has to be applied
+        // here too — otherwise `a > b` on two byte strings is the one nonsense the checker waves through.
+        if (['>', '<', '!>', '!<'].includes(n.op) && (infer(n.left, env) === 'bytes' || infer(n.right, env) === 'bytes')) {
+          err(lineOf(n), `~bytes is a byte string, not a number — \`${n.op}\` has no meaning on it`);
+          return 'bool';
+        }
         if (['==', '!==', '>', '<', '!>', '!<', '&', '|'].includes(n.op)) return 'bool';
         return combine(n, env);
       }
@@ -67,6 +74,18 @@ function check(src) {
   function combine(n, env) {
     const lt = infer(n.left, env), rt = infer(n.right, env);
     const bitwise = n.op.startsWith('b');
+    // ~bytes IS NOT A NUMBER. It is a byte string — a message, a UTXO id, a digest. Every backend represents
+    // it as a reference to bytes held somewhere else (a Solidity `bytes memory`, a (pointer, length) pair on
+    // the XCL backend), so `b + 1` is arithmetic on a location, not on a value: it would compile, and it would
+    // compute nonsense. Comparing two ~bytes for equality is fine and stays allowed.
+    if (lt === 'bytes' || rt === 'bytes') {
+      const arith = ['+', '-', '*', '/', '%'].includes(n.op);
+      const ordered = ['>', '<', '!>', '!<'].includes(n.op);
+      // `ordered` is unreachable through infer() (it short-circuits above); kept so a direct combine() call
+      // is checked the same way.
+      if (arith || bitwise || ordered) { err(lineOf(n), `~bytes is a byte string, not a number — \`${n.op}\` has no meaning on it`); return 'unknown'; }
+      return lt === rt ? 'bool' : 'unknown';
+    }
     // string concat
     if (n.op === '+' && (lt === 'string' || rt === 'string')) return 'string';
     // decimal / int mix
@@ -124,6 +143,19 @@ function check(src) {
         break;
       }
       case 'block': { const child = Object.create(env); walk(n.body, child); break; }
+      // A ~contract's methods are the code that actually goes on chain — they were never walked, so every
+      // diagnostic above was blind to exactly the programs that matter most. Each method gets its own scope
+      // seeded with its declared parameter types, and the contract's fields are visible in all of them.
+      case 'contract': {
+        const outer = Object.create(env);
+        for (const f of n.fields) { if (f.type) outer[f.name] = f.type; if (f.init) walkExpr(f.init, outer); }
+        for (const mth of n.methods) {
+          const child = Object.create(outer);
+          for (const prm of mth.params) child[prm.name] = prm.type || 'unknown';
+          walkNode(mth.body, child);
+        }
+        break;
+      }
       case 'exprstmt': walkExpr(n.expr, env); break;
       case 'forin': { walkExpr(n.coll, env); const child = Object.create(env); if (n.asVar) child[n.asVar] = 'unknown'; walkNode(n.body, child); break; }
       case 'countedfor': { walkExpr(n.start, env); walkExpr(n.end, env); const child = Object.create(env); child[n.varName] = 'intlit'; walkNode(n.body, child); break; }
