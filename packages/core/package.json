@@ -17,6 +17,7 @@
     "./control-socket.js": "./control-socket.js",
     "./node-config.js": "./node-config.js",
     "./metrics-server.js": "./metrics-server.js",
+    "./release.js": "./release.js",
     "./package.json": "./package.json"
   },
   "dependencies": {

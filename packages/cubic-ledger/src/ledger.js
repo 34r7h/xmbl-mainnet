@@ -98,6 +98,20 @@ export class Ledger extends EventEmitter {
   /** Resolves once the store is open and the pools, anchor keys and eviction list are loaded. */
   ready() { return this._ready || Promise.resolve(); }
 
+  /**
+   * Release the store. A Ledger OWNS a LevelDB but had no way to give it back: every consumer had to reach
+   * into `ledger.db` and close it by hand (`@xmbl/core`'s stop() does exactly that), and anything that forgot
+   * left the LOCK held — the next process to open that directory gets `LEVEL_DATABASE_NOT_OPEN` and silently
+   * runs with no persistence. Idempotent, and safe on an in-memory ledger.
+   */
+  async close() {
+    const db = this.db;
+    this._dbOpen = false;
+    if (!db || typeof db.close !== 'function') return;
+    if (db.status === 'closed' || db.status === 'closing') return;
+    await db.close();
+  }
+
   async _initDb() {
     // A STORE THAT FAILED TO OPEN IS NOT OPEN. This used to set _dbOpen = true on the catch branch too ("might
     // already be open"), so a LevelDB held by another process (its LOCK file), a missing directory or a corrupt

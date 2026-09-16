@@ -594,6 +594,17 @@ continue-on-error, and in the release workflow before any publish).
       agree on blocks, faces, cubes, the cube `set_digest` AND the state root. Runs in ~2s for 3 runs, so it
       sits in the hard gate. — *reproductions/three-nodes.mjs*
 
+- [x] **EVERY PROTOCOL MODULE HAS AN AUDITOR-RUNNABLE REPRODUCTION (B3) — the eight ✗ are ✓.** `core`,
+      `identity`, `cubic-ledger`, `state-machine`, `consensus`, `storage-compute`, `networking` and `lng` each
+      have one file in `reproductions/` that imports the REAL package, reproduces that module's headline claim
+      with counts, prints a transcript and exits non-zero if the claim fails — so each is also a hard-gate
+      test. 14 reproductions now run in the gate. Two API gaps surfaced while writing them and were fixed at
+      the source rather than worked around: `@xmbl/core` did not export `./release.js` (the version proof and
+      OTA decision a supervisor reads), and `Ledger` owned a LevelDB with NO way to close it — every consumer
+      had to reach into `ledger.db`, and anything that forgot left the LOCK held, which silently drops the next
+      process into no-persistence mode. — *reproductions/{core,identity,cubic-ledger,state-machine,consensus,
+      storage-compute,networking,lng}.mjs; packages/core/package.json; cubic-ledger/src/ledger.js close()*
+
 ## Rollout policy (operator, 2026-09-16): every node, latest version or suspended, updated over the air
 
 - [x] **A node PROVES the version it runs.** `status` and the SIGNED `chain` claim carry `versions` (what the

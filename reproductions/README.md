@@ -30,6 +30,14 @@ sources it compiles — so a reviewer can confirm the exact bytes that produced 
 |--------------|--------|------------------|
 | `agentic-contract-e2e.mjs` | `packages/contracts` + `identity` + `state-machine` | A gated agentic contract is hosted and USED with every function (machine-checked against the compiler's WASM exports) through the real root→coordinator→agent delegation chain; XMBL state is observed updating at every surface (contract fields, the Verkle root, the UTXO ledger), every unauthorized/out-of-scope/replayed/revoked/value-violating call leaves the root unmoved, each committed change is Verkle-provable, and the transition is deterministic across independent nodes. |
 | `three-nodes.mjs` | `core` + `consensus` + `cubic-ledger` + `state-machine` | Three full nodes given the same typed set in different orders, with duplicates and forgeries, converge: the block set always, and under agreed seal boundaries the cubes, the cube `set_digest` and the state root too |
+| `core.mjs` | `core` | A node proves the code it is executing (a digest of the loaded @xmbl modules, signed into every reading), refuses to produce while behind the published version, and resumes cleanly |
+| `identity.mjs` | `identity` | An address certifies itself from its public key; a signature binds every field but `sig`/`publicKey` — including a slipped-in extra; a crossed keypair is detectable locally |
+| `cubic-ledger.mjs` | `cubic-ledger` | Same anchor set → same chain in any order; a rebuild preserves what the set does not describe; a rebuild that would empty the chain is refused; a forgery cannot evict the datum it impersonates |
+| `state-machine.mjs` | `state-machine` | The verkle root is a pure function of the applied set, a divergent node converges on adopting it, and the root plus the applied count survive a restart |
+| `consensus.mjs` | `consensus` | The operator's order — can it happen, is the xid correct, is the placement right — with the first failing stage named in every refusal |
+| `storage-compute.mjs` | `storage-compute` | A guest that loops forever is killed at the operator's deadline and still billed at the maximum; an honest job is metered; custody is proved from the shard's bytes |
+| `networking.mjs` | `networking` | Two real libp2p nodes dial by peer id and a published message arrives intact — the transport every convergence argument assumes |
+| `lng.mjs` | `lng` | One source: the interpreter and the WASM backend agree call for call, the Solidity output is real, and non-determinism is a compile-time refusal |
 | `contracts-reentrancy.mjs` | `packages/contracts` | A called contract never runs nested inside its caller's frame, so classic reentrancy is inexpressible by construction. |
 
 ## Browser-surface reproduction (app render, not a Node protocol run)

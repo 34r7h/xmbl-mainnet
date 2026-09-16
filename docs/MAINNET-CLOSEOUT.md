@@ -122,7 +122,10 @@ under the simulator's chaos do not yet have a reproduction. Work: `reproductions
 booting three `XMBLCore` in-process with the chaotic simulator, asserting one state root and one
 cube `set_digest` at the end. **Proof:** roots equal, digests equal, across N chaotic runs.
 
-### B3. Miniapp reproductions for the eight modules still marked ✗
+### B3. Miniapp reproductions for the eight modules still marked ✗ — DONE 2026-09-16
+All eight written, each importing the real package and asserting by count: core, identity, cubic-ledger,
+state-machine, consensus, storage-compute, networking, lng. MODULE-STATUS's third column is ✓ for all eight;
+14 reproductions run in the gate.
 `core`, `identity`, `cubic-ledger`, `state-machine`, `consensus`, `storage-compute`, `networking`,
 `lng` each need one `reproductions/<module>.mjs` in the existing `verify.mjs` pattern (browser
 surface where the module runs in a browser, Node otherwise). **Proof:** MODULE-STATUS column flips
