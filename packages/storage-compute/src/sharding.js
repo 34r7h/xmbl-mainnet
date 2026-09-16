@@ -1,9 +1,25 @@
 export class StorageShard {
-  constructor(index, data, isParity = false, originalLength = null) {
+  /**
+   * @param {number} index data shards are 0..k-1; parity shards are k..k+m-1.
+   * @param {Buffer} data the chunk (all shards in one encoding are the same length).
+   * @param {boolean} isParity
+   * @param {number|null} originalLength the payload's length before padding — without it the padding
+   *   cannot be trimmed, so decode refuses.
+   * @param {number|null} parityCount m, THE PARITY DEGREE OF THE ENCODING. Carried on every shard for
+   *   the same reason originalLength is: it is a property of the ENCODING, not of whatever subset of
+   *   shards happens to survive, and decode cannot be correct without it. parity[i] is the XOR of data
+   *   shards {i, i+m, i+2m, …}, so recovery needs m — and inferring it from the number of parity shards
+   *   PRESENT is wrong exactly when a parity shard is among the losses. MEASURED on k=4, m=2: given data
+   *   shards 0,1,2 and parity shard 4 only, the inferred m was 1, which made the recovery group
+   *   {0,1,2,3} instead of {0,2}, and decode returned wrong bytes with no error. Null means a legacy
+   *   shard that predates this field; decode then refuses parity recovery rather than guessing.
+   */
+  constructor(index, data, isParity = false, originalLength = null, parityCount = null) {
     this.index = index;
     this.data = data;
     this.isParity = isParity;
     this.originalLength = originalLength;
+    this.parityCount = parityCount;
   }
 
   static create(data, index, totalShards) {
@@ -57,7 +73,7 @@ export class StorageShard {
       // Pad if necessary
       const padded = Buffer.alloc(chunkSize);
       chunk.copy(padded);
-      shards.push(new StorageShard(i, padded, false, data.length));
+      shards.push(new StorageShard(i, padded, false, data.length, m));
     }
     
     // Generate parity shards
@@ -75,7 +91,7 @@ export class StorageShard {
           }
         }
       }
-      parity.push(new StorageShard(k + i, parityData, true, data.length));
+      parity.push(new StorageShard(k + i, parityData, true, data.length, m));
     }
     
     return { shards, parity };
@@ -101,7 +117,12 @@ export class StorageShard {
     // Determine k (number of data shards) from parity shard indices
     // Parity shards have indices k, k+1, ..., k+m-1
     // So k = min(parity shard indices), or calculate from original length if no parity
-    const m = parityShards.length;
+    // m is the ENCODING's parity degree, taken from the shards that carry it (see the constructor doc).
+    // Falling back to parityShards.length is only safe when no parity recovery is needed, which is
+    // enforced below — a legacy shard set missing a data shard is refused rather than decoded wrongly.
+    const stamped = allShards.find((sh) => Number.isInteger(sh.parityCount) && sh.parityCount > 0);
+    const m = stamped ? stamped.parityCount : parityShards.length;
+    const mIsInferred = !stamped;
     let k;
     if (parityShards.length > 0) {
       const minParityIndex = Math.min(...parityShards.map(p => p.index));
@@ -149,8 +170,20 @@ export class StorageShard {
     // To recover data[j]: data[j] = parity[i] XOR (all other data shards in parity group)
     // where i = j % m
     
-    // Build chunks array, recovering missing ones from parity
+    // Build chunks array, recovering missing ones from parity.
+    //
+    // XOR parity recovers AT MOST ONE loss PER PARITY GROUP: parity[i] covers data shards
+    // i, i+m, i+2m, … so losing two members of one group is mathematically unrecoverable. That is
+    // inherent to the scheme and fine. What was NOT fine is what this loop used to do about it — fill the
+    // missing chunk with zeros and return the buffer as if decoding had succeeded. A storage layer that
+    // hands back silently corrupted bytes is worse than one that fails: the caller has no way to tell.
+    // MEASURED on k=4, m=2: losing data shards 0 and 2 (both in parity group 0) returned a buffer that
+    // differed from the original with no error, no flag and no short read.
+    //
+    // So an unrecoverable chunk is now REPORTED. The indices are collected rather than thrown on the
+    // first one, so the error names everything that is missing instead of only the earliest.
     const chunks = [];
+    const unrecoverable = [];
     
     for (let i = 0; i < neededShards; i++) {
       const dataShard = shardMap.get(i);
@@ -165,7 +198,26 @@ export class StorageShard {
           return p.index === expectedIdx;
         });
         
-        if (parityShard && m > 0) {
+        // The XOR is only a recovery if EVERY OTHER member of the parity group is present. With one
+        // member missing, parity XOR (the rest) is exactly the missing chunk. With two missing, the same
+        // arithmetic still produces a buffer — it is just not the data, and nothing downstream can tell.
+        // So the group is checked for completeness BEFORE the XOR is trusted.
+        if (mIsInferred) {
+          // The recovery group cannot be computed without the encoding's real parity degree.
+          unrecoverable.push(i);
+          chunks.push(Buffer.alloc(chunkSize));
+          continue;
+        }
+        const groupComplete = (() => {
+          for (let j = parityIdx; j < k; j += m) {
+            if (j === i) continue;
+            const other = shardMap.get(j);
+            if (!other || other.isParity) return false;
+          }
+          return true;
+        })();
+
+        if (parityShard && m > 0 && groupComplete) {
           // Recover: data[i] = parity[parityIdx] XOR (all other data shards in this parity group)
           const recovered = Buffer.from(parityShard.data);
           
@@ -183,10 +235,14 @@ export class StorageShard {
           
           chunks.push(recovered);
         } else {
-          // Can't recover - use zeros
+          unrecoverable.push(i);
           chunks.push(Buffer.alloc(chunkSize));
         }
       }
+    }
+
+    if (unrecoverable.length > 0) {
+      throw new Error(`Cannot reconstruct data: shard(s) ${unrecoverable.join(', ')} are missing and no parity shard covers them (XOR parity recovers at most one loss per parity group)`);
     }
     
     // Reconstruct from chunks
