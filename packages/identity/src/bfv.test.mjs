@@ -6,6 +6,7 @@ import {
   keyGen, encryptInt, decryptInt, encrypt, decrypt, encode, decode,
   addCipher, subCipher, mulCipher, addPlain, mulPlain, relinearize,
   serialize, deserialize, noiseBudget, params, N, T,
+  encodeBatch, decodeBatch, encryptVec, decryptVec, SLOTS, decompose, recompose, Q,
 } from './bfv.js';
 import { keyGen as lweKeyGen, encryptBit, decryptBit, addCiphertexts } from './cubic-lwe.js';
 
@@ -103,6 +104,38 @@ ok('plaintext modulus is 65537 and batching-compatible (t = 1 mod 2n)', T === 65
   const m = encode(777n);
   ok('encode/decode round-trip', decode(m) === 777n && m.length === N);
   ok('a polynomial plaintext encrypts and decrypts', decode(decrypt(sk, encrypt(pk, m))) === 777n);
+}
+
+// the digit decomposition inside relinearize is the one step of the multiply path with no
+// observable output of its own: a silent truncation at the top digit would show as worse noise,
+// never as a wrong answer. Assert the reconstruction identity directly.
+{
+  const poly = Array.from({ length: N }, (_, i) => (BigInt(i) * 918273645n + 7n) % Q);
+  const d = decompose(poly);
+  ok('relinearization digits reconstruct exactly (no truncation)', recompose(d).every((v, i) => v === poly[i]));
+  ok('every digit is within the decomposition base', d.every((dg) => dg.every((x) => x >= 0n && x < (1n << 32n))));
+}
+
+// SIMD batching — one ciphertext carries SLOTS values and ONE multiply multiplies all of them
+{
+  const u = Array.from({ length: SLOTS }, (_, i) => BigInt(i % 1000));
+  const v = Array.from({ length: SLOTS }, (_, i) => BigInt((i * 7) % 1000));
+  ok('encodeBatch/decodeBatch round-trips across every slot', decodeBatch(encodeBatch(u)).every((x, i) => x === u[i]));
+  const cu = encryptVec(pk, u), cv = encryptVec(pk, v);
+  const t0 = Date.now();
+  const prod = mulCipher(cu, cv, rlk);
+  const ms = Date.now() - t0;
+  const got = decryptVec(sk, prod);
+  ok(`one multiply produces all ${SLOTS} products (${ms} ms, ${(ms / SLOTS).toFixed(4)} ms each)`,
+    got.every((x, i) => x === (u[i] * v[i]) % T));
+  ok('one addition produces all slot sums', decryptVec(sk, addCipher(cu, cv)).every((x, i) => x === (u[i] + v[i]) % T));
+  ok('a batched product still relinearizes to 2 components', prod.c.length === 2);
+  ok('slots are independent: changing one slot changes only that product', (() => {
+    const w = v.slice(); w[5] = (w[5] + 1n) % T;
+    const other = decryptVec(sk, mulCipher(cu, encryptVec(pk, w), rlk));
+    return other[5] !== got[5] && other.every((x, i) => i === 5 || x === got[i]);
+  })());
+  ok('params report the slot count', params().slots === SLOTS && SLOTS === N);
 }
 
 console.log(`\nPASS — ${pass} checks\n`);

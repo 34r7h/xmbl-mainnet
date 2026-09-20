@@ -36,6 +36,10 @@ export const DELTA = Q / T;                                         // scaling f
 const PSI_Q = 181145884629300350837539773330249n;                   // primitive 2N-th root mod Q
 // Lifting modulus for the ciphertext tensor product, which must be computed over the INTEGERS
 // before it is scaled by T/Q. Coefficients there reach ~N·(Q/2)^2 ≈ 2^120; P is 233 bits.
+// P IS NOT PART OF THE SECURITY ANALYSIS. It is an arithmetic workspace: no key, ciphertext or
+// plaintext is ever reduced mod P and nothing mod P leaves `mulCipher` — the lift goes in, the
+// product comes back centered and is immediately scaled into Z_Q. The parameter that carries the
+// hardness assumption is Q (109 bits at N=4096), and it is unaffected by the width of P.
 const P = 13803492693581127574869511724554050904902217944340773110325048446550017n;
 const PSI_P = 8669121704055414691083489645901562672527146056326585486711437215039666n;
 // Relinearization decomposition base: 109 bits of modulus in 4 digits of 32 bits.
@@ -92,6 +96,11 @@ function ringMul(a, b, tb) {
 }
 const TB_Q = nttTables(Q, PSI_Q);
 const TB_P = nttTables(P, PSI_P);
+// The PLAINTEXT ring also splits: T = 65537 and T − 1 = 2^16 is divisible by 2N = 8192, so
+// Z_T[X]/(X^N+1) factors into N independent copies of Z_T. That is what makes batching possible —
+// one ciphertext carries N values and ONE homomorphic multiply multiplies all N of them.
+const PSI_T = 6561n;
+const TB_T = nttTables(T, PSI_T);
 
 // ── Polynomial helpers ───────────────────────────────────────────────────────────────────────────
 const zero = () => new Array(N).fill(0n);
@@ -161,6 +170,33 @@ export function encode(v) { const m = zero(); m[0] = mod(BigInt(v), T); return m
 /** Decode the constant coefficient back to an integer in [0, T). */
 export function decode(m) { return m[0]; }
 
+// ── SIMD batching ────────────────────────────────────────────────────────────────────────────────
+// Slot i of a plaintext is its evaluation at the i-th primitive root; ring multiplication is
+// pointwise on those evaluations, so ONE homomorphic multiply multiplies N=4096 pairs of integers
+// at once and one addition adds 4096 pairs. Without batching each ciphertext carries a single
+// value in the constant coefficient and a ~250 ms multiply buys one product; with it the same
+// ~250 ms buys 4096, which is the difference between a demonstration and a usable cost per value.
+
+/** Pack up to N integers into a plaintext polynomial, one per slot. */
+export function encodeBatch(values) {
+  const { m, iroots, psiInvPow, nInv } = TB_T;
+  const A = new Array(N).fill(0n);
+  for (let i = 0; i < values.length && i < N; i++) A[i] = mod(BigInt(values[i]), T);
+  transform(A, m, iroots);
+  for (let i = 0; i < N; i++) A[i] = (((A[i] * nInv) % m) * psiInvPow[i]) % m;
+  return A;
+}
+/** Unpack a plaintext polynomial back into its N slot values. */
+export function decodeBatch(poly) {
+  const { m, roots, psiPow } = TB_T;
+  const A = new Array(N);
+  for (let i = 0; i < N; i++) A[i] = (mod(poly[i], m) * psiPow[i]) % m;
+  transform(A, m, roots);
+  return A;
+}
+/** Number of independent values one ciphertext carries. */
+export const SLOTS = N;
+
 // ── Encrypt / decrypt ────────────────────────────────────────────────────────────────────────────
 /**
  * Encrypt a plaintext polynomial. ct = (b·u + e1 + DELTA·m, a·u + e2).
@@ -176,6 +212,8 @@ export function encrypt(pk, m) {
 }
 /** Encrypt an integer directly. */
 export const encryptInt = (pk, v) => encrypt(pk, encode(v));
+/** Encrypt a VECTOR of up to N integers into one ciphertext (batched). */
+export const encryptVec = (pk, values) => encrypt(pk, encodeBatch(values));
 
 /**
  * Decrypt. m = round(T · (c0 + c1·s) / Q) mod T, for a 2-component ciphertext, and with the extra
@@ -189,6 +227,8 @@ export function decrypt(sk, ct) {
 }
 /** Decrypt to an integer. */
 export const decryptInt = (sk, ct) => decode(decrypt(sk, ct));
+/** Decrypt a batched ciphertext back to its N slot values. */
+export const decryptVec = (sk, ct) => decodeBatch(decrypt(sk, ct));
 
 /**
  * Remaining noise budget in bits: log2(Q/T) minus the size of the current error. Decryption is
@@ -258,6 +298,31 @@ export function mulCipher(x, y, rlk) {
 }
 
 /**
+ * Split a ring element into L digits base W, so that sum(digits[i] * W^i) === the original mod Q.
+ * L*log2(W) = 128 >= log2(Q) = 109, so nothing is truncated. Exported because the reconstruction
+ * identity is the one step of the multiply path with no observable output of its own — a silent
+ * truncation at the top digit would show only as slightly worse noise, never as a wrong answer.
+ * @param {bigint[]} poly coefficients in [0, Q)
+ * @returns {bigint[][]} L digit-polynomials, each coefficient in [0, W)
+ */
+export function decompose(poly) {
+  const digits = new Array(L);
+  for (let i = 0; i < L; i++) digits[i] = new Array(N);
+  for (let j = 0; j < N; j++) {
+    let v = poly[j];
+    for (let i = 0; i < L; i++) { digits[i][j] = v % W; v /= W; }
+  }
+  return digits;
+}
+/** Rebuild a ring element from {@link decompose}'s digits — the identity a test asserts. */
+export function recompose(digits) {
+  const out = zero();
+  let wi = 1n;
+  for (let i = 0; i < L; i++) { for (let j = 0; j < N; j++) out[j] = (out[j] + digits[i][j] * wi) % Q; wi = (wi * W) % Q; }
+  return out;
+}
+
+/**
  * Shrink a 3-component ciphertext back to 2 using the public relinearization key. c2 is split into
  * L digits base W and each digit is paired with the key digit that carries W^i·s², so the s² term
  * is absorbed without ever touching s.
@@ -266,12 +331,7 @@ export function relinearize(ct, rlk) {
   if (ct.c.length < 3) return ct;
   const c2 = ct.c[2];
   let b = ct.c[0], a = ct.c[1];
-  const digits = new Array(L);
-  for (let i = 0; i < L; i++) digits[i] = new Array(N);
-  for (let j = 0; j < N; j++) {
-    let v = c2[j];
-    for (let i = 0; i < L; i++) { digits[i][j] = v % W; v /= W; }
-  }
+  const digits = decompose(c2);
   for (let i = 0; i < L; i++) {
     b = rAdd(b, ringMul(rlk[i].b, digits[i], TB_Q));
     a = rAdd(a, ringMul(rlk[i].a, digits[i], TB_Q));
@@ -286,7 +346,7 @@ export const serialize = (ct) => ({ parts: ct.c.length, data: ct.c.flat() });
 export const deserialize = ({ parts, data }) => ({ c: Array.from({ length: parts }, (_, i) => data.slice(i * N, (i + 1) * N)) });
 
 /** The shipped parameters, for a caller that needs to state them. */
-export const params = () => ({ n: N, q: Q, t: T, delta: DELTA, logQ: Q.toString(2).length, logT: T.toString(2).length, digits: L, logW: Number(LOG_W), eta: ETA });
+export const params = () => ({ n: N, slots: SLOTS, q: Q, t: T, delta: DELTA, logQ: Q.toString(2).length, logT: T.toString(2).length, digits: L, logW: Number(LOG_W), eta: ETA });
 
 // ── Self-test ────────────────────────────────────────────────────────────────────────────────────
 if (import.meta.url === `file://${process.argv[1]}`) {

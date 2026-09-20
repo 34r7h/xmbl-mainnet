@@ -43,6 +43,8 @@ export {
   addPlain as fheAddPlain, mulPlain as fheMulPlain, relinearize as fheRelinearize,
   serialize as fheSerialize, deserialize as fheDeserialize,
   noiseBudget as fheNoiseBudget, params as fheParams,
+  encodeBatch as fheEncodeBatch, decodeBatch as fheDecodeBatch,
+  encryptVec as fheEncryptVec, decryptVec as fheDecryptVec, SLOTS as FHE_SLOTS,
 } from './src/bfv.js';
 
 // THE VERSION OF THE CODE THIS PROCESS LOADED. Read once at import time from this package's own manifest, so a

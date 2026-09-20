@@ -187,11 +187,24 @@ continue-on-error, and in the release workflow before any publish).
       (which decrypts to 5535), chains `(a+b)*c` through two host calls in one frame, holds no
       plaintext in committed state, is DENIED without the `fheHost` flag, and is DENIED when it
       declares `env.xmbl_fhe_decrypt` even WITH the flag. — *reproductions/contract-fhe.mjs*
+- [x] **SIMD batching**: `T - 1 = 2^16` is divisible by `2n = 8192`, so the plaintext ring splits
+      into 4096 independent slots. `fheEncodeBatch`/`fheEncryptVec` pack 4096 integers into ONE
+      ciphertext and a single homomorphic multiply multiplies all 4096 pairs — measured **238ms for
+      4096 products, 0.058ms each**, against ~250ms for one unbatched product. Slot independence is
+      asserted (changing one slot changes exactly one product). — *bfv.js `encodeBatch`; bfv.test.mjs*
+- [x] **The relinearization decomposition reconstructs exactly**: `L·log2(W) = 128 >= log2(Q) = 109`,
+      so no digit is truncated. This is the one step of the multiply path with no observable output
+      of its own — a silent top-digit truncation would show as worse noise, never as a wrong answer —
+      so `decompose`/`recompose` are exported and the identity is asserted directly.
+      — *bfv.js; bfv.test.mjs*
 - [ ] ⛔ AUDIT — a from-scratch lattice implementation. Bootstrapping is not implemented, so depth is
       bounded (leveled, not fully, homomorphic). A production deployment should bind an audited
       library (OpenFHE, SEAL, Lattigo, tfhe-rs) behind this same interface; the pinned-container
       mechanism that made the MAYO signing binary reproducible is what would make that safe under
-      consensus. SIMD batching is not wired (t = 1 mod 2n already permits it).
+      consensus. Note also that the staged `rlk` is caller-supplied: a wrong key yields a ciphertext
+      that decrypts to nothing useful while the call still commits a digest, so the digest is a
+      DETERMINISM guarantee, not a correctness one — the same division of responsibility as the
+      staged proof in the zk ABI.
 
 ## `@xmbl/lng` — the smart-contract language (standalone)
 

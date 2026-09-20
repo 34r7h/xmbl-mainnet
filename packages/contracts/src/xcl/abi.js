@@ -449,6 +449,14 @@ export const HOST_ABI_HE_INIT_SOURCE = `async (ctx, declared) => {
 // PARAMETERS are the staged public material only: `ctx.data.fhe = { inputs, rlk }`. `rlk` is the
 // PUBLIC relinearization key — it is what lets a party with no secret key shrink a product back to
 // two components. Absent it, multiplication still works and returns the 3-component form.
+//
+// WHAT THE DIGEST BINDS, precisely: `inputs` and `rlk` arrive in the caller-supplied `opts.fhe`.
+// Neither can leak a plaintext — `rlk` is public key material and there is no decryption here — but
+// a wrong or malformed `rlk` yields a ciphertext that decrypts to nothing useful while the call
+// still succeeds and still commits a digest. So the digest binds the chain to "what THESE inputs
+// under THIS key produce", which is a determinism guarantee, not a correctness one: every node
+// re-executing agrees byte-for-byte, and whether the staged material was the right material is the
+// caller's responsibility, exactly as the staged proof is in the zk ABI.
 
 /** The import names the FHE ABI defines — add and multiply and digest; NO decrypt. */
 export const HOST_IMPORT_KEYS_FHE = ['env.xmbl_fhe_add', 'env.xmbl_fhe_mul', 'env.xmbl_fhe_digest'];
