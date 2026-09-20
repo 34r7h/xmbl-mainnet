@@ -47,6 +47,17 @@ export {
   encryptVec as fheEncryptVec, decryptVec as fheDecryptVec, SLOTS as FHE_SLOTS,
 } from './src/bfv.js';
 
+// BOOTSTRAPPING — the step from leveled to FULLY homomorphic. bfv spends noise budget on every
+// multiplication and stops decrypting after two or three; these gates bootstrap after each one, so
+// the noise is reset to a level set by the key rather than by the input and depth is unbounded.
+// NAND is functionally complete, so `bootNand` plus refreshing is a universal homomorphic evaluator.
+export {
+  keyGen as bootKeyGen, encryptBit as bootEncryptBit, decryptBit as bootDecryptBit,
+  bootstrap as bootBootstrap, refresh as bootRefresh,
+  nand as bootNand, and as bootAnd, or as bootOr, xor as bootXor, not as bootNot,
+  params as bootParams,
+} from './src/fhew.js';
+
 // THE VERSION OF THE CODE THIS PROCESS LOADED. Read once at import time from this package's own manifest, so a
 // running node can report what it is actually executing — an install that lands on disk after this module was
 // loaded changes the file, not this constant. Consumed by @xmbl/core's control socket (`status`.versions).

@@ -197,11 +197,25 @@ continue-on-error, and in the release workflow before any publish).
       of its own — a silent top-digit truncation would show as worse noise, never as a wrong answer —
       so `decompose`/`recompose` are exported and the identity is asserted directly.
       — *bfv.js; bfv.test.mjs*
-- [ ] ⛔ AUDIT — a from-scratch lattice implementation. Bootstrapping is not implemented, so depth is
-      bounded (leveled, not fully, homomorphic). A production deployment should bind an audited
+- [x] **BOOTSTRAPPING — depth is no longer bounded**: `packages/identity/src/fhew.js` implements
+      FHEW/TFHE-style bootstrapping. A gate is computed on small LWE ciphertexts and then refreshed
+      by homomorphically evaluating the decryption circuit: modulus-switch to q=2N so the phase is an
+      exponent of X, blind-rotate an RLWE accumulator through `n` CMuxes driven by RGSW external
+      products (this is where the secret is used without being known), sample-extract the constant
+      coefficient, key-switch back and modulus-switch down. **The output's noise depends on the
+      bootstrapping key, NOT on the input's**, which is the whole property: a chain of gates longer
+      than any leveled budget still decrypts. Measured: 2.58 s per bootstrapped gate, and a 10-gate
+      NAND chain decrypts correctly where BFV dies after 2-3 multiplications. NAND is functionally
+      complete, so this is a universal homomorphic evaluator. `refresh` carries a q/8 offset because
+      a plain encryption's phases sit ON the decision boundary while a gate's do not.
+      — *fhew.js; fhew.test.mjs (18 checks, in the gate)*
+- [ ] ⛔ AUDIT — a from-scratch lattice implementation. A production deployment should bind an audited
       library (OpenFHE, SEAL, Lattigo, tfhe-rs) behind this same interface; the pinned-container
       mechanism that made the MAYO signing binary reproducible is what would make that safe under
-      consensus. Note also that the staged `rlk` is caller-supplied: a wrong key yields a ciphertext
+      consensus. `fhew.js`'s parameters (N=1024, Q=2^25, n=512) are sized so every product stays
+      exact in double precision, which is what makes a bootstrap 2.58 s rather than minutes; they
+      have NOT been through a lattice-estimator run and that is an audit item. Note also that the
+      staged `rlk` is caller-supplied: a wrong key yields a ciphertext
       that decrypts to nothing useful while the call still commits a digest, so the digest is a
       DETERMINISM guarantee, not a correctness one — the same division of responsibility as the
       staged proof in the zk ABI.
