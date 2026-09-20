@@ -112,8 +112,8 @@ const grindOk = (transcript, nonce, bits) => leadingZeroBits(H(transcript + ':gr
 // FRI prove: codeword cw over domain dom (size N), claimed degree < K. Folds log2(K) times to a
 // constant, commits every layer, seals the transcript with `grindBits` of proof-of-work, then answers
 // `nq` queries with Merkle-authenticated pair openings along the fold chain.
-export function friProve(cw, dom, K, nq, grindBits = GRIND_BITS) {
-  const layers = [cw]; const doms = [dom]; const coms = [merkle(cw)];
+export function friProve(cw, dom, K, nq, grindBits = GRIND_BITS, extInput = false) {
+  const layers = [cw]; const doms = [dom]; const coms = [extInput ? merkleExt(cw) : merkle(cw)];
   let transcript = coms[0].root;
   const nFold = Math.log2(K);
   const betas = [];
@@ -123,9 +123,12 @@ export function friProve(cw, dom, K, nq, grindBits = GRIND_BITS) {
     const nxt = new Array(half);
     for (let j = 0; j < half; j++) {
       const a = cur[j], b = cur[j + half], sc = mul(inv2, inv(d[j]));
-      // Layer 0 is base-field; every later layer is already in the extension.
-      const even = f === 0 ? eFrom(mul(add(a, b), inv2)) : eScale(eAdd(a, b), inv2);
-      const odd  = f === 0 ? eFrom(mul(sub(a, b), sc))   : eScale(eSub(a, b), sc);
+      // Layer 0 is base-field unless the caller's codeword is already extension-valued
+      // (`extInput`), which is what an AIR's composition polynomial is: its batching challenges
+      // come from the extension, so the quotient does too.
+      const base = f === 0 && !extInput;
+      const even = base ? eFrom(mul(add(a, b), inv2)) : eScale(eAdd(a, b), inv2);
+      const odd  = base ? eFrom(mul(sub(a, b), sc))   : eScale(eSub(a, b), sc);
       nxt[j] = eAdd(even, eMul(beta, odd));
     }
     layers.push(nxt); doms.push(d.slice(0, half).map((x) => mul(x, x))); coms.push(merkleExt(nxt)); transcript = H(transcript + coms[f + 1].root);
@@ -144,7 +147,7 @@ export function friProve(cw, dom, K, nq, grindBits = GRIND_BITS) {
     }
     queries.push({ idx0, steps });
   }
-  return { roots: coms.map((c) => c.root), finalWord, queries, K, N: dom.length, nonce, grindBits };
+  return { roots: coms.map((c) => c.root), finalWord, queries, K, N: dom.length, nonce, grindBits, extInput: !!extInput };
 }
 
 // The degree bound and domain size are the VERIFIER's parameters, never the prover's. `expectK` is
@@ -154,8 +157,9 @@ export function friProve(cw, dom, K, nq, grindBits = GRIND_BITS) {
 // statement allows. Omitting `expectK` is fail-closed (returns false) so no caller can reintroduce it.
 // `expectNq` and `expectGrind` are verifier-side for the same reason: a proof may not thin out its
 // own query set or lower its own proof-of-work.
-export function friVerify(proof, dom0, expectK, expectNq, expectGrind = GRIND_BITS) {
+export function friVerify(proof, dom0, expectK, expectNq, expectGrind = GRIND_BITS, expectExt = false) {
   const { roots, finalWord, queries, K, N, nonce } = proof;
+  if (!!proof.extInput !== !!expectExt) return false;   // the leaf encoding is the verifier's too
   if (!Number.isInteger(expectK) || K !== expectK) return false;   // prover does NOT choose the bound
   if (N !== dom0.length) return false;                             // nor the domain
   if (Number.isInteger(expectNq) && queries.length !== expectNq) return false; // nor the query count
@@ -176,14 +180,15 @@ export function friVerify(proof, dom0, expectK, expectNq, expectGrind = GRIND_BI
     for (let f = 0; f < nFold; f++) {
       const half = doms[f].length / 2, i = query.idx0 % half, st = query.steps[f];
       if (st.i !== i) return false;
-      const openOk = f === 0
+      const base = f === 0 && !expectExt;
+      const openOk = base
         ? mverify(roots[0], st.a, i, st.pa) && mverify(roots[0], st.b, i + half, st.pb)
         : mverifyExt(roots[f], st.a, i, st.pa) && mverifyExt(roots[f], st.b, i + half, st.pb);
       if (!openOk) return false;
       // The folded value must equal the NEXT layer at index i mod (next half).
       const sc = mul(inv2, inv(doms[f][i]));
-      const even = f === 0 ? eFrom(mul(add(st.a, st.b), inv2)) : eScale(eAdd(st.a, st.b), inv2);
-      const odd  = f === 0 ? eFrom(mul(sub(st.a, st.b), sc))   : eScale(eSub(st.a, st.b), sc);
+      const even = base ? eFrom(mul(add(st.a, st.b), inv2)) : eScale(eAdd(st.a, st.b), inv2);
+      const odd  = base ? eFrom(mul(sub(st.a, st.b), sc))   : eScale(eSub(st.a, st.b), sc);
       const folded = eAdd(even, eMul(betas[f], odd));
       if (f + 1 < nFold) {
         // Layer f+1 has half the points of layer f; the opened pair there sits at (i mod nextHalf)

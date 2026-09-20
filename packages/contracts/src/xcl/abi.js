@@ -421,6 +421,61 @@ export const HOST_ABI_HE_INIT_SOURCE = `async (ctx, declared) => {
 }`;
 
 // ────────────────────────────────────────────────────────────────────────────
+// GENERAL ZK HOST CALL — a contract gates state on a proof of ARBITRARY COMPUTATION.
+//
+// `env.xmbl_zk_verify` above checks one fixed statement: a committed curve through given points.
+// This checks a proof that a whole computation was carried out correctly — a hash-chain preimage,
+// a recurrence, a state machine — without the prover revealing the execution.
+//
+//   xmbl_air_verify(val_ptr:i32) -> i32
+//     reads the 32-byte little-endian public value the guest CLAIMS, and returns 1 only if the
+//     chain-staged proof verifies for the staged statement AT THAT VALUE. Never traps.
+//
+// WHY THE STATEMENT IS NAMED, NOT STAGED: a constraint system is code. Staging one would be
+// staging code to execute inside the runtime. `ctx.data.air.statement` instead names an entry in
+// @xmbl/zero-knowledge's fixed STATEMENTS registry, so the constraints are identical on every node,
+// reviewable, and not attacker-supplied. The proof is staged; the CLAIM comes from the guest's own
+// memory, so the verdict is bound to bytes the contract chose rather than to a host flag — the same
+// binding the curve ABI has.
+//
+// DETERMINISM: verification is pure field arithmetic over a Fiat-Shamir transcript built from the
+// staged proof's Merkle roots, so every node reaches the same verdict.
+//
+// EXPERIMENTAL / UNAUDITED (MAINNET-GATES ⛔), opt-in per contract via the `airHost` deploy flag,
+// and it must not gate consensus, the ledger or sealing.
+
+/** The import names the general-zk ABI defines. */
+export const HOST_IMPORT_KEYS_AIR = ['env.xmbl_air_verify'];
+
+/**
+ * General-zk host-call initializer, as source. `ctx.data.air` is `{ statement, proof }`.
+ * @type {string}
+ */
+export const HOST_ABI_AIR_INIT_SOURCE = `async (ctx, declared) => {
+  var need = declared || [];
+  if (need.indexOf('env.xmbl_air_verify') === -1) return {};
+  var zk = await import('@xmbl/zero-knowledge');
+  var staged = (ctx.data && ctx.data.air) || {};
+  var statement = staged.statement || null;
+  var proof = staged.proof || null;
+  var WORD = 32;
+  var out = {};
+  out['env.xmbl_air_verify'] = function (valPtr) {
+    if (!statement || !proof) return 0;
+    var m = ctx.mem && ctx.mem(); if (!m) return 0;
+    var p = valPtr | 0;
+    if (p < 0 || p + WORD > m.buffer.byteLength) return 0;
+    var v = new Uint8Array(m.buffer, p, WORD);
+    var x = 0n; for (var i = WORD - 1; i >= 0; i--) x = (x << 8n) | BigInt(v[i]);
+    var ok = 0;
+    try { ok = zk.airVerifyStatement(statement, proof, x) ? 1 : 0; } catch (e) { ok = 0; }
+    ctx.log.push(['air_verify', statement, ok]);
+    return ok;
+  };
+  return out;
+}`;
+
+// ────────────────────────────────────────────────────────────────────────────
 // LEVELED-FHE HOST CALLS — a contract MULTIPLIES encrypted values it cannot read, not just adds.
 //
 // `env.xmbl_he_add` above is the additive cubic-LWE homomorphism: one operation, single-bit

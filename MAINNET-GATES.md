@@ -154,8 +154,34 @@ continue-on-error, and in the release workflow before any publish).
       would have gated a Verkle write; the host now builds from module defaults and refuses any
       staged security parameter. — *fri.js `friVerify`; xzk.js `verify`; abi.js `HOST_ABI_ZK_INIT_SOURCE`;
       xzk.test.mjs (F4); reproductions/contract-zk.mjs (5b); FRI-SOUNDNESS.md §3.4*
+- [x] **GENERAL-PURPOSE zk, not one fixed statement**: `packages/zero-knowledge/src/air.js` proves
+      ARBITRARY computation. A caller supplies an execution trace and the polynomial constraints a
+      correct execution satisfies (an AIR); the prover interpolates each column over a size-T
+      subgroup, BLINDS it with a multiple of `x^T - 1` (which vanishes on every row, so the
+      constraints are untouched while the openings stay underdetermined — the blind degree is set
+      above `2*nc`), evaluates on a COSET so no denominator is ever zero, commits each column, draws
+      batching challenges from the ~124-bit extension, and proves the composition
+      `sum a_k*(transition_k / Z_T) + sum b_j*(boundary_j / (x - g^row))` is low-degree with FRI.
+      Parameters (K, N) are DERIVED from the trace length and constraint degree. Demonstrated on
+      three computations: Fibonacci, a degree-3 hash chain, and a conditional state machine with a
+      boolean selector. A trace that breaks its own rule cannot be proved; a tampered opening, a
+      tampered composition value and a thinned opening set are all rejected; the witness and every
+      intermediate state are absent from the proof. — *air.js; air.test.mjs (20 checks, in the gate)*
+- [x] **CONTRACT-WIRED**: the `airHost` flag exposes `env.xmbl_air_verify(val_ptr) -> i32`. The
+      constraint system is NAMED from a fixed registry (`AIR_STATEMENTS`) rather than staged — a
+      constraint system is code, and staging code to execute is not a capability this host grants —
+      while the CLAIMED public value comes from the guest's own memory, which is what binds the
+      verdict to bytes the contract chose. `reproductions/contract-air-zk.mjs` proves a contract
+      gates a Verkle write on "I know a preimage reaching this digest after 16 rounds of x^3+RC":
+      the root moves on the honest digest, stays unmoved on a digest off by one, a proof of a
+      DIFFERENT statement is refused, a malformed proof returns 0 without trapping, the import is
+      denied without the flag, and two nodes agree. — *abi.js `HOST_ABI_AIR_INIT_SOURCE`;
+      reproductions/contract-air-zk.mjs*
 - [ ] ⛔ AUDIT — experimental, unaudited FRI. Must not gate consensus, ledger, or sealing until
-      audited. The `core` wiring already enforces "additive only" — do not remove that.
+      audited. The `core` wiring already enforces "additive only" — do not remove that. The AIR
+      above shares that status: the soundness argument rests on the same FRI parameters, and the
+      zero-knowledge argument (that `2*nc` openings of a blinded column leave it undetermined) is
+      stated but not proved.
 
 ## `@xmbl/identity` — leveled homomorphic encryption (BFV)
 
