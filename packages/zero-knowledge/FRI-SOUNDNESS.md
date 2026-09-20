@@ -109,7 +109,35 @@ reviewer **must** verify by hand that the folded value is compared against the
 the index bookkeeping (`i % half`) to open inconsistent positions. This is a
 correctness/soundness review item, not just style.
 
-### 3.4 What the tests DO establish
+### 3.4 FINDING F4 — the prover chose the degree bound (FOUND AND FIXED, 2026-09-20)
+
+`friVerify` destructured `K` and `N` **from the proof itself**, and `xzk.verify` called
+`friVerify(proof.friP, dom)` without ever comparing against `ctx.K`. The degree bound — the whole
+content of a low-degree test — was therefore prover-chosen: fold one extra round, declare `K=64`,
+and a curve carrying far more degrees of freedom than the agreed bound is accepted by a verifier
+set up at `K=32`. Since the DOF of the committed curve is exactly what bounds how much the secret
+points are constrained, this weakened both the binding and the statement itself.
+
+Reproduced as an outcome, not an argument: a degree-50 codeword is **rejected** when proved at
+`K=32` and **verifies** when the same codeword is proved at a claimed `K=64`.
+
+**Fixed.** `friVerify(proof, dom0, expectK)` now takes the bound as a required verifier-side
+parameter and rejects `proof.K !== expectK`, rejects `proof.N !== dom0.length`, and is fail-closed
+when `expectK` is omitted so no caller can reintroduce the hole; `xzk.verify` passes `ctx.K`.
+Pinned by `xzk.test.mjs` ("a prover-declared degree bound is rejected by a K=32 verifier (F4)"),
+which fails against the pre-fix code and passes after. This one is CLOSED — unlike F1/F2, it was a
+verifier bug rather than a parameter choice.
+
+### 3.5 Hygiene — the Fiat–Shamir transcript does not bind the statement
+
+`fsIdx` draws the constraint indices from `comP.root + ':' + comC.root` only, and `friProve` starts
+its transcript at the codeword's Merkle root: neither commits to the public anchor points, the
+derived coordinate, or `K`/`N`. This is not currently a break — `verify` rebuilds `I_R`/`Z_R` from
+its **own** public points, so a proof transplanted onto a different statement fails the divisibility
+check — but binding all public inputs and parameters into the transcript is standard practice and
+removes a class of grinding the ≥124-bit extension field (F1) would otherwise still permit.
+
+### 3.6 What the tests DO establish
 
 The self-tests are genuine outcome checks: FRI **accepts** a random degree-`<32`
 codeword, **rejects** a codeword with a few tampered points (now far from any
@@ -128,14 +156,19 @@ that it fails to reject high-degree inputs in these cases.
 | Z3 | 31-bit base field ⇒ FS challenges ≤31 bits, grindable | **Finding F1 — needs an extension field** (§3.1) |
 | Z4 | No grinding PoW / extension-field repetition | **Finding F2** (§3.2) |
 | Z5 | Verifier fold-check logic is correct | **Must be hand-verified** (Finding F3, §3.3) |
-| Z6 | xzk hiding: secret points blinded by `Z_R·B` (degree-18 blind) | Not analysed here — audit the blind's zero-knowledge/soundness interplay |
+| Z6 | xzk hiding: secret points blinded by `Z_R·B` (degree-18 blind) | Not analysed here — audit the blind's zero-knowledge/soundness interplay. Note the DEFAULT `blindSeed = 1n` makes `B` a deterministic, publicly recomputable vector, and `core`'s `_setupZkCommit` passes no seed — so as shipped, hiding rests on the bounded opening count alone |
 | Z7 | FRI must not gate consensus/ledger/sealing | Enforced by policy (`MAINNET-GATES.md`) — keep until Z2–Z5 resolved |
+| Z8 | The degree bound is the VERIFIER's parameter | **Was a defect — F4, now FIXED** (§3.4); pinned by `xzk.test.mjs` |
+| Z9 | Fiat–Shamir challenges bind the whole statement | **Not yet** — transcript covers Merkle roots only (§3.5) |
 
 **To make `xzk` security-relevant** an implementation must at minimum: (a) move all
 Fiat–Shamir challenges and folding to a ≥124-bit **extension field** of BabyBear;
 (b) raise `nq` (and/or lower `ρ`) to hit the target bits, optionally with a grinding
 PoW factor; (c) have the folding/consistency check in `friVerify` rewritten cleanly
-and re-proven; (d) analyse the `xzk` blinding (Z6) for zero-knowledge. Until then
+and re-proven; (d) analyse the `xzk` blinding (Z6) for zero-knowledge, and make the
+blind actually random rather than the deterministic default; (e) absorb the public
+points, derived coordinate and parameters into the Fiat–Shamir transcript (§3.5).
+F4 (§3.4) is already closed. Until then
 `xzk` is an **experimental** commitment demo and is correctly firewalled from
 consensus.
 

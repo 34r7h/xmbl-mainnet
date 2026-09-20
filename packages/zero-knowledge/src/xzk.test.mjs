@@ -47,4 +47,16 @@ const derivedX = 99n;
   ok('the same derived y is recovered regardless of blind (the curve value is fixed)', a.derivedY === b.derivedY);
 }
 
+// F4 — the DEGREE BOUND is the verifier's parameter, not the prover's. friVerify used to read K
+// from the proof itself, so a prover could fold one extra round, declare K=64, and have a curve
+// with far more degrees of freedom than the agreed bound accepted by a verifier set up at K=32.
+{
+  const cheatCtx = setup({ degreeBound: 64 });   // the prover's OWN inflated bound
+  const { Pt, derivedY } = blindedCurve(cheatCtx, { publicPoints, secretPoints, derivedX, blindDegree: 45 });
+  const proof = prove(cheatCtx, { Pt, publicPoints, derivedX, derivedY });
+  ok('the inflated proof is internally consistent at its own bound', verify(cheatCtx, { proof, publicPoints, derivedX, derivedY }) === true);
+  ok('a prover-declared degree bound is rejected by a K=32 verifier (F4)', verify(ctx, { proof, publicPoints, derivedX, derivedY }) === false);
+  ok('the inflated curve really exceeds the agreed bound', proof.friP.K === 64 && ctx.K === 32);
+}
+
 console.log(`\nPASS — ${pass} checks\n`);

@@ -77,8 +77,15 @@ export function friProve(cw, dom, K, nq) {
   return { roots: coms.map((c) => c.root), finalWord, queries, K, N: dom.length };
 }
 
-export function friVerify(proof, dom0) {
+// The degree bound and domain size are the VERIFIER's parameters, never the prover's. `expectK` is
+// REQUIRED and is compared against the bound the proof claims: without it a prover simply declares a
+// larger K (folding one extra round), and a codeword that is rejected at the agreed bound verifies
+// against its own inflated one — the committed curve then carries more degrees of freedom than the
+// statement allows. Omitting `expectK` is fail-closed (returns false) so no caller can reintroduce it.
+export function friVerify(proof, dom0, expectK) {
   const { roots, finalWord, queries, K, N } = proof;
+  if (!Number.isInteger(expectK) || K !== expectK) return false;   // prover does NOT choose the bound
+  if (N !== dom0.length) return false;                             // nor the domain
   const nFold = Math.log2(K);
   if (roots.length !== nFold + 1) return false;
   if (!finalWord.every((v) => v === finalWord[0])) return false; // final layer constant
@@ -125,14 +132,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const coeffs = Array.from({ length: K }, (_, i) => mod(BigInt(7 * i + 3)));
   const lowCw = dom.map((x) => polyEval(coeffs, x));
   const p1 = friProve(lowCw, dom, K, 12);
-  console.log(`FRI accepts genuine degree-<${K} codeword: ${ok(friVerify(p1, dom))}  (want PASS)`);
+  console.log(`FRI accepts genuine degree-<${K} codeword: ${ok(friVerify(p1, dom, K))}  (want PASS)`);
   // NOT low-degree: tamper a few points (now far from any degree-<K poly)
   const badCw = lowCw.slice(); for (let t = 0; t < N; t += 5) badCw[t] = add(badCw[t], 1n);
   const p2 = friProve(badCw, dom, K, 12);
-  console.log(`FRI rejects a non-low-degree codeword:    ${ok(!friVerify(p2, dom))}  (want PASS -> rejected)`);
+  console.log(`FRI rejects a non-low-degree codeword:    ${ok(!friVerify(p2, dom, K))}  (want PASS -> rejected)`);
   // exact-degree boundary: degree K (one too high) should be rejected
   const hiCoeffs = Array.from({ length: K + 8 }, (_, i) => mod(BigInt(5 * i + 1)));
   const hiCw = dom.map((x) => polyEval(hiCoeffs, x));
   const p3 = friProve(hiCw, dom, K, 16);
-  console.log(`FRI rejects a degree-${K + 7} codeword (>K):   ${ok(!friVerify(p3, dom))}  (want PASS -> rejected)`);
+  console.log(`FRI rejects a degree-${K + 7} codeword (>K):   ${ok(!friVerify(p3, dom, K))}  (want PASS -> rejected)`);
 }

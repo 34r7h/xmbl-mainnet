@@ -64,7 +64,8 @@ export function verify(ctx, { proof, publicPoints, derivedX, derivedY }) {
   const { dom, N, nc } = ctx;
   const Rxs = [...publicPoints.map((q) => q.x), derivedX], Rys = [...publicPoints.map((q) => q.y), derivedY];
   const Ir = interpolate(Rxs, Rys), Zr = vanishing(Rxs);
-  if (!friVerify(proof.friP, dom) || !friVerify(proof.friC, dom)) return false;
+  // K/N are the verifier's agreed parameters — pass them so the proof cannot declare its own.
+  if (!friVerify(proof.friP, dom, ctx.K) || !friVerify(proof.friC, dom, ctx.K)) return false;
   const idxs = fsIdx(proof.rootP + ':' + proof.rootC, N, nc);
   for (let k = 0; k < nc; k++) {
     const c = proof.cons[k], i = idxs[k], z = dom[i];

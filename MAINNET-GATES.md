@@ -109,6 +109,13 @@ continue-on-error, and in the release workflow before any publish).
       verifies), soundness (a forged derived y±1 and a wrong derivedX are rejected against the same
       proof), the zero-knowledge shape (the proof carries no secret point values), and blind-
       invariance. — *xzk.js; xzk.test.mjs*
+- [x] **The degree bound is the VERIFIER's parameter** (finding F4, found and fixed 2026-09-20):
+      `friVerify` read `K`/`N` off the PROOF and `xzk.verify` never compared them to `ctx.K`, so a
+      prover could fold an extra round, declare `K=64`, and have a curve with far more degrees of
+      freedom than the agreed bound accepted by a `K=32` verifier — a degree-50 codeword rejected at
+      K=32 verified when proved at a claimed K=64. `friVerify(proof, dom0, expectK)` now requires the
+      bound from the verifier, rejects a mismatched `K` or `N`, and is fail-closed if `expectK` is
+      omitted. — *fri.js `friVerify`; xzk.js `verify`; xzk.test.mjs (F4); FRI-SOUNDNESS.md §3.4*
 - [ ] ⛔ AUDIT — experimental, unaudited FRI. Must not gate consensus, ledger, or sealing until
       audited. The `core` wiring already enforces "additive only" — do not remove that.
 
