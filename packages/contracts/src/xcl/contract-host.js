@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   HOST_ABI_SOURCE, HOST_ABI_SOURCE_BYTES, XCL_WORD_MARSHAL_SOURCE, HOST_ABI_CRYPTO_INIT_SOURCE,
-  HOST_ABI_ZK_INIT_SOURCE, HOST_ABI_HE_INIT_SOURCE,
+  HOST_ABI_ZK_INIT_SOURCE, HOST_ABI_HE_INIT_SOURCE, HOST_ABI_FHE_INIT_SOURCE,
   HOST_ABI_UTXO_SOURCE, HOST_ABI_COMPOSE_SOURCE, HOST_ABI_COMPOSE_SOURCE_WORD,
   slotKey, byteKey, utxoKey, spendKey, callerTag,
   XCL_WORD_BYTES,
@@ -100,6 +100,10 @@ export class ContractHost {
       // NO decryption is exposed (that needs the secret key — the security boundary), so a contract
       // can aggregate sealed inputs it cannot read; only the key holder opens the result off-chain.
       heHost: !!deployOpts.heHost,
+      // fheHost: the contract MULTIPLIES encrypted values via the leveled-FHE (BFV) scheme in
+      // @xmbl/identity. Handle-based, because a BFV ciphertext is far too large for guest memory.
+      // Decryption is on no allow surface here either.
+      fheHost: !!deployOpts.fheHost,
       // utxoHost: the contract SPENDS and CREATES xmbl UTXOs (env.xmbl_utxo_* / env.xmbl_input_*).
       // When set, ContractHost stages the input UTXOs named in `opts.inputs` from committed Verkle
       // state, attaches the UTXO value ABI, then enforces value conservation FAIL-CLOSED after the
@@ -402,6 +406,7 @@ export class ContractHost {
     if (c.cryptoHost) inits.push(HOST_ABI_CRYPTO_INIT_SOURCE);
     if (c.zkHost) inits.push(HOST_ABI_ZK_INIT_SOURCE);
     if (c.heHost) inits.push(HOST_ABI_HE_INIT_SOURCE);
+    if (c.fheHost) inits.push(HOST_ABI_FHE_INIT_SOURCE);
     const init = inits.length === 0 ? null
       : inits.length === 1 ? inits[0]
       : `async (ctx, declared) => Object.assign({}, ${inits.map((s) => `await (${s})(ctx, declared)`).join(', ')})`;
@@ -413,6 +418,7 @@ export class ContractHost {
         crypto: c.cryptoHost ? (opts.crypto || null) : null,
         zk: c.zkHost ? (opts.zk || null) : null,
         he: c.heHost ? (opts.he || null) : null,
+        fhe: c.fheHost ? (opts.fhe || null) : null,
         utxos, inputIds, peers, foreign,
       },
       marshal: c.wordAbi ? XCL_WORD_MARSHAL_SOURCE : null,

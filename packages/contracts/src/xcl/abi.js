@@ -421,6 +421,90 @@ export const HOST_ABI_HE_INIT_SOURCE = `async (ctx, declared) => {
 }`;
 
 // ────────────────────────────────────────────────────────────────────────────
+// LEVELED-FHE HOST CALLS — a contract MULTIPLIES encrypted values it cannot read, not just adds.
+//
+// `env.xmbl_he_add` above is the additive cubic-LWE homomorphism: one operation, single-bit
+// plaintexts, ciphertexts small enough to pass as words through guest memory. Multiplication needs
+// a ring scheme (BFV, `@xmbl/identity` bfv.js), and a BFV ciphertext is 2 x 4096 coefficients —
+// ~256 KB, with a ~1 MB relinearization key. That does not belong in a guest's linear memory, so
+// this ABI is HANDLE-BASED: the host holds the ciphertext table, the guest names entries by index.
+//
+//   xmbl_fhe_add(a:i32, b:i32) -> i32     handle of ENC(a+b), or -1
+//   xmbl_fhe_mul(a:i32, b:i32) -> i32     handle of ENC(a*b), relinearized, or -1
+//   xmbl_fhe_digest(h:i32, out_ptr:i32) -> i32   writes the 32-byte content hash of handle h into
+//                                         guest memory; 0 ok, 1 unavailable, 2 out of bounds
+//
+// Handles 0..k-1 are the chain-staged inputs (`ctx.data.fhe.inputs`); each operation appends and
+// returns the next index. Nothing traps: a bad handle returns -1, which the contract branches on.
+//
+// WHAT THE CHAIN COMMITS. Every homomorphic operation here is deterministic — randomness lives only
+// in key generation and encryption, both off-chain — so the result ciphertext is a pure function of
+// the staged inputs and the op sequence. The contract therefore commits the DIGEST to Verkle state
+// and anyone holding the inputs recomputes the ciphertext byte-for-byte; the chain does not have to
+// carry a megabyte per call to be bound to the result.
+//
+// DECRYPTION IS ABSENT, as in the additive ABI: it needs the secret key. No decrypt import is on
+// any allow surface, so a contract that declares one is denied even with the flag set.
+//
+// PARAMETERS are the staged public material only: `ctx.data.fhe = { inputs, rlk }`. `rlk` is the
+// PUBLIC relinearization key — it is what lets a party with no secret key shrink a product back to
+// two components. Absent it, multiplication still works and returns the 3-component form.
+
+/** The import names the FHE ABI defines — add and multiply and digest; NO decrypt. */
+export const HOST_IMPORT_KEYS_FHE = ['env.xmbl_fhe_add', 'env.xmbl_fhe_mul', 'env.xmbl_fhe_digest'];
+
+/**
+ * Leveled-FHE host-call initializer, as source (eval'd inside the worker, awaited before the guest
+ * is instantiated). `ctx.data.fhe` is `{ inputs: Ciphertext[], rlk? }`; `ctx.mem()` gives guest
+ * memory. Returns synchronous bindings over a host-side ciphertext table.
+ * @type {string}
+ */
+export const HOST_ABI_FHE_INIT_SOURCE = `async (ctx, declared) => {
+  var need = declared || [];
+  var wants = need.indexOf('env.xmbl_fhe_add') !== -1 || need.indexOf('env.xmbl_fhe_mul') !== -1 || need.indexOf('env.xmbl_fhe_digest') !== -1;
+  if (!wants) return {};
+  var id = await import('@xmbl/identity');
+  var nodeCrypto = await import('node:crypto');
+  var staged = (ctx.data && ctx.data.fhe) || {};
+  var table = (staged.inputs || []).slice();
+  var rlk = staged.rlk || null;
+  var WORD = 32;
+  var get = function (h) { return (h >= 0 && h < table.length) ? table[h] : null; };
+  var push = function (ct) { table.push(ct); return table.length - 1; };
+  var digestOf = function (ct) {
+    var flat = id.fheSerialize(ct);
+    var parts = [String(flat.parts)];
+    for (var i = 0; i < flat.data.length; i++) parts.push(flat.data[i].toString(16));
+    return nodeCrypto.createHash('sha256').update(parts.join(',')).digest();
+  };
+  var out = {};
+  out['env.xmbl_fhe_add'] = function (ha, hb) {
+    var a = get(ha | 0), b = get(hb | 0);
+    if (!a || !b) return -1;
+    var r; try { r = id.fheAdd(a, b); } catch (e) { return -1; }
+    var h = push(r); ctx.log.push(['fhe_add', ha | 0, hb | 0, h]); return h;
+  };
+  out['env.xmbl_fhe_mul'] = function (ha, hb) {
+    var a = get(ha | 0), b = get(hb | 0);
+    if (!a || !b) return -1;
+    var r; try { r = id.fheMul(a, b, rlk || undefined); } catch (e) { return -1; }
+    var h = push(r); ctx.log.push(['fhe_mul', ha | 0, hb | 0, h, r.c.length]); return h;
+  };
+  out['env.xmbl_fhe_digest'] = function (h, outPtr) {
+    var ct = get(h | 0); if (!ct) return 1;
+    var m = ctx.mem && ctx.mem(); if (!m) return 1;
+    var p = outPtr | 0;
+    if (p < 0 || p + WORD > m.buffer.byteLength) return 2;
+    var d = digestOf(ct);
+    var v = new Uint8Array(m.buffer);
+    for (var i = 0; i < WORD; i++) v[p + i] = d[i];
+    ctx.log.push(['fhe_digest', h | 0, d.toString('hex')]);
+    return 0;
+  };
+  return out;
+}`;
+
+// ────────────────────────────────────────────────────────────────────────────
 // UTXO VALUE ABI — the seam that LINKS xmbl UTXOs to the Verkle state machine.
 //
 // An xmbl UTXO is a ledger record the state machine already commits to the SAME Verkle

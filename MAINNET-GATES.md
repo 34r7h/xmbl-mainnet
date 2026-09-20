@@ -157,6 +157,42 @@ continue-on-error, and in the release workflow before any publish).
 - [ ] ⛔ AUDIT — experimental, unaudited FRI. Must not gate consensus, ledger, or sealing until
       audited. The `core` wiring already enforces "additive only" — do not remove that.
 
+## `@xmbl/identity` — leveled homomorphic encryption (BFV)
+
+- [x] **Ciphertexts MULTIPLY, not just add**: `packages/identity/src/bfv.js` implements BFV over
+      `R_q = Z_q[X]/(X^4096+1)`. `fheAdd`/`fheMul` take NO secret key; a product is relinearized back
+      to two components with the PUBLIC evaluation key. Measured: ~250ms per multiply, fresh noise
+      budget ~82 bits, ~50 bits left after one multiply, 500 additions still correct, `3*5*7 = 105`.
+      `ENC(1)+ENC(1)` decrypts to **2**, not 0 — the single-bit wrap of the additive cubic-LWE scheme
+      is gone. — *bfv.js; bfv.test.mjs (26 checks, in the gate)*
+- [x] **Parameters are taken from the published standard, not chosen here**: HomomorphicEncryption.org
+      lists log2(q) <= 109 at n=4096 for a uniform ternary secret at 128-bit classical security; q is
+      that size and NTT-friendly (q = 1 mod 2n), error is a centered binomial with eta=21
+      (stddev ~3.24, matching sigma ~3.2). — *bfv.js `params()`; bfv.test.mjs*
+- [x] **The cubic dimensions are untouched**: multiplication needs a power-of-two cyclotomic ring
+      (that is where the negacyclic NTT exists and where a product stays one ring element); 27 = 3^3
+      and 729 = 3^6 are not powers of two. `cubic-lwe.js` remains the identity KEM and the sealing
+      primitive at those dimensions, unchanged. The cube is the identity, not the FHE ring.
+- [x] **Every homomorphic operation is deterministic**: randomness lives only in key generation and
+      encryption, both off-chain, so independent nodes evaluating the same ciphertexts produce
+      identical bytes. — *bfv.test.mjs; reproductions/contract-fhe.mjs claim 7*
+- [x] **CONTRACT-WIRED, handle-based**: `fheHost` exposes `env.xmbl_fhe_add`, `env.xmbl_fhe_mul` and
+      `env.xmbl_fhe_digest`. A BFV ciphertext is ~128KB and the relinearization key ~1MB, so they do
+      NOT travel through guest linear memory as the additive scheme's words do — the host holds the
+      table and the guest names entries by index, then asks for a 32-byte digest to commit. Because
+      the operations are deterministic the digest binds the chain to a ciphertext anyone holding the
+      staged inputs recomputes byte-for-byte. — *abi.js `HOST_ABI_FHE_INIT_SOURCE`; contract-host.js*
+- [x] **Decryption is on no allow surface**: `reproductions/contract-fhe.mjs` proves a contract
+      multiplies `ENC(123) * ENC(45)`, commits a digest that equals the off-chain product's digest
+      (which decrypts to 5535), chains `(a+b)*c` through two host calls in one frame, holds no
+      plaintext in committed state, is DENIED without the `fheHost` flag, and is DENIED when it
+      declares `env.xmbl_fhe_decrypt` even WITH the flag. — *reproductions/contract-fhe.mjs*
+- [ ] ⛔ AUDIT — a from-scratch lattice implementation. Bootstrapping is not implemented, so depth is
+      bounded (leveled, not fully, homomorphic). A production deployment should bind an audited
+      library (OpenFHE, SEAL, Lattigo, tfhe-rs) behind this same interface; the pinned-container
+      mechanism that made the MAYO signing binary reproducible is what would make that safe under
+      consensus. SIMD batching is not wired (t = 1 mod 2n already permits it).
+
 ## `@xmbl/lng` — the smart-contract language (standalone)
 
 - [x] **Standalone**: a pure language toolchain with ZERO XMBL dependencies — importing

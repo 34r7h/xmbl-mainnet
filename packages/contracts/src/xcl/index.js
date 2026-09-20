@@ -7,4 +7,4 @@ export { InMemoryState } from './in-memory-state.js';
 export { contractId, contractCoordinates } from './placement.js';
 export { HOST_ABI_SOURCE, HOST_IMPORT_KEYS, slotKey, byteKey } from './abi.js';
 export { HOST_IMPORT_KEYS_UTXO, utxoKey, spendKey } from './abi.js';
-export { HOST_IMPORT_KEYS_CRYPTO, HOST_IMPORT_KEYS_ZK, HOST_IMPORT_KEYS_HE } from './abi.js';
+export { HOST_IMPORT_KEYS_CRYPTO, HOST_IMPORT_KEYS_ZK, HOST_IMPORT_KEYS_HE, HOST_IMPORT_KEYS_FHE } from './abi.js';
