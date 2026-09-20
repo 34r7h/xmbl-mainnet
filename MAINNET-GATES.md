@@ -105,10 +105,43 @@ continue-on-error, and in the release workflow before any publish).
       failure in the handler is swallowed (a sealed face never breaks) and commitments are reachable
       solely through the read-only `getZkCommitments()` query, never feeding ledger/consensus/seal.
       — *core/index.js `_setupZkCommit`; core/zk-additive.test.mjs*
-- [x] **FRI conformance suite** in `test:protocol`: pins completeness (an honest cube-curve proof
+- [x] **FRI conformance suite** in `test:protocol` (22 checks): pins completeness (a cube-curve proof
       verifies), soundness (a forged derived y±1 and a wrong derivedX are rejected against the same
-      proof), the zero-knowledge shape (the proof carries no secret point values), and blind-
-      invariance. — *xzk.js; xzk.test.mjs*
+      proof), the zero-knowledge shape (no opened field element in a ~950KB proof equals a secret
+      point value), blind freshness and blind-invariance, the shipped parameters, a thinned query
+      set, a lowered proof-of-work claim, and the commitment binding. — *xzk.js; xzk.test.mjs*
+- [x] **Challenges come from a ~124-bit extension field, not the 31-bit base field** (finding F1,
+      closed): `fri.js` carries the quartic extension `F_p[X]/(X^4-11)` (Serret-irreducible; the same
+      quartic Plonky3 uses for BabyBear) and every folding challenge is drawn from it via `fsExt`.
+      Folding, the layer commitments (`merkleExt`, distinct leaf tag) and the final-word constancy
+      check all happen in the extension; layer 0 stays base-field so its leaf encoding still matches
+      `merkle(cw)`. A base-field challenge space was grindable at 2^31 and capped the whole protocol
+      regardless of query count. — *fri.js; xzk.test.mjs*
+- [x] **Parameters reach a target, and the VERIFIER owns them** (finding F2, closed): rate `rho=1/16`
+      (K=32, N=512), `nq=88`, and the query transcript is sealed with 20 bits of proof-of-work before
+      any query index is derived. Measured: **~100 bits provable (unique-decoding), ~372 conjectured,
+      ~124-bit challenge space**; ~1.0s prove, ~10ms verify, ~950KB proof. `friVerify` rejects a proof
+      whose K, N, query count or grindBits differ from the parameters it was handed, so a prover can
+      neither thin its query set nor lower its own proof-of-work. — *fri.js; xzk.js `setup`;
+      FRI-SOUNDNESS.md §2-§3*
+- [x] **The fold-consistency check is rewritten** (finding F3, closed): the dead ternary
+      (`? 'a' : 'a'`) and unused `nextVal`/`nv` are gone; which opening at layer f+1 is index i is now
+      stated explicitly rather than inferred. Still an external-audit item — readable is not proven.
+      — *fri.js `friVerify`*
+- [x] **The low-degree test and the constraint openings are bound to ONE codeword**: `xzk.verify`
+      requires `friP.roots[0] === rootP` and `friC.roots[0] === rootC`. Without it a prover could pair
+      a low-degree proof of one polynomial with constraint openings from another. — *xzk.js `verify`;
+      xzk.test.mjs*
+- [x] **The blind is fresh randomness**: every coefficient of `B` is drawn independently, from the
+      CSPRNG when no seed is given. The previous default (`blindSeed = 1n` through a linear formula)
+      made `B` publicly recomputable, and `_setupZkCommit` passes no seed — so the masking term was
+      present in the algebra and absent in effect. A seed is still accepted so a test can pin one.
+      **The hiding ARGUMENT is still unproved** (Z6) — that is an audit item, not a code item.
+      — *xzk.js `blindCoeffs`; xzk.test.mjs*
+- [x] **Proving is off the seal path**: a proof is ~1s of CPU, so `_setupZkCommit`'s `face:complete`
+      handler defers to `setImmediate` — emitting a face returns immediately (asserted <100ms) and the
+      commitment stays a side effect of sealing rather than a cost inside it. — *core/index.js;
+      core/zk-additive.test.mjs*
 - [x] **The degree bound is the VERIFIER's parameter** (finding F4, found and fixed 2026-09-20):
       `friVerify` read `K`/`N` off the PROOF and `xzk.verify` never compared them to `ctx.K`, so a
       prover could fold an extra round, declare `K=64`, and have a curve with far more degrees of

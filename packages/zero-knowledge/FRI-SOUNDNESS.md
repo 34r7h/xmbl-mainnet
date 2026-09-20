@@ -3,13 +3,22 @@
 **Status: PRE-AUDIT REVIEWER PACKAGE for an EXPERIMENTAL, UNAUDITED primitive.**
 `@xmbl/zero-knowledge` (`xzk`) is a hash-based (post-quantum) low-degree-test /
 state-commitment layer built on FRI. This document states its parameters and, in
-concrete numbers, its **soundness** — and the finding is unambiguous: **at the
-shipped defaults this is a demonstration parameterisation with ~single-to-low-tens
-of bits of soundness, NOT a 100/128-bit-secure proof system.** It must not gate
-consensus, ledger, or sealing (as `MAINNET-GATES.md` §`@xmbl/zero-knowledge`
-already states); this write-up is the reviewer-facing basis the ⛔ AUDIT attacks.
+concrete numbers, its **soundness**.
 
-Authoritative sources — every number below is derived from these:
+**At the shipped parameters the construction targets ~100 bits in the provable
+(unique-decoding) regime and ~372 bits under the list-decoding conjecture, with a
+~124-bit Fiat–Shamir challenge space.** Every folding challenge is drawn from the
+quartic extension `F_p[X]/(X^4 − 11)`, the rate is `ρ = 1/16`, 88 queries are asked,
+and the query transcript is sealed with 20 bits of proof-of-work. The earlier
+demonstration parameterisation (31-bit base-field challenges, `ρ = 1/4`, 12 queries,
+~8–24 bits) is described in §3.1/§3.2 as the closed findings F1 and F2.
+
+The primitive is nevertheless still **⛔ UNAUDITED** and still firewalled from
+consensus, ledger and sealing by `MAINNET-GATES.md`. Parameters reaching a target
+is not the same as a cryptographer having reviewed the construction; what remains
+open is stated in §4.
+
+Authoritative sourcesAuthoritative sources — every number below is derived from these:
 
 - `src/fri.js` — the FRI low-degree test (`friProve` / `friVerify`), field, folding
 - `src/xzk.js` — the ZK cube-curve commitment that composes two FRI instances
@@ -37,77 +46,98 @@ identities/txs). FRI is a commitment/soundness layer, **not** a signature.
 
 | Parameter | Symbol | Shipped default | Source |
 |-----------|--------|-----------------|--------|
-| Field prime | `p` | **2013265921 = 15·2²⁷+1** (the "BabyBear" prime) | `fri.js:8` |
-| Field size | — | **31 bits** | derived |
+| Field prime | `p` | **2013265921 = 15·2²⁷+1** (the "BabyBear" prime) | `fri.js` |
+| Base field size | — | **31 bits** | derived |
+| **Challenge field** | `F_p[X]/(X⁴−11)` | **~124 bits** | `fri.js` `fsExt`, `eMul` |
 | 2-adicity | — | `p−1 = 2²⁷·15` ⇒ subgroups up to size 2²⁷ | derived |
-| Degree bound | `K` | **32** | `xzk.js:34` |
-| Domain size | `N` | **128** | `xzk.js:34` |
-| Blowup | `N/K` | **4** | derived |
-| Rate | `ρ = K/N` | **1/4** | derived |
-| Folding rounds | `log₂K` | **5** (fold by 2 to a constant) | `fri.js:57` |
-| Queries | `nq` | **12** | `xzk.js:34` |
-| Domain generator | `ω` | `31^((p−1)/N)`, smooth 2-power subgroup | `fri.js:34` |
-| Hash | — | SHA-256 (Merkle + Fiat–Shamir) | `fri.js:13` |
+| Degree bound | `K` | **32** | `xzk.js` `setup` |
+| Domain size | `N` | **512** | `xzk.js` `setup` |
+| Blowup | `N/K` | **16** | derived |
+| Rate | `ρ = K/N` | **1/16** | derived |
+| Folding rounds | `log₂K` | **5** (fold by 2 to a constant) | `fri.js` |
+| Queries | `nq` | **88** | `xzk.js` `setup` |
+| Constraint openings | `nc` | **32** | `xzk.js` `setup` |
+| Grinding | `GRIND_BITS` | **20** | `fri.js` |
+| Domain generator | `ω` | `31^((p−1)/N)`, smooth 2-power subgroup | `fri.js` |
+| Hash | — | SHA-256 (Merkle + Fiat–Shamir) | `fri.js` |
+| Proof size | — | ~950 KB | measured |
+| Prove / verify | — | ~1.0 s / ~10 ms | measured |
+
+`X⁴ − 11` is irreducible over `F_p` by Serret's criterion: `ord(11)` is even and
+`(p−1)/ord(11)` is odd, and `4 | p−1`. It is the same quartic Plonky3 uses for
+BabyBear.
 
 Folding is the standard even/odd split: `next[j] = even + β·odd` where
-`even = (a+b)/2`, `odd = (a−b)/(2·d[j])`, `β = FS(transcript)` — verified against
-each next layer, and the final layer must be **constant** (`friVerify` rejects a
-non-constant final word). Queries and betas are Fiat–Shamir-derived from the
-transcript of Merkle roots.
+`even = (a+b)/2`, `odd = (a−b)/(2·d[j])`, and **`β ∈ F_p^4`** is Fiat–Shamir-derived
+from the transcript of Merkle roots. Layer 0 stays in the base field — deliberately,
+so its Merkle leaf encoding is identical to a caller's own `merkle(cw)` and the two
+commitments can be bound (see §3.6) — and layers 1..5 are extension-valued, committed
+under a distinct leaf tag. The final layer must be **constant in `F_p^4`**
+(`friVerify` rejects a non-constant final word). Query indices are derived only
+**after** the transcript is sealed with proof-of-work.
 
----
-
-## 3. Soundness — the concrete numbers (the load-bearing finding)
+## 3. Soundness — the concrete numbers
 
 FRI soundness has two parts: (i) the **query phase** — a codeword `δ`-far from any
 degree-`<K` polynomial is caught with probability ≈ `δ` per query, so `nq` queries
-give error ≈ `(1−δ)^{nq}`; and (ii) the **commit/folding phase** soundness. Bits of
-security ≈ `−log₂(error)`.
+give error ≈ `(1−δ)^{nq}`; and (ii) the **commit/folding phase** soundness, which is
+bounded by the challenge space. Bits of security ≈ `−log₂(error)`.
 
-At the shipped defaults (`ρ = 1/4`, `nq = 12`):
+At the shipped parameters (`ρ = 1/16`, `nq = 88`, 20 grinding bits):
 
 - **Unique-decoding regime** (provable, conservative): proximity radius
-  `δ ≤ (1−ρ)/2 = 0.375`. Per-query catch ≥ `0.375` ⇒ soundness
-  `≈ nq · log₂(1/(1−0.375)) ≈ **8 bits**`.
-- **List-decoding / conjectured regime** (the optimistic bound modern STARKs cite):
-  `≈ nq · log₂(1/ρ) = 12 · 2 = **24 bits**`.
+  `δ ≤ (1−ρ)/2 = 0.469`. Per-query catch ≥ `0.469` ⇒
+  `nq · log₂(1/(1−δ)) = 88 · 0.912 ≈ 80 bits`, **+20 grinding ⇒ ≈ 100 bits**.
+- **List-decoding / conjectured regime**: `nq · log₂(1/ρ) = 88 · 4 = 352`,
+  **+20 ⇒ ≈ 372 bits**.
+- **Fiat–Shamir challenge space**: `≈ 124 bits` (was 31 — see F1).
+- **Constraint check** (`xzk`, `nc = 32` random points, committed degree ≤ 50):
+  false accept ≈ `(deg/N)^{nc}` ⇒ `≈ 107 bits`.
 
-**Either way this is nowhere near a cryptographic target.** 8–24 bits means a
-cheating prover succeeds with probability between `2⁻⁸` and `2⁻²⁴` — trivially
-grindable. To reach ~100 bits one needs, roughly, **`nq` on the order of 50–100+**
-(at `ρ = 1/4`, conjectured) or a smaller rate, *and* the field problem below fixed.
+The binding number is therefore **≈100 bits provable**, and the challenge space is no
+longer the ceiling it was.
 
-### 3.1 FINDING F1 — 31-bit base field ⇒ Fiat–Shamir challenges are grindable
+### 3.1 FINDING F1 — 31-bit base field ⇒ grindable challenges (CLOSED)
 
-All randomness (fold `β`, query indices) is drawn from the **31-bit** base field via
-`fsField`/`fsIndex` over SHA-256 (`fsField` reduces 64 bits mod `p ≈ 2³¹`). A 31-bit
-challenge space means a prover can **grind** the Fiat–Shamir transcript (re-roll
-Merkle-committed nonces) to hit favourable challenges at `≈ 2³¹` work — cheaper than
-any 100-bit target. Real STARKs over BabyBear **never** sample challenges from the
-base field: they use a **degree-4+ extension field** (~124 bits) for all FS
-challenges and folding. **This code has no extension field at all.** This is the
-single most important structural finding: soundness cannot exceed the challenge
-entropy regardless of `nq`.
+All randomness — fold `β` and query indices — was drawn from the **31-bit** base field
+via `fsField`/`fsIndex`. A 31-bit challenge space lets a prover **grind** the
+Fiat–Shamir transcript (re-roll the committed data) to hit favourable challenges at
+`≈ 2³¹` work, and no query count could exceed that ceiling. This was the decisive gap.
 
-### 3.2 FINDING F2 — no grinding/proof-of-work bits, no repetition to an extension
+**Closed.** `fri.js` now carries the quartic extension `F_p[X]/(X⁴−11)` (`eMul`,
+`eAdd`, `eScale`, `eEq`, `merkleExt`, `mverifyExt`) and every folding challenge comes
+from `fsExt` — four independently hashed limbs, `≈124 bits`. Folding, the layer
+commitments and the final-word constancy check all happen in the extension. Pinned by
+`xzk.test.mjs` ("folding challenges are drawn from ~124 bits, not 31") and by the
+`fri.js` self-tests (`X⁴ === W`, commutativity).
 
-There is no proof-of-work ("grinding") factor in the transcript and no soundness
-repetition over an extension field, both of which production FRI (e.g. ethSTARK,
-Plonky2) rely on to buy back bits cheaply. Absent these, `nq` is the only knob and
-it is set to 12.
+### 3.2 FINDING F2 — no grinding PoW, rate too high (CLOSED)
 
-### 3.3 FINDING F3 — `friVerify` fold-consistency check is convoluted (audit the logic)
+There was no proof-of-work factor in the transcript and the rate was `ρ = 1/4` with
+`nq = 12`, leaving `nq` as the only knob.
 
-`fri.js:102–110` contains dead/degenerate expressions — e.g.
-`query.steps[f+1][(i % nextHalf) === query.steps[f+1].i ? 'a' : 'a']` (a ternary
-that yields `'a'` in both branches) and an unused `nextVal`/`nv`. The effective
-check (line 109–110, `openedNext !== folded`) does appear to enforce the fold
-relation (the self-tests accept a genuine degree-`<K` word and reject tampered and
-too-high-degree words), but the surrounding logic is confusing enough that a
-reviewer **must** verify by hand that the folded value is compared against the
-*correct* opened index at every layer, and that a malicious prover cannot exploit
-the index bookkeeping (`i % half`) to open inconsistent positions. This is a
-correctness/soundness review item, not just style.
+**Closed.** The query transcript is sealed with `GRIND_BITS = 20` of proof-of-work
+before any query index is derived (`friProve` searches a nonce; `friVerify` re-checks
+it), and the rate is now `ρ = 1/16` with `nq = 88`. The verifier owns all three:
+`friVerify` rejects a proof whose `K`, `N`, query count or `grindBits` differ from the
+parameters it was given, so a prover can neither thin its query set nor lower its own
+proof-of-work. Pinned by `xzk.test.mjs` ("a thinned query set is rejected", "a lowered
+proof-of-work claim is rejected") and the `fri.js` self-tests (a broken grind seal is
+rejected).
+
+### 3.3 FINDING F3 — `friVerify` fold-consistency check was convoluted (CLOSED)
+
+The check contained dead/degenerate expressions — a ternary yielding `'a'` in both
+branches, an unused `nextVal`/`nv` — so although the effective comparison did enforce
+the fold relation, a reviewer could not read it and be sure the folded value met the
+*correct* opened index at every layer.
+
+**Closed.** The loop is rewritten: one `sc = 1/(2·d[i])` scalar, one `folded`, and a
+single explicit statement of which opening at layer `f+1` is index `i` (`stn.i === i`
+or `stn.i + nextHalf === i`, the only two possibilities since layer `f+1` has half the
+points). The index bookkeeping is now stated rather than inferred. It remains a review
+item for the external audit — "readable" is not "proven" — but there is no longer dead
+logic obscuring it.
 
 ### 3.4 FINDING F4 — the prover chose the degree bound (FOUND AND FIXED, 2026-09-20)
 
@@ -147,13 +177,29 @@ its **own** public points, so a proof transplanted onto a different statement fa
 check — but binding all public inputs and parameters into the transcript is standard practice and
 removes a class of grinding the ≥124-bit extension field (F1) would otherwise still permit.
 
-### 3.6 What the tests DO establish
+### 3.6 The two commitments are bound to one codeword
 
-The self-tests are genuine outcome checks: FRI **accepts** a random degree-`<32`
-codeword, **rejects** a codeword with a few tampered points (now far from any
-degree-`<K` poly), and **rejects** a degree-`39` (`>K`) codeword. So the primitive
-is *functionally* a low-degree test; the issue is **quantitative soundness**, not
-that it fails to reject high-degree inputs in these cases.
+`xzk.prove` Merkle-commits the evaluations (`rootP`/`rootC`, which authenticate the
+constraint openings) and separately runs FRI over the same evaluations (which
+authenticates low-degreeness). Nothing forced those to be the *same* codeword: a
+prover could have supplied a low-degree proof of one polynomial and constraint
+openings from another. `xzk.verify` now requires `proof.friP.roots[0] === proof.rootP`
+and `proof.friC.roots[0] === proof.rootC`. Keeping FRI layer 0 in the base field, with
+the same Merkle leaf encoding as `merkle(cw)`, is what makes that check possible.
+Pinned by `xzk.test.mjs` ("an unbound constraint commitment is rejected").
+
+### 3.7 What the tests establish
+
+The `fri.js` self-tests are outcome checks: FRI **accepts** a random degree-`<32`
+codeword, **rejects** a codeword with a few tampered points, **rejects** a degree-`39`
+(`>K`) codeword, and **rejects** both a broken grinding seal and a lowered grinding
+claim. The extension arithmetic is checked directly (`X⁴ === W`, commutativity).
+
+`xzk.test.mjs` (22 checks) additionally pins completeness, soundness against a forged
+derived value and a wrong `derivedX`, the prover-chosen degree bound (F4), a thinned
+query set, a lowered proof-of-work claim, the commitment binding (§3.6), the blind's
+freshness and its inability to move the derived value, and that no opened field
+element in a ~950 KB proof equals a secret point's value.
 
 ---
 
@@ -162,25 +208,26 @@ that it fails to reject high-degree inputs in these cases.
 | # | Statement | Status |
 |---|-----------|--------|
 | Z1 | FRI is a sound low-degree test in the ROM (hash-based, post-quantum) | Standard, IF adequately parameterised |
-| Z2 | Shipped defaults give ~8–24 bits soundness | **Finding — demo only, not cryptographic** (§3) |
-| Z3 | 31-bit base field ⇒ FS challenges ≤31 bits, grindable | **Finding F1 — needs an extension field** (§3.1) |
-| Z4 | No grinding PoW / extension-field repetition | **Finding F2** (§3.2) |
-| Z5 | Verifier fold-check logic is correct | **Must be hand-verified** (Finding F3, §3.3) |
-| Z6 | xzk hiding: secret points blinded by `Z_R·B` (degree-18 blind) | Not analysed here — audit the blind's zero-knowledge/soundness interplay. Note the DEFAULT `blindSeed = 1n` makes `B` a deterministic, publicly recomputable vector, and `core`'s `_setupZkCommit` passes no seed — so as shipped, hiding rests on the bounded opening count alone |
-| Z7 | FRI must not gate consensus/ledger/sealing | Enforced by policy (`MAINNET-GATES.md`) — keep until Z2–Z5 resolved |
-| Z8 | The degree bound is the VERIFIER's parameter | **Was a defect — F4, now FIXED** (§3.4); pinned by `xzk.test.mjs` |
+| Z2 | Shipped parameters reach a cryptographic target | **≈100 bits provable / ≈372 conjectured** (§3) |
+| Z3 | Fiat–Shamir challenges are drawn from a ≥124-bit space | **CLOSED — quartic extension `F_p[X]/(X⁴−11)`** (§3.1) |
+| Z4 | Grinding PoW seals the query transcript | **CLOSED — 20 bits, verifier-enforced** (§3.2) |
+| Z5 | Verifier fold-check logic is correct | Rewritten and readable (§3.3); **still an external-audit item** |
+| Z6 | xzk hiding: secret points blinded by `Z_R·B` (degree-18 blind) | Blind is now FRESH randomness, every coefficient independent, CSPRNG by default (§3.3 of the code). **The hiding ARGUMENT — that `nq+nc` openings stay below the blind's degree — is still not proved. Audit item.** |
+| Z7 | FRI must not gate consensus/ledger/sealing | Enforced by policy (`MAINNET-GATES.md`) — keep until the audit lands |
+| Z8 | The degree bound is the VERIFIER's parameter | **CLOSED — F4, library and contract host** (§3.4) |
 | Z9 | Fiat–Shamir challenges bind the whole statement | **Not yet** — transcript covers Merkle roots only (§3.5) |
+| Z10 | The low-degree test and the constraint openings are one codeword | **CLOSED** (§3.6) |
 
-**To make `xzk` security-relevant** an implementation must at minimum: (a) move all
-Fiat–Shamir challenges and folding to a ≥124-bit **extension field** of BabyBear;
-(b) raise `nq` (and/or lower `ρ`) to hit the target bits, optionally with a grinding
-PoW factor; (c) have the folding/consistency check in `friVerify` rewritten cleanly
-and re-proven; (d) analyse the `xzk` blinding (Z6) for zero-knowledge, and make the
-blind actually random rather than the deterministic default; (e) absorb the public
-points, derived coordinate and parameters into the Fiat–Shamir transcript (§3.5).
-F4 (§3.4) is already closed. Until then
-`xzk` is an **experimental** commitment demo and is correctly firewalled from
-consensus.
+**What remains before `xzk` can be relied on.** The parameter findings (F1, F2) and
+the two verifier defects (F3's dead logic, F4's prover-chosen bound) are closed, and
+the commitment binding (§3.6) is added. Open: (a) the **zero-knowledge argument** —
+the blind is now fresh randomness with independent coefficients, but nobody has proved
+that `nq + nc` openings stay below its degree, which is the actual hiding claim (Z6);
+(b) absorbing the public points, derived coordinate and parameters into the
+Fiat–Shamir transcript (Z9, §3.5); (c) an **external review by a ZK cryptographer**,
+ideally MAYO/UOV-adjacent since `xzk` composes with MAYO. Until (c) lands the
+`MAINNET-GATES.md` ⛔ stands and `core` keeps the commitment strictly additive.
 
-This document claims nothing secure; it quantifies exactly how far the current
-parameters sit from a cryptographic soundness target and names the changes required.
+This document states measured parameters and derived soundness bounds. Reaching a bit
+target is a necessary condition, not a sufficient one, and nothing here substitutes for
+the audit.

@@ -11,6 +11,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { XMBLCore } from './index.js';
 
+// The commit handler is DEFERRED (setImmediate) so a ~1s proof never stalls the seal path; drain
+// two immediate ticks to let it run before asserting on the buffer.
+const settle = () => new Promise((r) => setImmediate(() => setImmediate(r)));
+
 let pass = 0, fail = 0;
 const check = async (n, f) => {
   try { await f(); console.log(`  ok   ${n}`); pass++; }
@@ -52,6 +56,7 @@ await check('default OFF: no listener, no state, query reports disabled (strictl
   assert.strictEqual(node.getZkCommitments().enabled, false, 'query must report disabled');
   // A sealed face still fires with ZK off and must not throw or be affected by ZK.
   assert.doesNotThrow(() => node.xclt.emit(EV, goodFace), 'sealing a face is independent of ZK when off');
+  await settle();
 });
 
 await check('opt-in attaches exactly one side listener and a read-only buffer', async () => {
@@ -70,6 +75,7 @@ await check('non-blocking: a ZK failure inside the handler never breaks the seal
   await node._setupZkCommit();
   // Emitting the face that makes ZK throw must not propagate out of the seal path...
   assert.doesNotThrow(() => node.xclt.emit(EV, throwingFace), 'a ZK error must be swallowed, not rethrown');
+  await settle();
   // ...and nothing is committed from the failed attempt.
   assert.strictEqual(node.zkCommitments.length, 0, 'a failed commit adds no record');
 });
@@ -78,7 +84,10 @@ await check('side-buffer only: a valid face commits ONE record, visible only via
   process.env.XZK_COMMIT = '1';
   const node = makeNode();
   await node._setupZkCommit();
+  const emittedAt = Date.now();
   node.xclt.emit(EV, goodFace);
+  assert.ok(Date.now() - emittedAt < 100, 'emitting a face must return immediately — proving is deferred');
+  await settle();
   assert.strictEqual(node.zkCommitments.length, 1, 'exactly one record committed');
   const rec = node.zkCommitments[0];
   assert.strictEqual(typeof rec.verified, 'boolean', 'record carries a verified flag');

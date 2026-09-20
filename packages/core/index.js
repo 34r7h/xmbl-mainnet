@@ -683,7 +683,10 @@ export class XMBLCore {
     const ctx = xzk.setup();
     const nodeSecret = crypto.createHash('sha256').update((this.xid?.address || 'node') + ':xzk').digest('hex');
     const fe = (s) => BigInt('0x' + crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 15));
-    this.xclt.on('face:complete', (evt) => {
+    // DEFERRED off the seal path. A proof at the shipped parameters (88 queries, 20 grind bits) is
+    // ~1s of CPU; running that inline would stall the event loop for every sealed face. setImmediate
+    // keeps the commitment strictly a side effect of sealing, never a cost inside it.
+    this.xclt.on('face:complete', (evt) => setImmediate(() => {
       try {
         const blocks = [...((evt.face && evt.face.blocks && evt.face.blocks.values && evt.face.blocks.values()) || [])];
         if (blocks.length < 2) return;
@@ -699,7 +702,7 @@ export class XMBLCore {
         if (this.zkCommitments.length > 500) this.zkCommitments.shift();
         console.log(`[xzk] committed face ${evt.faceIndex} (cube ${cubeId}) rootP=${rec.rootP.slice(0, 16)}… verified=${verified}`);
       } catch (e) { console.warn('[xzk] commit failed (non-blocking):', e.message); }
-    });
+    }));
     console.log('[xzk] ZK cube-commitment ON (experimental/unaudited, additive — NOT consensus-load-bearing)');
   }
 

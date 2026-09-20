@@ -16,7 +16,8 @@
 // through (derivedX, derivedY)" — leaking nothing about secretPoints beyond the
 // deg(P)+1-|reveal| DOF the public statement itself implies.
 
-import { p, mod, add, sub, mul, inv, polyEval, interpolate, domainOfSize, merkle, mpath, mverify, H, friProve, friVerify } from './fri.js';
+import { randomBytes } from 'node:crypto';
+import { p, mod, add, sub, mul, inv, polyEval, interpolate, domainOfSize, merkle, mpath, mverify, H, friProve, friVerify, GRIND_BITS, EXT_BITS } from './fri.js';
 
 const polyAdd = (a, b) => { const n = Math.max(a.length, b.length); return Array.from({ length: n }, (_, i) => add(a[i] || 0n, b[i] || 0n)); };
 const polySub = (a, b) => { const n = Math.max(a.length, b.length); return Array.from({ length: n }, (_, i) => sub(a[i] || 0n, b[i] || 0n)); };
@@ -30,18 +31,43 @@ function polyDivmod(a, b) {
 }
 const fsIdx = (t, N, n) => Array.from({ length: n }, (_, i) => Number(BigInt('0x' + H(t + ':c' + i).slice(0, 12)) % BigInt(N)));
 
+// Shipped parameters. Rate rho = K/N = 1/16; every folding challenge is drawn from the ~124-bit
+// quartic extension (fri.js), and the query transcript carries GRIND_BITS of proof-of-work.
+//   query soundness (provable, unique-decoding): delta <= (1-rho)/2 = 0.469
+//     -> nq * log2(1/(1-delta)) = 88 * 0.912 ~ 80 bits, + 20 grind ~ 100 bits
+//   query soundness (list-decoding, conjectured): nq * log2(1/rho) = 88 * 4 = 352 bits
+//   constraint check: nc random points, false-accept ~ (deg/N)^nc -> 32 * log2(512/50) ~ 107 bits
+//   challenge grinding: bounded by the extension field, ~124 bits (was 31 over the base field)
 export function setup(opts = {}) {
-  const K = opts.degreeBound || 32, N = opts.domainSize || 128, nq = opts.nQueries || 12, nc = opts.nConstraints || 16;
-  return { K, N, nq, nc, dom: domainOfSize(N) };
+  const K = opts.degreeBound || 32, N = opts.domainSize || 512, nq = opts.nQueries || 88, nc = opts.nConstraints || 32;
+  const grind = opts.grindBits === undefined ? GRIND_BITS : opts.grindBits;
+  return { K, N, nq, nc, grind, extBits: EXT_BITS, dom: domainOfSize(N) };
 }
 
 // Build the blinded committed curve P̃ = P + Z_R·B through public + secret points.
-export function blindedCurve(ctx, { publicPoints, secretPoints, derivedX, blindDegree = 18, blindSeed = 1n }) {
+//
+// THE BLIND IS FRESH RANDOMNESS. Every coefficient of B is drawn independently, and by default the
+// seed comes from the system CSPRNG, so re-committing the same secret points yields an unrelated
+// P̃ away from the revealed set. An omitted seed used to fall back to a constant, which made B a
+// publicly recomputable vector: the masking term was present in the algebra and absent in effect.
+// `blindSeed` remains accepted so a test can reproduce a specific blind; passing one in production
+// re-creates exactly the problem this replaced. Note Z_R vanishes on the revealed x's, so no blind
+// can move the public points or derivedY — only the committed curve away from them.
+function blindCoeffs(blindDegree, blindSeed) {
+  const n = blindDegree + 1;
+  if (blindSeed === undefined) {
+    // 32 bytes per coefficient, reduced mod p: bias below 2^-90, far under any bound that matters.
+    const rb = randomBytes(32 * n);
+    return Array.from({ length: n }, (_, i) => mod(BigInt('0x' + rb.subarray(i * 32, i * 32 + 32).toString('hex'))));
+  }
+  return Array.from({ length: n }, (_, i) => mod(BigInt('0x' + H('xzk:blind:' + blindSeed.toString() + ':' + i))));
+}
+export function blindedCurve(ctx, { publicPoints, secretPoints, derivedX, blindDegree = 18, blindSeed }) {
   const P = interpolate([...publicPoints.map((q) => q.x), ...secretPoints.map((q) => q.x)], [...publicPoints.map((q) => q.y), ...secretPoints.map((q) => q.y)]);
   const derivedY = polyEval(P, derivedX);
   const Rxs = [...publicPoints.map((q) => q.x), derivedX];
   const Zr = vanishing(Rxs);
-  const B = Array.from({ length: blindDegree + 1 }, (_, i) => mod((blindSeed * BigInt(i * 97 + 13) + 7919n) % p));
+  const B = blindCoeffs(blindDegree, blindSeed);
   return { Pt: polyAdd(P, polyMul(Zr, B)), derivedY, P, Zr };
 }
 
@@ -55,7 +81,7 @@ export function prove(ctx, { Pt, publicPoints, derivedX, derivedY }) {
   const idxs = fsIdx(comP.root + ':' + comC.root, N, nc);
   return {
     rootP: comP.root, rootC: comC.root,
-    friP: friProve(evP, dom, K, nq), friC: friProve(evC, dom, K, nq),
+    friP: friProve(evP, dom, K, nq, ctx.grind), friC: friProve(evC, dom, K, nq, ctx.grind),
     cons: idxs.map((i) => ({ i, Pv: evP[i], Cv: evC[i], pP: mpath(comP.tree, i), pC: mpath(comC.tree, i) })),
   };
 }
@@ -64,8 +90,13 @@ export function verify(ctx, { proof, publicPoints, derivedX, derivedY }) {
   const { dom, N, nc } = ctx;
   const Rxs = [...publicPoints.map((q) => q.x), derivedX], Rys = [...publicPoints.map((q) => q.y), derivedY];
   const Ir = interpolate(Rxs, Rys), Zr = vanishing(Rxs);
-  // K/N are the verifier's agreed parameters — pass them so the proof cannot declare its own.
-  if (!friVerify(proof.friP, dom, ctx.K) || !friVerify(proof.friC, dom, ctx.K)) return false;
+  // The constraint openings are authenticated against rootP/rootC while the low-degree test runs on
+  // the FRI proof's own layer-0 commitment. Bind them: without this the two halves of the argument
+  // could be about DIFFERENT codewords — a low-degree proof of one polynomial with constraint
+  // openings from another. Layer 0 keeps the base-field leaf encoding precisely so this can be checked.
+  if (proof.friP.roots[0] !== proof.rootP || proof.friC.roots[0] !== proof.rootC) return false;
+  // K/N/nq/grind are the verifier's agreed parameters — pass them so the proof cannot declare its own.
+  if (!friVerify(proof.friP, dom, ctx.K, ctx.nq, ctx.grind) || !friVerify(proof.friC, dom, ctx.K, ctx.nq, ctx.grind)) return false;
   const idxs = fsIdx(proof.rootP + ':' + proof.rootC, N, nc);
   for (let k = 0; k < nc; k++) {
     const c = proof.cons[k], i = idxs[k], z = dom[i];
