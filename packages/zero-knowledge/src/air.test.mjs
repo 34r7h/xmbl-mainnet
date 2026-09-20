@@ -112,4 +112,36 @@ ok('the composition commitment IS the FRI codeword', fibProof.friC.roots[0] === 
   ok('a non-boolean selector is rejected', verify(ctx, { proof: badProof, transitions, boundary }) === false);
 }
 
+// ── (d) a proof is bound to ITS statement, even one sized identically ───────────────────────────
+// Two degree-3, 1-column, 16-row chains differing only in the round constant derive the SAME K and
+// N, so the domain-size check in friVerify cannot separate them. The statement itself is absorbed
+// into the Fiat-Shamir transcript, so the batching challenges differ and the proof does not carry.
+{
+  const L = 16;
+  const chain = (RC) => ({
+    ctx: setup({ traceLen: L, width: 1, constraintDeg: 3 }),
+    transitions: [(c, n) => sub(n[0], add(mul(mul(c[0], c[0]), c[0]), RC))],
+  });
+  const A = chain(987654321n), B = chain(111111111n);
+  ok('two statements sized identically share K and N', A.ctx.K === B.ctx.K && A.ctx.N === B.ctx.N);
+  const seed = 777777n;
+  const traceA = []; { let x = seed; for (let r = 0; r < L; r++) { traceA.push([x]); x = add(mul(mul(x, x), x), 987654321n); } }
+  const digestA = traceA[L - 1][0];
+  const bdA = [{ row: L - 1, col: 0, value: digestA }];
+  const proofA = prove(A.ctx, { trace: traceA, transitions: A.transitions, boundary: bdA });
+  ok('the proof verifies for its own statement', verify(A.ctx, { proof: proofA, transitions: A.transitions, boundary: bdA }) === true);
+  ok('and is rejected against the same-sized OTHER statement',
+    verify(B.ctx, { proof: proofA, transitions: B.transitions, boundary: bdA }) === false);
+  // the same constraints but a different boundary must also fail, for the same reason
+  ok('and against its own constraints with a different boundary row',
+    verify(A.ctx, { proof: proofA, transitions: A.transitions, boundary: [{ row: 0, col: 0, value: digestA }] }) === false);
+}
+
+// the field's 2-adicity is the real ceiling and setup() refuses before producing a bad generator
+{
+  let threw = null;
+  try { setup({ traceLen: 65536, width: 4, constraintDeg: 8 }); } catch (e) { threw = e.message; }
+  ok('an oversized domain is refused rather than silently mis-generated', threw !== null && /ceiling/.test(threw));
+}
+
 console.log(`\nPASS — ${pass} checks\n`);

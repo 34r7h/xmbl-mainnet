@@ -79,7 +79,9 @@ export function setup(o) {
   const quotientDeg = D * colDeg - (T - 1);
   const K = nextPow2(Math.max(quotientDeg + 1, colDeg + 1));
   const N = K * blowup;
-  if (N > (1 << 22)) throw new Error(`air.setup: domain ${N} too large`);
+  // The field's 2-adicity is 27 (p - 1 = 2^27 * 15), so a domain above 2^27 has NO generator and
+  // domainOfSize would silently return a bad one. The practical ceiling is lower than that.
+  if (N > (1 << 22)) throw new Error(`air.setup: domain ${N} exceeds the practical ceiling (2^22); reduce the trace length or the constraint degree`);
   const g = pw(31n, (p - 1n) / BigInt(T));         // generator of the size-T trace subgroup
   const dom = domainOfSize(N);
   const SHIFT = 31n;                               // coset shift: 31 generates F_p*, so it is not
@@ -92,14 +94,25 @@ export function setup(o) {
 /** Z_T(x) = (x^T − 1)/(x − g^(T−1)) — vanishes on every row a transition must hold on. */
 const zTransition = (ctx, x) => mul(sub(pw(x, BigInt(ctx.T)), 1n), inv(sub(x, pw(ctx.g, BigInt(ctx.T - 1)))));
 
-/** Rebuild the Fiat-Shamir challenges from the committed roots. Prover and verifier run this. */
-function challenges(roots, rootC, nT, nB) {
-  const t = roots.join(':');
+/**
+ * Rebuild the Fiat-Shamir challenges. Prover and verifier run this, and it absorbs the WHOLE public
+ * statement — every parameter and every boundary cell — not just the column roots.
+ *
+ * Roots alone would not be enough: two different statements that happen to share K and N would draw
+ * the SAME batching challenges from the same commitments, and only the domain-size check in
+ * friVerify would separate them. That is an accident of sizing, not a binding. With the parameters
+ * and the boundary in the transcript, a proof is tied to the statement it was made for.
+ */
+function statementTag(ctx, nT, boundary) {
+  return [ctx.T, ctx.W, ctx.D, ctx.K, ctx.N, ctx.blowup, ctx.nq, ctx.nc, ctx.grind, ctx.blindDeg, nT,
+    boundary.map((b) => `${b.row}/${b.col}/${b.value.toString()}`).join(';')].join('|');
+}
+function challenges(roots, ctx, nT, boundary) {
+  const t = H(statementTag(ctx, nT, boundary)) + ':' + roots.join(':');
   return {
     transcript: t,
     alphas: Array.from({ length: nT }, (_, k) => fsExt(t + ':alpha' + k)),
-    betas: Array.from({ length: nB }, (_, j) => fsExt(t + ':beta' + j)),
-    idxs: rootC === null ? null : Array.from({ length: 0 }, () => 0),
+    betas: Array.from({ length: boundary.length }, (_, j) => fsExt(t + ':beta' + j)),
   };
 }
 
@@ -127,7 +140,7 @@ export function prove(ctx, { trace, transitions, boundary }) {
   // 4. commit each column, then draw the batching challenges
   const coms = evals.map((e) => merkle(e));
   const roots = coms.map((c) => c.root);
-  const { alphas, betas } = challenges(roots, null, transitions.length, boundary.length);
+  const { alphas, betas, transcript } = challenges(roots, ctx, transitions.length, boundary);
   // 5. compose
   const zInv = coset.map((x) => inv(zTransition(ctx, x)));
   const bInv = boundary.map((b) => coset.map((x) => inv(sub(x, pw(ctx.g, BigInt(b.row))))));
@@ -143,7 +156,7 @@ export function prove(ctx, { trace, transitions, boundary }) {
   // 6. low-degree proof for the composition, plus trace openings
   const comC = merkleExt(C);
   const friC = friProve(C, coset, ctx.K, ctx.nq, ctx.grind, true);
-  const idxs = Array.from({ length: ctx.nc }, (_, k) => fsIndex(comC.root + ':' + roots.join(':') + ':open' + k, N));
+  const idxs = Array.from({ length: ctx.nc }, (_, k) => fsIndex(comC.root + ':' + transcript + ':open' + k, N));
   const opens = idxs.map((i) => {
     const ni = (i + step) % N;
     return {
@@ -166,8 +179,8 @@ export function verify(ctx, { proof, transitions, boundary }) {
     if (!Array.isArray(proof.roots) || proof.roots.length !== ctx.W) return false;
     if (proof.friC.roots[0] !== proof.rootC) return false;        // one codeword, not two
     if (!friVerify(proof.friC, coset, ctx.K, ctx.nq, ctx.grind, true)) return false;
-    const { alphas, betas } = challenges(proof.roots, null, transitions.length, boundary.length);
-    const idxs = Array.from({ length: ctx.nc }, (_, k) => fsIndex(proof.rootC + ':' + proof.roots.join(':') + ':open' + k, N));
+    const { alphas, betas, transcript } = challenges(proof.roots, ctx, transitions.length, boundary);
+    const idxs = Array.from({ length: ctx.nc }, (_, k) => fsIndex(proof.rootC + ':' + transcript + ':open' + k, N));
     if (proof.opens.length !== ctx.nc) return false;
     for (let k = 0; k < ctx.nc; k++) {
       const o = proof.opens[k], i = idxs[k], ni = (i + step) % N;

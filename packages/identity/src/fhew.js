@@ -27,6 +27,11 @@
 // PARAMETERS are chosen so every product stays exact in double precision ((Q−1)^2 < 2^53), which is
 // what makes this fast enough to run in the gate rather than a demonstration of the shape.
 //
+// SEPARATE FROM bfv.js. This scheme has its own keys and its own parameters; the two share no key
+// material and no ciphertext converts between them. bfv is the batched arithmetic path (4096 slots,
+// integers mod 65537, bounded depth); this is the unbounded-depth boolean one, one bit per
+// ciphertext. A BFV ciphertext cannot be bootstrapped here.
+//
 // This is a from-scratch implementation under the same ⛔ audit gate as the rest of the crypto here.
 
 import { randomBytes } from 'node:crypto';

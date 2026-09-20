@@ -22,6 +22,11 @@
 // Plaintexts are encoded in the constant coefficient, so add/multiply are integer add/multiply mod
 // T; SIMD batching (T = 1 mod 2N is already satisfied) is not wired.
 //
+// SEPARATE FROM fhew.js. That module bootstraps, and does it on its own LWE scheme with its own
+// keys. The two share no key material and there is no conversion between their ciphertexts: BFV is
+// the batched arithmetic path, FHEW is the unbounded-depth boolean one. A BFV ciphertext cannot be
+// handed to `fhew.bootstrap`.
+//
 // This is a from-scratch implementation and carries the same ⛔ audit gate as the rest of the
 // crypto in this repo. A production deployment should bind an audited library (OpenFHE, SEAL,
 // Lattigo, tfhe-rs) behind this same interface.

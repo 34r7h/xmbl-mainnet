@@ -164,7 +164,11 @@ continue-on-error, and in the release workflow before any publish).
       `sum a_k*(transition_k / Z_T) + sum b_j*(boundary_j / (x - g^row))` is low-degree with FRI.
       Parameters (K, N) are DERIVED from the trace length and constraint degree. Demonstrated on
       three computations: Fibonacci, a degree-3 hash chain, and a conditional state machine with a
-      boolean selector. A trace that breaks its own rule cannot be proved; a tampered opening, a
+      boolean selector. The Fiat-Shamir transcript absorbs the WHOLE statement — every parameter and
+      every boundary cell, not just the column roots — so a proof does not carry to a different
+      statement that happens to share K and N (pinned with two degree-3 16-row chains differing only
+      in the round constant); and an oversized domain is refused rather than silently mis-generated
+      against the field's 2-adicity. A trace that breaks its own rule cannot be proved; a tampered opening, a
       tampered composition value and a thinned opening set are all rejected; the witness and every
       intermediate state are absent from the proof. — *air.js; air.test.mjs (20 checks, in the gate)*
 - [x] **CONTRACT-WIRED**: the `airHost` flag exposes `env.xmbl_air_verify(val_ptr) -> i32`. The
