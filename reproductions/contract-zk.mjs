@@ -168,6 +168,23 @@ async function main() {
   assert.strictEqual(hostBad.state.getRoot(), rootBeforeBad, 'a malformed proof must leave the root unmoved');
   console.log('');
 
+  // 5b) F4 AT THE CONTRACT BOUNDARY: the staged object that carries the proof must NOT get to choose
+  // the degree bound the proof is checked against. A prover builds a curve far outside the agreed
+  // bound, proves it at its OWN inflated K, and stages opts that would make the host agree.
+  const cheatCtx = setup({ degreeBound: 64 });
+  const cheat = blindedCurve(cheatCtx, { publicPoints, secretPoints, derivedX, blindDegree: 45 });
+  const cheatProof = prove(cheatCtx, { Pt: cheat.Pt, publicPoints, derivedX, derivedY: cheat.derivedY });
+  assert.strictEqual(verify(cheatCtx, { proof: cheatProof, publicPoints, derivedX, derivedY: cheat.derivedY }), true,
+    'the inflated proof must be internally consistent at its own bound (else this proves nothing)');
+  const hostK = new ContractHost({ runtime: runtime(), state: new VerkleStateTree() });
+  const { id: idK } = hostK.deploy(honest, [7], { zkHost: true });
+  const rootBeforeK = hostK.state.getRoot();
+  const rK = await hostK.call(idK, 'check', [], { zk: { opts: { degreeBound: 64 }, proof: cheatProof, publicPoints } });
+  line('prover-staged degree bound: result', rK.result);
+  assert.strictEqual(rK.result, 0, 'a staged degreeBound must NOT move the verifier parameters (F4)');
+  assert.strictEqual(hostK.state.getRoot(), rootBeforeK, 'a staged degreeBound must leave the root unmoved');
+  console.log('');
+
   // 6) DETERMINISM: two independent nodes run the honest call → the same root.
   const n1 = new ContractHost({ runtime: runtime(), state: new VerkleStateTree() });
   const n2 = new ContractHost({ runtime: runtime(), state: new VerkleStateTree() });

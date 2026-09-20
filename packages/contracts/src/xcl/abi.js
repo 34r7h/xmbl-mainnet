@@ -269,8 +269,15 @@ export const HOST_ABI_CRYPTO_INIT_SOURCE = `async (ctx, declared) => {
 // and a derived coordinate, leaking nothing about the secret points. The statement is "the
 // committed curve passes through the public points AND through (derivedX, derivedY)".
 //
+// PARAMETERS ARE POLICY, NOT CALL DATA: the degree bound the proof is checked against comes from
+// the module defaults, NOT from `ctx.data.zk.opts` — the staged object is supplied by whoever
+// supplies the proof, so letting it choose the bound would reintroduce F4 (a prover picking its own
+// degree bound) one layer above the library fix. A staged opts that tries to move `degreeBound`,
+// `domainSize`, `nQueries` or `nConstraints` makes the binding unavailable and `xmbl_zk_verify`
+// returns 0 for every coordinate.
+//
 // STATEMENT BINDING (why this is REAL zk use by the contract, not a trusted host boolean): the
-// PROOF, the public anchor points, and the setup params are CHAIN-STAGED through `ctx.data.zk`
+// PROOF and the public anchor points are CHAIN-STAGED through `ctx.data.zk`
 // (identical on every node → identical verdict → consensus-safe), exactly as the crypto init
 // stages signature material. The guest supplies the (derivedX, derivedY) COORDINATE IT asserts —
 // two 32-byte little-endian words read from its OWN linear memory — and the binding returns 1 only
@@ -309,9 +316,19 @@ export const HOST_ABI_ZK_INIT_SOURCE = `async (ctx, declared) => {
   if (need.indexOf('env.xmbl_zk_verify') === -1) return {};
   var zk = await import('@xmbl/zero-knowledge');
   var staged = (ctx.data && ctx.data.zk) || {};
-  var zkctx = zk.setup(staged.opts || {});
-  var proof = staged.proof || null;
-  var publicPoints = staged.publicPoints || null;
+  // The VERIFIER's parameters are protocol policy, never call data. \`staged\` arrives as one object
+  // (contract-host \`opts.zk\`), so whoever supplies the proof would otherwise also supply the degree
+  // bound it is checked against — the same hole F4 closed inside friVerify, one layer up. The
+  // context is built from the module defaults and any staged attempt to move a security parameter
+  // makes the binding unavailable (verify returns 0), fail-closed and visible rather than silent.
+  var zkctx = zk.setup({});
+  var sopts = staged.opts || {};
+  var pinned = (sopts.degreeBound === undefined || sopts.degreeBound === zkctx.K)
+            && (sopts.domainSize === undefined || sopts.domainSize === zkctx.N)
+            && (sopts.nQueries === undefined || sopts.nQueries === zkctx.nq)
+            && (sopts.nConstraints === undefined || sopts.nConstraints === zkctx.nc);
+  var proof = pinned ? (staged.proof || null) : null;
+  var publicPoints = pinned ? (staged.publicPoints || null) : null;
   var WORD = 32;
   var wordAt = function (ptr) {
     var m = ctx.mem && ctx.mem(); if (!m) return null;

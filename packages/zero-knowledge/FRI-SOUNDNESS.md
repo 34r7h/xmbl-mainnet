@@ -128,6 +128,16 @@ Pinned by `xzk.test.mjs` ("a prover-declared degree bound is rejected by a K=32 
 which fails against the pre-fix code and passes after. This one is CLOSED — unlike F1/F2, it was a
 verifier bug rather than a parameter choice.
 
+**The same hole existed one layer up, at the contract boundary, and is also closed.** The zk host
+call built its context with `zk.setup(staged.opts || {})`, and `staged` is the single `opts.zk`
+object supplied by whoever supplies the proof (`contract-host.js:414`) — so a contract's verifier
+parameters were caller-chosen even after the library fix. Verified as an outcome: against the
+pre-fix host, a curve proved at a claimed `K=64` with `opts: { degreeBound: 64 }` staged made
+`xmbl_zk_verify` return **1** and would have gated a Verkle write on it. The host now builds its
+context from the module defaults and treats any staged attempt to move `degreeBound`, `domainSize`,
+`nQueries` or `nConstraints` as unavailable, so verify returns 0 and the root stays put. Pinned by
+`reproductions/contract-zk.mjs` claim 5b, which fails against the pre-fix host.
+
 ### 3.5 Hygiene — the Fiat–Shamir transcript does not bind the statement
 
 `fsIdx` draws the constraint indices from `comP.root + ':' + comC.root` only, and `friProve` starts

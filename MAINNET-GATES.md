@@ -115,7 +115,12 @@ continue-on-error, and in the release workflow before any publish).
       freedom than the agreed bound accepted by a `K=32` verifier — a degree-50 codeword rejected at
       K=32 verified when proved at a claimed K=64. `friVerify(proof, dom0, expectK)` now requires the
       bound from the verifier, rejects a mismatched `K` or `N`, and is fail-closed if `expectK` is
-      omitted. — *fri.js `friVerify`; xzk.js `verify`; xzk.test.mjs (F4); FRI-SOUNDNESS.md §3.4*
+      omitted. The SAME hole existed at the contract boundary — the zk host built its context from
+      `staged.opts`, which arrives in the same caller-supplied object as the proof, so a curve proved
+      at a claimed K=64 with `opts:{degreeBound:64}` staged returned **1** from `xmbl_zk_verify` and
+      would have gated a Verkle write; the host now builds from module defaults and refuses any
+      staged security parameter. — *fri.js `friVerify`; xzk.js `verify`; abi.js `HOST_ABI_ZK_INIT_SOURCE`;
+      xzk.test.mjs (F4); reproductions/contract-zk.mjs (5b); FRI-SOUNDNESS.md §3.4*
 - [ ] ⛔ AUDIT — experimental, unaudited FRI. Must not gate consensus, ledger, or sealing until
       audited. The `core` wiring already enforces "additive only" — do not remove that.
 
