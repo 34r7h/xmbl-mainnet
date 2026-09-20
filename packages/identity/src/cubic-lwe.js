@@ -34,7 +34,7 @@ import { createHash, randomBytes } from 'node:crypto';
 // q must be prime, ≈ 2^12, so that q/2 ≈ 1665 and rounding noise ≤ 1 is
 // absorbed. Kyber uses q = 3329; we follow suit.
 const DEFAULT_Q = 3329n;
-const DEFAULT_N = 27;   // atomic cube dimension (TOY — illustration only; no PQ margin)
+const DEFAULT_N = 27;   // atomic cube dimension (DEMONSTRATION only; no PQ margin)
 
 // The mainnet lattice dimension. N=27 is a demonstration ring with no security margin against
 // quantum SVP; a value-bearing seal MUST use N=729 (Level-2 supercube), where Core-SVP hardness

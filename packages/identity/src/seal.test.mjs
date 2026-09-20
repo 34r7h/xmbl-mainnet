@@ -15,12 +15,12 @@ const throws = (n, f) => { let t = false; try { f(); } catch { t = true; } ok(n,
 const EVM_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
 
 // A value-bearing seal MUST ride the mainnet lattice (N=729) — sealKeyPair mints there by default.
-// (0) a seal to the TOY ring (N=27) is REFUSED, so "post-quantum settlement" can't be a false claim.
+// (0) a seal to the SUB-MAINNET ring (N=27) is REFUSED, so "post-quantum settlement" can't be a false claim.
 {
-  const toy = cubicLweKeyGen(); // default N=27 — no quantum margin
+  const undersized = cubicLweKeyGen(); // default N=27 — no quantum margin
   ok('sealKeyPair mints at the mainnet lattice', sealKeyPair().pk.n === MAINNET_N);
-  throws('sealing value to a toy N=27 ring is refused', () => sealSecret(toy.pk, EVM_KEY, { receiver: 'xmbR' }));
-  const weakEnv = sealSecret(toy.pk, EVM_KEY, { receiver: 'xmbR', allowWeak: true });
+  throws('sealing value to an undersized N=27 ring is refused', () => sealSecret(undersized.pk, EVM_KEY, { receiver: 'xmbR' }));
+  const weakEnv = sealSecret(undersized.pk, EVM_KEY, { receiver: 'xmbR', allowWeak: true });
   ok('an explicit allowWeak demo seal is stamped weak:true', weakEnv.weak === true);
   ok('a mainnet seal carries no weak stamp', sealSecret(sealKeyPair().pk, EVM_KEY, { receiver: 'xmbR' }).weak === undefined);
 }

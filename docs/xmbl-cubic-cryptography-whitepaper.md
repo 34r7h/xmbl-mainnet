@@ -262,7 +262,7 @@ uniform `N×N`.
 | Param | Value | Rationale |
 |-------|-------|-----------|
 | `q` | **3329** (prime, ≈2¹²) | Kyber's modulus; `⌊q/2⌋ = 1664` is the bit-encoding anchor, `q/4 = 832` the decision margin. |
-| `N` (toy) | **27** = 3 faces × 9 blocks | Atomic-cube dimension. **DEMONSTRATION ONLY — no quantum margin.** `DEFAULT_N`. |
+| `N` (sub-mainnet) | **27** = 3 faces × 9 blocks | Atomic-cube dimension. **DEMONSTRATION ONLY — no quantum margin.** `DEFAULT_N`. |
 | `N` (mainnet) | **729** = 27³ (`MAINNET_N`) | Level-2 supercube. `seal.js` **fails closed** below this: `seal()` throws for `N < 729` unless `allowWeak` (stamped non-value). Value envelopes therefore always ride `N = 729`. |
 | noise | ternary `η = 1` | Short-vector distribution; `‖s‖, ‖e‖` small ⇒ small decryption noise (§4.3). |
 

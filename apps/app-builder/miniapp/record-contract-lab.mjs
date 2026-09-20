@@ -362,7 +362,7 @@ try {
   await revealProof('usdc2', 'The proof IS the settlement — it cannot be re-pointed at another chain', 'The base proof, replayed against an ethereum re-point → verdict 0, nothing released, root UNMOVED', null, US[1],
     'ethereum re-point: base proof verdict 0 → not released → root unmoved', 'ok', 5000, false);
   await revealProof('usdc3', 'The amount rides encrypted; the key is sealed, post-quantum, to the receiver', 'Netted while encrypted; wrong receiver or changed amount opens nothing; the chain holds ciphertext, never the key', null, US[2],
-    '3 seal refusals (wrong receiver · mutated amount · toy-ring) · committed state holds no key bytes', 'ok', 6000, false);
+    '3 seal refusals (wrong receiver · mutated amount · sub-mainnet ring) · committed state holds no key bytes', 'ok', 6000, false);
 
   // ════ ACT 6 — THE REST HOLDS BY CONSTRUCTION (reentrancy + honest unaudited status + the gate) ════
   const guaranteesText = [

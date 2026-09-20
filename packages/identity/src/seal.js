@@ -25,7 +25,7 @@ import { encapsulate, decapsulate, keyGen as cubicLweKeyGen, MAINNET_N } from '.
 
 const ALG = 'xmbl-seal-v1'; // Cubic-LWE KEM + HKDF-SHA256 + AES-256-GCM
 
-// A value-bearing seal must ride the mainnet lattice. N=27 is a toy ring with no quantum margin;
+// A value-bearing seal must ride the mainnet lattice. N=27 is a sub-mainnet ring with no quantum margin;
 // sealing an EVM key or secret share to it would make "post-quantum settlement" a false claim.
 // sealSecret REFUSES any receiver pk below this unless a caller explicitly opts into a weak ring
 // for a non-value demonstration (allowWeak). sealKeyPair mints at MAINNET_N by default.
@@ -73,7 +73,7 @@ export function sealSecret(receiverPk, secret, opts = {}) {
   // so nothing downstream can mistake it for a post-quantum-secure envelope.
   if (!receiverPk || typeof receiverPk.n !== 'number') throw new Error('seal: receiver pk missing lattice dimension n');
   if (receiverPk.n < MIN_SEAL_N && !opts.allowWeak)
-    throw new Error(`seal: receiver lattice N=${receiverPk.n} is below mainnet N=${MIN_SEAL_N} — refusing to seal value to a toy ring (pass allowWeak for a non-value demo)`);
+    throw new Error(`seal: receiver lattice N=${receiverPk.n} is below mainnet N=${MIN_SEAL_N} — refusing to seal value to a sub-mainnet ring (pass allowWeak for a non-value demo)`);
   const plaintext = typeof secret === 'string' ? Buffer.from(secret, 'utf8')
     : Buffer.from(secret instanceof Uint8Array ? secret : Buffer.from(secret));
 

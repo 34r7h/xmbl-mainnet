@@ -22,7 +22,7 @@
 //   proven claimant and seals the authorizing secret to exactly one receiver. That is what is asserted.
 //
 // TWO KEYS, TWO JOBS (not a compromise): the value-bearing SEAL rides MAINNET_N=729 — sealSecret
-// REFUSES a sub-mainnet ring without allowWeak (seal.js:29), because sealing a USDC key to a toy ring
+// REFUSES a sub-mainnet ring without allowWeak (seal.js:29), because sealing a USDC key to a sub-mainnet ring
 // would make "post-quantum settlement" false; asserted below. The HE AGGREGATION key uses the small
 // ring (n=27): the on-chain ciphertext is (n+1)×32 bytes and the contract stores one slot per word, so
 // 729 would be 730 slots per ciphertext — the wrong budget for a demonstration, unrelated to the seal's
@@ -215,9 +215,9 @@ async function main() {
   refusals += 1;
   // (c) sealSecret REFUSES a sub-mainnet ring for value (the post-quantum property, by construction).
   const weakPk = cubicLweKeyGen({ n: 27 }).pk;
-  assert.throws(() => sealSecret(weakPk, EVM_AUTH_KEY, { receiver, meta: { asset: 'USDC', amount: '1.00' } }), /below mainnet/, 'sealing USDC to a toy ring must be refused');
+  assert.throws(() => sealSecret(weakPk, EVM_AUTH_KEY, { receiver, meta: { asset: 'USDC', amount: '1.00' } }), /below mainnet/, 'sealing USDC to a sub-mainnet ring must be refused');
   refusals += 1;
-  line('seal-boundary refusals', `${refusals}  (wrong receiver; mutated amount; toy-ring value seal)`);
+  line('seal-boundary refusals', `${refusals}  (wrong receiver; mutated amount; sub-mainnet-ring value seal)`);
   // (d) The chain never holds the authorizing key: committed state is the release flag, not key bytes.
   const keyHex = Buffer.from(EVM_AUTH_KEY, 'utf8').toString('hex');
   const committed = Buffer.concat([Buffer.from(word32(host.getSlot(base.id, 0)))]).toString('hex');
