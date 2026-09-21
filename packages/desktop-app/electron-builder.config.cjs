@@ -12,6 +12,15 @@ module.exports = {
   electronVersion,
   appId: 'com.xmbl.desktop',
   productName: 'XMBL Desktop',
+  // The default deb/AppImage artifact name is ${name}_${version}_${arch}, and `name` here is the
+  // SCOPED package name @xmbl/desktop-app — fpm then tries to write into dist/@xmbl/ and dies with
+  // "Parent directory does not exist". Every Linux build failed on this. Name them explicitly.
+  artifactName: 'xmbl-desktop-${version}-${arch}.${ext}',
+  // Nothing in this app loads a native module (main.js and src/core/xmbl-core.js require only
+  // electron and path), but electron-builder still rebuilt every native dependency in the hoisted
+  // workspace tree for the electron ABI — and classic-level's node-gyp build fails on Windows, so
+  // the .exe was never produced. Skip the rebuild rather than fix a build nothing here executes.
+  npmRebuild: false,
   directories: {
     output: 'dist'
   },

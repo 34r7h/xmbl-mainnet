@@ -1,5 +1,23 @@
 # @xmbl/storage-compute
 
+## 0.1.15
+
+### Patch Changes
+
+- **The Linux and Windows desktop builds still failed at v0.1.14; both are fixed.** v0.1.14 attached
+  the macOS dmg (x64 + arm64), both web bundles and the extension zip — the first downloadable
+  builds this repo has ever produced — but two targets were still missing:
+
+  - **Linux** — the default deb/AppImage artifact name is `${name}_${version}_${arch}`, and `name`
+    is the SCOPED package name `@xmbl/desktop-app`, so fpm tried to write into `dist/@xmbl/` and
+    died with "Parent directory does not exist". Artifacts are now named explicitly.
+  - **Windows** — electron-builder rebuilt every native dependency in the hoisted workspace tree
+    for the electron ABI, and `classic-level`'s node-gyp build fails on Windows, so the `.exe` was
+    never produced. Nothing in the desktop app loads a native module (`main.js` and
+    `src/core/xmbl-core.js` require only `electron` and `path`), so the rebuild is skipped.
+
+  No change to any published package's code in this release.
+
 ## 0.1.14
 
 ### Patch Changes

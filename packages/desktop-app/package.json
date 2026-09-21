@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/desktop-app",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "main": "main/main.js",
   "description": "XMBL Desktop Application",
   "scripts": {
@@ -11,12 +11,12 @@
   },
   "dependencies": {
     "vue": "^3.4.0",
-    "@xmbl/identity": "^0.1.14",
-    "@xmbl/networking": "^0.1.14",
-    "@xmbl/cubic-ledger": "^0.1.14",
-    "@xmbl/state-machine": "^0.1.14",
-    "@xmbl/consensus": "^0.1.14",
-    "@xmbl/storage-compute": "^0.1.14",
+    "@xmbl/identity": "^0.1.15",
+    "@xmbl/networking": "^0.1.15",
+    "@xmbl/cubic-ledger": "^0.1.15",
+    "@xmbl/state-machine": "^0.1.15",
+    "@xmbl/consensus": "^0.1.15",
+    "@xmbl/storage-compute": "^0.1.15",
     "level": "^8.0.0"
   },
   "devDependencies": {
