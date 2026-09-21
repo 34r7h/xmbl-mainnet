@@ -16,8 +16,8 @@
   },
   "dependencies": {
     "@isomorphic-git/lightning-fs": "^4.6.0",
-    "@xmbl/contracts": "^0.2.0",
-    "@xmbl/lng": "^0.2.0",
+    "@xmbl/contracts": "^0.1.12",
+    "@xmbl/lng": "^0.1.12",
     "buffer": "^6.0.3",
     "isomorphic-dompurify": "^2.13.0",
     "isomorphic-git": "^1.29.0",

@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/core",
-  "version": "0.2.0",
+  "version": "0.1.12",
   "type": "module",
   "main": "index.js",
   "license": "MIT",
@@ -24,13 +24,13 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@xmbl/consensus": "^0.2.0",
-    "@xmbl/cubic-ledger": "^0.2.0",
-    "@xmbl/identity": "^0.2.0",
-    "@xmbl/networking": "^0.2.0",
-    "@xmbl/state-machine": "^0.2.0",
-    "@xmbl/storage-compute": "^0.2.0",
-    "@xmbl/zero-knowledge": "^0.2.0",
+    "@xmbl/consensus": "^0.1.12",
+    "@xmbl/cubic-ledger": "^0.1.12",
+    "@xmbl/identity": "^0.1.12",
+    "@xmbl/networking": "^0.1.12",
+    "@xmbl/state-machine": "^0.1.12",
+    "@xmbl/storage-compute": "^0.1.12",
+    "@xmbl/zero-knowledge": "^0.1.12",
     "pino": "^10.1.0"
   },
   "scripts": {

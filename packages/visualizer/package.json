@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/visualizer",
-  "version": "0.2.0",
+  "version": "0.1.12",
   "type": "module",
   "private": true,
   "main": "server.js",
