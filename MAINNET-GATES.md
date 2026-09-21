@@ -158,11 +158,23 @@ continue-on-error, and in the release workflow before any publish).
       ARBITRARY computation. A caller supplies an execution trace and the polynomial constraints a
       correct execution satisfies (an AIR); the prover interpolates each column over a size-T
       subgroup, BLINDS it with a multiple of `x^T - 1` (which vanishes on every row, so the
-      constraints are untouched while the openings stay underdetermined — the blind degree is set
-      above `2*nc`), evaluates on a COSET so no denominator is ever zero, commits each column, draws
-      batching challenges from the ~124-bit extension, and proves the composition
+      constraints are untouched while the DIRECT openings stay underdetermined — the blind degree is
+      set above `2*nc`), evaluates on a COSET so no denominator is ever zero, commits each column,
+      draws batching challenges from the ~124-bit extension, and proves the composition
       `sum a_k*(transition_k / Z_T) + sum b_j*(boundary_j / (x - g^row))` is low-degree with FRI.
-      Parameters (K, N) are DERIVED from the trace length and constraint degree. Demonstrated on
+      THE COMPOSITION IS MASKED BEFORE FRI SEES IT. Unmasked it is not zero-knowledge and the trace
+      comes straight out: `alpha` and `beta` are public, so an opening `D(x) = alpha*u + beta*v` is
+      four base-field equations in two unknowns — solve two limbs for `v` and `col'(x)` follows, and
+      `2*nq` layer-0 openings interpolate a degree-`2T-1+blindDeg` polynomial whose row 0 IS the
+      witness. Measured: it returned the secret `1234567` exactly. So a uniformly random
+      EXTENSION-valued polynomial `M` of degree `< K` is committed first, `gamma` is drawn after its
+      root, and FRI runs on `C + gamma*M`; each opening is now four equations in six unknowns, and
+      `setup` doubles K until it exceeds everything the transcript reveals
+      (`nq*(log2 K + 1) + nc`, plus margin). Masking cannot hide a false statement: an `M` that is
+      not of degree `< K` would pin `gamma` to one value out of ~2^124, and `gamma` comes after the
+      commitment. Parameters (K, N) are DERIVED from the trace length and constraint degree, then
+      raised to meet that zero-knowledge bound; `nc` is 40, so the consistency check is ~120 bits
+      rather than the ~48 that `nc=16` bought. Demonstrated on
       three computations: Fibonacci, a degree-3 hash chain, and a conditional state machine with a
       boolean selector. The Fiat-Shamir transcript absorbs the WHOLE statement — every parameter and
       every boundary cell, not just the column roots — so a proof does not carry to a different
@@ -170,7 +182,13 @@ continue-on-error, and in the release workflow before any publish).
       in the round constant); and an oversized domain is refused rather than silently mis-generated
       against the field's 2-adicity. A trace that breaks its own rule cannot be proved; a tampered opening, a
       tampered composition value and a thinned opening set are all rejected; the witness and every
-      intermediate state are absent from the proof. — *air.js; air.test.mjs (20 checks, in the gate)*
+      intermediate state are absent from the proof — and the recovery attack above is a PERMANENT
+      check in the suite: it still gathers 200 openings for a degree-119 interpolation and no longer
+      returns the secret, nor any other row. The sibling `xzk` path was attacked the same way and
+      survives: the committed curve IS fully recoverable from its FRI openings, but `Pt = P + Zr*B`
+      with `B` uniform of degree 18 over a witness quotient of degree 1, so the same proof is carried
+      by a 2-parameter family of witnesses — the suite exhibits a second one.
+      — *air.js; air.test.mjs (30 checks, in the gate); xzk.test.mjs (26 checks)*
 - [x] **CONTRACT-WIRED**: the `airHost` flag exposes `env.xmbl_air_verify(val_ptr) -> i32`. The
       constraint system is NAMED from a fixed registry (`AIR_STATEMENTS`) rather than staged — a
       constraint system is code, and staging code to execute is not a capability this host grants —
@@ -729,10 +747,10 @@ continue-on-error, and in the release workflow before any publish).
       anchor ended at **36 / 35 / 36 blocks**. Two doors, the same attack, no key material required, and every
       xid and every anchor `event:hash` is public. (1) The ledger evicted an invalid TYPED datum by the xid it
       CLAIMED — but a datum fails `validateXid` precisely when its body does not hash to that xid, i.e. when
-      the xid belongs to someone else's datum. So copying an genuine anchor's xid and changing one byte evicted
+      the xid belongs to someone else's datum. So copying a genuine anchor's xid and changing one byte evicted
       the GENUINE anchor for good: refused forever if it had not arrived yet, and its stored rows DELETED by
       `evict()` if it had. (2) The anchor content key `event:hash` was claimed BEFORE validation and kept on
-      failure, so a forgery sharing an genuine anchor's event and hash made every later correct copy answer
+      failure, so a forgery sharing a genuine anchor's event and hash made every later correct copy answer
       `duplicate: true` and vanish. Now: a datum whose claimed xid is not its content address is evicted under
       a digest of ITS OWN bytes (`forged:<sha256>`), the speculative content key is released on every failure,
       and both errors carry `code: 'XID_MISMATCH'`. The forgery is still refused forever; what it impersonated

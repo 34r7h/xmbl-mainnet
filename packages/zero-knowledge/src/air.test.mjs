@@ -8,7 +8,7 @@
 // Run: node air.test.mjs
 import assert from 'node:assert';
 import { setup, prove, verify } from './air.js';
-import { add, sub, mul, mod, EXT_BITS, GRIND_BITS } from './fri.js';
+import { add, sub, mul, mod, inv, pw, H, fsExt, EXT_BITS, GRIND_BITS } from './fri.js';
 
 let pass = 0;
 const ok = (n, c) => { assert.ok(c, n); console.log('  ok  ', n); pass++; };
@@ -34,9 +34,10 @@ const proveMs = Date.now() - t0;
 const tv = Date.now();
 const fibOk = verify(fibCtx, { proof: fibProof, transitions: fibTransitions, boundary: fibBoundary });
 const verifyMs = Date.now() - tv;
-ok(`an genuine Fibonacci execution verifies (prove ${proveMs} ms, verify ${verifyMs} ms)`, fibOk === true);
-ok('the proof commits one root per column plus the composition', fibProof.roots.length === 2 && typeof fibProof.rootC === 'string');
-ok('the composition commitment IS the FRI codeword', fibProof.friC.roots[0] === fibProof.rootC);
+ok(`a genuine Fibonacci execution verifies (prove ${proveMs} ms, verify ${verifyMs} ms)`, fibOk === true);
+ok('the proof commits one root per column, plus the mask and the masked composition',
+  fibProof.roots.length === 2 && typeof fibProof.rootM === 'string' && typeof fibProof.rootD === 'string');
+ok('the masked-composition commitment IS the FRI codeword', fibProof.friC.roots[0] === fibProof.rootD);
 
 // soundness — a different claimed output
 {
@@ -60,8 +61,11 @@ ok('the composition commitment IS the FRI codeword', fibProof.friC.roots[0] === 
   tampered.opens[0].cur[0] = add(tampered.opens[0].cur[0], 1n);
   ok('a tampered trace opening is rejected', verify(fibCtx, { proof: tampered, transitions: fibTransitions, boundary: fibBoundary }) === false);
   const t2 = revive(JSON.parse(JSON.stringify(fibProof, (_k, v) => (typeof v === 'bigint' ? ['#', v.toString()] : v))));
-  t2.opens[1].Cv = t2.opens[1].Cv.map((c, i) => (i === 0 ? add(c, 1n) : c));
+  t2.opens[1].Dv = t2.opens[1].Dv.map((c, i) => (i === 0 ? add(c, 1n) : c));
   ok('a tampered composition opening is rejected', verify(fibCtx, { proof: t2, transitions: fibTransitions, boundary: fibBoundary }) === false);
+  const t4 = revive(JSON.parse(JSON.stringify(fibProof, (_k, v) => (typeof v === 'bigint' ? ['#', v.toString()] : v))));
+  t4.opens[2].Mv = t4.opens[2].Mv.map((c, i) => (i === 0 ? add(c, 1n) : c));
+  ok('a tampered MASK opening is rejected', verify(fibCtx, { proof: t4, transitions: fibTransitions, boundary: fibBoundary }) === false);
   const t3 = revive(JSON.parse(JSON.stringify(fibProof, (_k, v) => (typeof v === 'bigint' ? ['#', v.toString()] : v))));
   t3.opens = t3.opens.slice(0, 4);
   ok('a thinned opening set is rejected', verify(fibCtx, { proof: t3, transitions: fibTransitions, boundary: fibBoundary }) === false);
@@ -82,8 +86,10 @@ ok('the composition commitment IS the FRI codeword', fibProof.friC.roots[0] === 
   ok('the secret preimage does not appear in the proof', !blob.includes(secret.toString()));
   ok('no intermediate state of the chain appears either', trace.slice(0, -1).every((r) => !blob.includes(r[0].toString())));
   ok('a different digest is rejected', verify(ctx, { proof, transitions, boundary: [{ row: L - 1, col: 0, value: add(digest, 1n) }] }) === false);
-  // the blind out-degrees what is opened, so the openings cannot determine the column
-  ok('the blind out-degrees the openings', ctx.blindDeg >= 2 * ctx.nc);
+  // the blind out-degrees the DIRECT trace openings, so those cannot determine the column
+  ok('the blind out-degrees the direct trace openings', ctx.blindDeg >= 2 * ctx.nc);
+  // and the mask out-degrees everything the FRI transcript hands out
+  ok('the mask out-degrees the whole FRI transcript', ctx.K > ctx.nq * (Math.log2(ctx.K) + 1) + ctx.nc);
   // two proofs of the same statement differ
   const p2 = prove(ctx, { trace, transitions, boundary });
   ok('two proofs of the same statement commit differently', p2.roots[0] !== proof.roots[0]);
@@ -135,6 +141,53 @@ ok('the composition commitment IS the FRI codeword', fibProof.friC.roots[0] === 
   // the same constraints but a different boundary must also fail, for the same reason
   ok('and against its own constraints with a different boundary row',
     verify(A.ctx, { proof: proofA, transitions: A.transitions, boundary: [{ row: 0, col: 0, value: digestA }] }) === false);
+}
+
+// ── (e) THE RECOVERY ATTACK ────────────────────────────────────────────────────
+// "the secret is not a substring of the proof" is not zero knowledge. This is the attack that broke
+// the unmasked version: α and β are public, so an unmasked opening D(x) = α·u + β·v is four
+// base-field equations in two unknowns — solve any two limbs for v, and col'(x) = v·(x − g^row) + value.
+// 2·nq layer-0 openings then interpolate a polynomial of degree 2T−1+blindDeg and row 0 IS the secret.
+// It recovered 1234567 exactly. With the mask each opening is four equations in SIX unknowns.
+{
+  const L = 16, RC = 987654321n;
+  const ctx = setup({ traceLen: L, width: 1, constraintDeg: 3 });
+  const secret = mod(1234567n);
+  const trace = []; { let x = secret; for (let r = 0; r < L; r++) { trace.push([x]); x = add(mul(mul(x, x), x), RC); } }
+  const digest = trace[L - 1][0];
+  const transitions = [(c, n) => sub(n[0], add(mul(mul(c[0], c[0]), c[0]), RC))];
+  const boundary = [{ row: L - 1, col: 0, value: digest }];
+  const proof = prove(ctx, { trace, transitions, boundary });
+  const colDeg = 2 * L - 1 + ctx.blindDeg;
+
+  // the attacker recomputes the public challenges exactly as the verifier does
+  const tag = [ctx.T, ctx.W, ctx.D, ctx.K, ctx.N, ctx.blowup, ctx.nq, ctx.nc, ctx.grind, ctx.blindDeg, 1,
+    boundary.map((b) => `${b.row}/${b.col}/${b.value.toString()}`).join(';')].join('|');
+  const tr = H(tag) + ':' + proof.roots.join(':') + ':m:' + proof.rootM;
+  const alpha = fsExt(tr + ':alpha0'), beta = fsExt(tr + ':beta0');
+  const gRow = pw(ctx.g, BigInt(L - 1));
+  const pts = [];
+  for (const q of proof.friC.queries) {
+    const st = q.steps[0], half = ctx.N / 2;
+    for (const [idx, Dv] of [[st.i, st.a], [st.i + half, st.b]]) {
+      let v = null;
+      for (let r1 = 0; r1 < 4 && v === null; r1++) for (let r2 = r1 + 1; r2 < 4 && v === null; r2++) {
+        const det = sub(mul(alpha[r1], beta[r2]), mul(alpha[r2], beta[r1]));
+        if (det !== 0n) v = mul(sub(mul(alpha[r1], Dv[r2]), mul(alpha[r2], Dv[r1])), inv(det));
+      }
+      if (v !== null) pts.push([ctx.coset[idx], add(mul(v, sub(ctx.coset[idx], gRow)), digest)]);
+    }
+  }
+  ok(`the attack has more than enough openings to interpolate (${pts.length} ≥ ${colDeg + 1})`, pts.length >= colDeg + 1);
+  const P = pts.slice(0, colDeg + 1);
+  let recovered = 0n;
+  for (let i = 0; i < P.length; i++) {
+    let num = 1n, den = 1n;
+    for (let j = 0; j < P.length; j++) if (j !== i) { num = mul(num, sub(1n, P[j][0])); den = mul(den, sub(P[i][0], P[j][0])); }
+    recovered = add(recovered, mul(P[i][1], mul(num, inv(den))));
+  }
+  ok('the recovery attack does NOT return the secret', recovered !== secret);
+  ok('nor any other row of the trace', !trace.some((r) => r[0] === recovered));
 }
 
 // the field's 2-adicity is the real ceiling and setup() refuses before producing a bad generator

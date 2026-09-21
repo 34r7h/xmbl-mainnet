@@ -3,7 +3,7 @@
 // FOUND by reproductions/three-nodes.mjs on its first run: three nodes given the identical 36-anchor set plus
 // one forgery ended with 36 / 35 / 36 blocks. The ledger evicted an invalid typed datum by the xid it CLAIMED —
 // and a datum fails validateXid precisely when its body does not hash to that xid, i.e. when the xid is
-// somebody else's. So a forgery that copies an genuine anchor's xid and changes one byte of the body made the
+// somebody else's. So a forgery that copies a genuine anchor's xid and changes one byte of the body made the
 // genuine anchor unavailable on every node that saw the forgery: refused forever if it had not arrived yet, and
 // its stored rows DELETED by evict() if it had. Every xid is public, so this was a denial-of-service against
 // any transaction on the chain, executable by anyone, with no key material.
@@ -90,7 +90,7 @@ const genuine = (label) => micromineTx({ type: 'anchor', event: 'task.created', 
 }
 
 // ── 4. THE SAME ATTACK THROUGH THE DEDUP DOOR: a forgery that keeps the genuine event:hash ──
-// The content key is claimed BEFORE validation, so a forgery sharing an genuine anchor's event and hash used to
+// The content key is claimed BEFORE validation, so a forgery sharing a genuine anchor's event and hash used to
 // hold that key forever once it failed — and the genuine anchor was then answered `duplicate: true` and
 // silently dropped. Same denial-of-service, different door.
 {

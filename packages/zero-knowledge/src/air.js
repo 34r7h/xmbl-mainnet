@@ -15,8 +15,8 @@
 //      is the column polynomial at g^r.
 //   2. BLIND each column: col'(x) = col(x) + (x^T − 1)·r(x) with r random. Since x^T − 1 vanishes
 //      on the whole trace domain, col' agrees with col on every row — the constraints are
-//      untouched — while being random everywhere else. The blind's degree is set above the number
-//      of openings, so the opened points never determine the polynomial.
+//      untouched — while being random everywhere else. deg(r) is set above the 2·nc points at which
+//      the verifier opens the columns DIRECTLY, so those openings leave col' undetermined.
 //   3. Evaluate on a COSET of a larger domain (size N = K·blowup). A coset, so the evaluation
 //      domain is disjoint from the trace domain and no denominator is ever zero.
 //   4. Commit each column. Draw batching challenges from the ~124-bit extension field.
@@ -24,17 +24,29 @@
 //      Z_T = (x^T − 1)/(x − g^(T−1)) vanishes on every row a transition must hold on. It is a
 //      polynomial exactly when the constraints hold; otherwise the division leaves a high-degree
 //      remainder that FRI rejects.
-//   6. Prove the composition is low-degree with FRI, and open the trace at random points so the
-//      verifier can recompute the composition there and compare.
+//   6. MASK the composition. FRI is not zero-knowledge: every query opens the codeword at two
+//      layer-0 points, and C(x) is an extension element built from PUBLIC α and β over base-field
+//      unknowns — four equations in two unknowns, so each opening hands out col'(x) exactly. With
+//      nq queries that is 2·nq evaluations of a polynomial of degree ~2T+blindDeg, and the trace
+//      interpolates straight out of the proof. So a uniformly random EXTENSION-valued polynomial M
+//      of degree < K is committed first, γ is drawn after its root, and FRI runs on D = C + γ·M.
+//      Each opening now gives four equations in six unknowns. M's K uniform coefficients make every
+//      value the FRI transcript reveals jointly uniform, so long as the count stays below K — which
+//      is what `setup` forces by doubling K (see ZK_REVEALED).
+//   7. Prove D is low-degree with FRI, and open the trace at random points so the verifier can
+//      recompute C there, add γ·M(x) from M's own commitment, and compare against D.
 //
-// The verifier never sees the trace. It sees commitments, a low-degree proof, and a few openings of
-// a blinded polynomial.
+// Masking cannot hide a false statement: if M were not of degree < K, then D being of degree < K
+// would pin γ to a single value out of |F_p^4| ≈ 2^124, and γ is drawn after M is committed.
+//
+// The verifier never sees the trace. It sees commitments, a low-degree proof of a masked codeword,
+// and a few openings of a blinded polynomial.
 
 import { randomBytes } from 'node:crypto';
 import {
   p, mod, add, sub, mul, inv, pw, polyEval, domainOfSize, merkle, merkleExt, mpath, mverify,
-  mverifyExt, H, fsExt, fsIndex, friProve, friVerify, eAdd, eScale, eFrom, eEq, eStr,
-  GRIND_BITS, EXT_BITS,
+  mverifyExt, H, fsExt, fsIndex, friProve, friVerify, eAdd, eScale, eMul, eFrom, eEq,
+  evalCoset, GRIND_BITS, EXT_BITS,
 } from './fri.js';
 
 const polyAdd = (a, b) => { const n = Math.max(a.length, b.length); return Array.from({ length: n }, (_, i) => add(a[i] || 0n, b[i] || 0n)); };
@@ -59,25 +71,42 @@ function interpOverSubgroup(values, g, T) {
 }
 
 /**
+ * How many field elements the FRI transcript hands out, as a function of the degree bound. Each
+ * query opens BOTH halves at layer 0 (2 values) and then one genuinely new sibling at each of the
+ * remaining log2(K)-1 folds — the other one is the fold of the pair already opened. On top of that
+ * the verifier opens the mask itself at the nc consistency points.
+ */
+const ZK_REVEALED = (K, nq, nc) => nq * (Math.log2(K) + 1) + nc;
+/** Spare mask coefficients left over after everything the transcript reveals. */
+const ZK_MARGIN = 64;
+
+/**
  * Size the proof system for a given computation.
  * @param {object} o
  * @param {number} o.traceLen       rows (power of two)
  * @param {number} o.width          columns
  * @param {number} o.constraintDeg  highest total degree of any transition constraint in the columns
  * @param {number} [o.blowup=8]     N / K — lower rate, more soundness per query
- * @param {number} [o.nq=96]        FRI queries
- * @param {number} [o.nc=16]        trace openings
+ * @param {number} [o.nq=100]       FRI queries
+ * @param {number} [o.nc=40]        trace openings
  */
 export function setup(o) {
   const T = o.traceLen, W = o.width, D = o.constraintDeg;
-  const blowup = o.blowup || 8, nq = o.nq || 96, nc = o.nc || 16;
+  const blowup = o.blowup || 8, nq = o.nq || 100, nc = o.nc || 40;
   const grind = o.grindBits === undefined ? GRIND_BITS : o.grindBits;
-  // The blind must out-degree everything the verifier gets to see: each opening reveals the column
-  // at two points, so 2*nc values. Above that the opened points leave the polynomial undetermined.
+  // The blind must out-degree the DIRECT trace openings: each of the nc consistency points reveals
+  // the column at two points, so 2*nc values. Above that those points leave col' undetermined.
+  // Everything FRI reveals is covered by the mask instead (see the header), not by this blind.
   const blindDeg = o.blindDegree || (2 * nc + 8);
   const colDeg = 2 * T - 1 + blindDeg;            // deg(col + (x^T - 1)*r)
   const quotientDeg = D * colDeg - (T - 1);
-  const K = nextPow2(Math.max(quotientDeg + 1, colDeg + 1));
+  let K = nextPow2(Math.max(quotientDeg + 1, colDeg + 1));
+  // ZERO KNOWLEDGE, not soundness: the mask has K uniform extension coefficients and the transcript
+  // reveals ZK_REVEALED of them, so K must stay strictly above that count or the revealed values
+  // determine the mask, the mask stops hiding C, and the trace interpolates out of the proof
+  // (which is exactly what it did before the mask existed). Raising K is the cheap knob — it grows
+  // the domain and the fold count but leaves every polynomial degree where it was.
+  while (K <= ZK_REVEALED(K, nq, nc) + ZK_MARGIN) K <<= 1;
   const N = K * blowup;
   // The field's 2-adicity is 27 (p - 1 = 2^27 * 15), so a domain above 2^27 has NO generator and
   // domainOfSize would silently return a bad one. The practical ceiling is lower than that.
@@ -107,12 +136,15 @@ function statementTag(ctx, nT, boundary) {
   return [ctx.T, ctx.W, ctx.D, ctx.K, ctx.N, ctx.blowup, ctx.nq, ctx.nc, ctx.grind, ctx.blindDeg, nT,
     boundary.map((b) => `${b.row}/${b.col}/${b.value.toString()}`).join(';')].join('|');
 }
-function challenges(roots, ctx, nT, boundary) {
-  const t = H(statementTag(ctx, nT, boundary)) + ':' + roots.join(':');
+function challenges(roots, rootM, ctx, nT, boundary) {
+  const t = H(statementTag(ctx, nT, boundary)) + ':' + roots.join(':') + ':m:' + rootM;
   return {
     transcript: t,
     alphas: Array.from({ length: nT }, (_, k) => fsExt(t + ':alpha' + k)),
     betas: Array.from({ length: boundary.length }, (_, j) => fsExt(t + ':beta' + j)),
+    // γ is drawn AFTER the mask is committed. That ordering is the whole soundness argument for
+    // masking: a mask that is not of degree < K can only keep D = C + γ·M low-degree for one γ.
+    gamma: fsExt(t + ':gamma'),
   };
 }
 
@@ -125,7 +157,7 @@ function challenges(roots, ctx, nT, boundary) {
  * @param {{row:number,col:number,value:bigint}[]} o.boundary  pinned cells (the public statement)
  */
 export function prove(ctx, { trace, transitions, boundary }) {
-  const { T, W, N, step, coset } = ctx;
+  const { T, W, N, K, step, coset, dom, shift } = ctx;
   if (trace.length !== T) throw new Error(`prove: trace has ${trace.length} rows, expected ${T}`);
   // 1-2. interpolate each column and blind it with a multiple of (x^T - 1)
   const xT = new Array(T + 1).fill(0n); xT[T] = 1n; xT[0] = mod(-1n);
@@ -136,37 +168,43 @@ export function prove(ctx, { trace, transitions, boundary }) {
     cols.push(polyAdd(base, polyMul(xT, r)));
   }
   // 3. evaluate on the coset
-  const evals = cols.map((c) => coset.map((x) => polyEval(c, x)));
-  // 4. commit each column, then draw the batching challenges
+  const evals = cols.map((c) => evalCoset(c, dom, shift));
+  // 4. commit each column, then the MASK: a uniformly random extension-valued polynomial of degree
+  //    < K, evaluated on the same coset. It is committed BEFORE any challenge is drawn.
   const coms = evals.map((e) => merkle(e));
   const roots = coms.map((c) => c.root);
-  const { alphas, betas, transcript } = challenges(roots, ctx, transitions.length, boundary);
-  // 5. compose
+  const mLimbs = Array.from({ length: 4 }, () => Array.from({ length: K }, () => mod(BigInt('0x' + randomBytes(32).toString('hex')))));
+  const mEvalLimbs = mLimbs.map((l) => evalCoset(l, dom, shift));
+  const M = Array.from({ length: N }, (_, i) => [mEvalLimbs[0][i], mEvalLimbs[1][i], mEvalLimbs[2][i], mEvalLimbs[3][i]]);
+  const comM = merkleExt(M);
+  const { alphas, betas, gamma, transcript } = challenges(roots, comM.root, ctx, transitions.length, boundary);
+  // 5. compose, then mask
   const zInv = coset.map((x) => inv(zTransition(ctx, x)));
   const bInv = boundary.map((b) => coset.map((x) => inv(sub(x, pw(ctx.g, BigInt(b.row))))));
-  const C = new Array(N);
+  const Dw = new Array(N);
   for (let i = 0; i < N; i++) {
     const ni = (i + step) % N;
     const cur = evals.map((e) => e[i]), nxt = evals.map((e) => e[ni]);
     let acc = eFrom(0n);
     for (let k = 0; k < transitions.length; k++) acc = eAdd(acc, eScale(alphas[k], mul(transitions[k](cur, nxt), zInv[i])));
     for (let j = 0; j < boundary.length; j++) acc = eAdd(acc, eScale(betas[j], mul(sub(cur[boundary[j].col], boundary[j].value), bInv[j][i])));
-    C[i] = acc;
+    Dw[i] = eAdd(acc, eMul(gamma, M[i]));
   }
-  // 6. low-degree proof for the composition, plus trace openings
-  const comC = merkleExt(C);
-  const friC = friProve(C, coset, ctx.K, ctx.nq, ctx.grind, true);
-  const idxs = Array.from({ length: ctx.nc }, (_, k) => fsIndex(comC.root + ':' + transcript + ':open' + k, N));
+  // 6. low-degree proof for the MASKED composition, plus trace and mask openings
+  const comD = merkleExt(Dw);
+  const friC = friProve(Dw, coset, K, ctx.nq, ctx.grind, true);
+  const idxs = Array.from({ length: ctx.nc }, (_, k) => fsIndex(comD.root + ':' + transcript + ':open' + k, N));
   const opens = idxs.map((i) => {
     const ni = (i + step) % N;
     return {
       i,
       cur: evals.map((e) => e[i]), nxt: evals.map((e) => e[ni]),
       pCur: coms.map((c) => mpath(c.tree, i)), pNxt: coms.map((c) => mpath(c.tree, ni)),
-      Cv: C[i], pC: mpath(comC.tree, i),
+      Dv: Dw[i], pD: mpath(comD.tree, i),
+      Mv: M[i], pM: mpath(comM.tree, i),
     };
   });
-  return { roots, rootC: comC.root, friC, opens };
+  return { roots, rootM: comM.root, rootD: comD.root, friC, opens };
 }
 
 /**
@@ -177,10 +215,11 @@ export function verify(ctx, { proof, transitions, boundary }) {
   const { N, step, coset } = ctx;
   try {
     if (!Array.isArray(proof.roots) || proof.roots.length !== ctx.W) return false;
-    if (proof.friC.roots[0] !== proof.rootC) return false;        // one codeword, not two
+    if (typeof proof.rootM !== 'string' || !proof.rootM) return false;
+    if (proof.friC.roots[0] !== proof.rootD) return false;        // one codeword, not two
     if (!friVerify(proof.friC, coset, ctx.K, ctx.nq, ctx.grind, true)) return false;
-    const { alphas, betas, transcript } = challenges(proof.roots, ctx, transitions.length, boundary);
-    const idxs = Array.from({ length: ctx.nc }, (_, k) => fsIndex(proof.rootC + ':' + transcript + ':open' + k, N));
+    const { alphas, betas, gamma, transcript } = challenges(proof.roots, proof.rootM, ctx, transitions.length, boundary);
+    const idxs = Array.from({ length: ctx.nc }, (_, k) => fsIndex(proof.rootD + ':' + transcript + ':open' + k, N));
     if (proof.opens.length !== ctx.nc) return false;
     for (let k = 0; k < ctx.nc; k++) {
       const o = proof.opens[k], i = idxs[k], ni = (i + step) % N;
@@ -189,7 +228,8 @@ export function verify(ctx, { proof, transitions, boundary }) {
         if (!mverify(proof.roots[j], o.cur[j], i, o.pCur[j])) return false;
         if (!mverify(proof.roots[j], o.nxt[j], ni, o.pNxt[j])) return false;
       }
-      if (!mverifyExt(proof.rootC, o.Cv, i, o.pC)) return false;
+      if (!mverifyExt(proof.rootD, o.Dv, i, o.pD)) return false;
+      if (!mverifyExt(proof.rootM, o.Mv, i, o.pM)) return false;
       const x = coset[i];
       const zInv = inv(zTransition(ctx, x));
       let acc = eFrom(0n);
@@ -197,7 +237,8 @@ export function verify(ctx, { proof, transitions, boundary }) {
       for (let b = 0; b < boundary.length; b++) {
         acc = eAdd(acc, eScale(betas[b], mul(sub(o.cur[boundary[b].col], boundary[b].value), inv(sub(x, pw(ctx.g, BigInt(boundary[b].row)))))));
       }
-      if (!eEq(acc, o.Cv)) return false;
+      // the low-degree codeword must be the composition PLUS the committed mask at this point
+      if (!eEq(eAdd(acc, eMul(gamma, o.Mv)), o.Dv)) return false;
     }
     return true;
   } catch { return false; }

@@ -188,18 +188,73 @@ and `proof.friC.roots[0] === proof.rootC`. Keeping FRI layer 0 in the base field
 the same Merkle leaf encoding as `merkle(cw)`, is what makes that check possible.
 Pinned by `xzk.test.mjs` ("an unbound constraint commitment is rejected").
 
-### 3.7 What the tests establish
+### 3.7 FINDING F5 — the AIR path was not zero-knowledge (FOUND AND FIXED, 2026-09-21)
+
+Reported by `handoff-claude` against the published `@xmbl/zero-knowledge@0.1.12`,
+reproduced here independently, and fixed.
+
+`air.js` proved a general AIR by FRI-testing the composition
+`C(x) = Σ α_k·T_k(x)/Z_T(x) + Σ β_j·(col'_j(x) − v_j)/(x − g^row)`.
+`α` and `β` are public — Fiat–Shamir over the roots and the statement — and `C(x)` is an
+element of `F_p⁴`, while `u = T/Z_T` and `v = (col' − value)/(x − g^row)` are base-field
+scalars. One opening is therefore **four equations in two unknowns**: solve any two limbs
+for `v`, and `col'(x) = v·(x − g^row) + value`. Every FRI query opens layer 0 at two
+points, so `nq = 96` queries handed out ~178 distinct evaluations of a polynomial of
+degree `2T − 1 + blindDeg = 71`. Interpolating and evaluating at `g⁰` returned the secret
+`1234567` exactly, in about a second. The `(x^T − 1)` blind could not help: it is sized
+for the `2·nc` direct openings and vanishes on the trace domain by construction. The
+suite's `!JSON.stringify(proof).includes(secret)` check was true and irrelevant.
+
+**Fix — mask the composition.** A uniformly random polynomial `M` with EXTENSION
+coefficients and degree `< K` is committed before any challenge is drawn; `γ` is drawn
+from a transcript that includes `M`'s root; FRI runs on `D = C + γ·M`. Each opening is now
+four equations in six unknowns (`u`, `v`, and `M(x)`'s four limbs) — rank 4 of 6, two free
+dimensions, `col'(x)` undetermined. At the `nc` consistency points the verifier opens `M`
+against its own root and checks `D(x) = C_recomputed(x) + γ·M(x)`.
+
+**Masking cannot hide a false statement.** If `M` were not of degree `< K`, then `D` being
+of degree `< K` would require `C_hi + γ·M_hi = 0`, which pins `γ` to a single element of
+`F_p⁴` (~2^124) — and `γ` is drawn after `M` is committed.
+
+**Parameters.** `M` hides only while the transcript reveals fewer than its `K` coefficients.
+A query opens both halves at layer 0 and one genuinely new sibling at each of the remaining
+`log2 K − 1` folds, so the count is `nq·(log2 K + 1) + nc`. `setup` now doubles `K` until it
+clears that with margin: at `nq = 100`, `nc = 40` this gives `K = 2048`, `N = 16384`,
+revealed 1240 of 2048. Raising `K` is the cheap knob — it grows the domain and the fold
+count but leaves every polynomial degree where it was. `nc` was raised 16 → 40 in the same
+change: each consistency point is `−log2(K/N) = 3` bits, so `nc = 16` was a ~48-bit check
+sitting behind a ~100-bit FRI, and `nc = 40` makes it ~120.
+
+The coset evaluation is now an NTT (`fri.js` `ntt`, `evalCoset`) — a degree-2047 mask over
+16384 points is 33M multiplications by Horner and 115k butterflies by NTT. Proving is
+faster than before the fix despite the larger domain.
+
+**The `xzk` path was attacked the same way and survives.** FRI layer 0 of `friP` IS the
+curve codeword in the clear, so ~150 openings recover the committed curve `Pt` exactly —
+the curve is public and always was. The witness is not: `Pt = P + Z_R·B` with `B` uniform
+of degree 18 while `(P − I_R)/Z_R` has degree 1, so the recovered curve is consistent with
+a 2-parameter family of secret point sets. `xzk.test.mjs` exhibits a second witness and the
+legal blind that carries the same proof.
+
+### 3.8 What the tests establish
 
 The `fri.js` self-tests are outcome checks: FRI **accepts** a random degree-`<32`
 codeword, **rejects** a codeword with a few tampered points, **rejects** a degree-`39`
 (`>K`) codeword, and **rejects** both a broken grinding seal and a lowered grinding
 claim. The extension arithmetic is checked directly (`X⁴ === W`, commutativity).
 
-`xzk.test.mjs` (22 checks) additionally pins completeness, soundness against a forged
+`xzk.test.mjs` (26 checks) additionally pins completeness, soundness against a forged
 derived value and a wrong `derivedX`, the prover-chosen degree bound (F4), a thinned
 query set, a lowered proof-of-work claim, the commitment binding (§3.6), the blind's
 freshness and its inability to move the derived value, and that no opened field
-element in a ~950 KB proof equals a secret point's value.
+element in a ~950 KB proof equals a secret point's value — and that the recovery attack of
+§3.7 recovers the committed curve but not the witness.
+
+`air.test.mjs` (30 checks) pins the general-purpose path: completeness over three
+computations, a trace that breaks its own rule, tampered trace / composition / MASK
+openings, a thinned opening set, statement binding against a same-sized other statement,
+and the §3.7 recovery attack as a standing check — it still collects 200 openings for a
+degree-119 interpolation and returns neither the secret nor any other trace row.
 
 ---
 
@@ -212,17 +267,19 @@ element in a ~950 KB proof equals a secret point's value.
 | Z3 | Fiat–Shamir challenges are drawn from a ≥124-bit space | **CLOSED — quartic extension `F_p[X]/(X⁴−11)`** (§3.1) |
 | Z4 | Grinding PoW seals the query transcript | **CLOSED — 20 bits, verifier-enforced** (§3.2) |
 | Z5 | Verifier fold-check logic is correct | Rewritten and readable (§3.3); **still an external-audit item** |
-| Z6 | xzk hiding: secret points blinded by `Z_R·B` (degree-18 blind) | Blind is now FRESH randomness, every coefficient independent, CSPRNG by default (§3.3 of the code). **The hiding ARGUMENT — that `nq+nc` openings stay below the blind's degree — is still not proved. Audit item.** |
+| Z6 | xzk hiding: secret points blinded by `Z_R·B` (degree-18 blind) | Blind is FRESH randomness, every coefficient independent, CSPRNG by default. The openings do NOT stay below the blind's degree — the whole curve is recoverable — but the hiding does not depend on that: `deg B = 18` over a witness quotient of degree 1 leaves a 2-parameter family of witnesses per proof, exhibited in `xzk.test.mjs` (§3.7). **The general argument for arbitrary point counts is still not proved. Audit item.** |
 | Z7 | FRI must not gate consensus/ledger/sealing | Enforced by policy (`MAINNET-GATES.md`) — keep until the audit lands |
 | Z8 | The degree bound is the VERIFIER's parameter | **CLOSED — F4, library and contract host** (§3.4) |
-| Z9 | Fiat–Shamir challenges bind the whole statement | **Not yet** — transcript covers Merkle roots only (§3.5) |
+| Z9 | Fiat–Shamir challenges bind the whole statement | **CLOSED for `air`** — `statementTag` absorbs every parameter and boundary cell; **open for `xzk`**, whose transcript covers Merkle roots only (§3.5) |
+| Z11 | AIR hiding: the FRI transcript reveals nothing about the trace | **CLOSED — F5** (§3.7): unmasked it revealed the trace outright; the composition is now masked by a uniform extension-valued degree-`<K` polynomial and `setup` keeps `K` above everything the transcript reveals |
 | Z10 | The low-degree test and the constraint openings are one codeword | **CLOSED** (§3.6) |
 
 **What remains before `xzk` can be relied on.** The parameter findings (F1, F2) and
 the two verifier defects (F3's dead logic, F4's prover-chosen bound) are closed, and
 the commitment binding (§3.6) is added. Open: (a) the **zero-knowledge argument** —
-the blind is now fresh randomness with independent coefficients, but nobody has proved
-that `nq + nc` openings stay below its degree, which is the actual hiding claim (Z6);
+`air`'s hiding is now a counting argument (§3.7, Z11) and `xzk`'s is a witness-family
+argument, both checked empirically against the attack that broke the unmasked version, but
+neither is a proof (Z6, Z11);
 (b) absorbing the public points, derived coordinate and parameters into the
 Fiat–Shamir transcript (Z9, §3.5); (c) an **external review by a ZK cryptographer**,
 ideally MAYO/UOV-adjacent since `xzk` composes with MAYO. Until (c) lands the

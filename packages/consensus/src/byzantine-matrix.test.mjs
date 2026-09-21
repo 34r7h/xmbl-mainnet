@@ -101,7 +101,7 @@ await check('(a) equivocating peer: correct majority seals ONE set; the forged s
   const forged = { setHash: H([{ key: 'zz1' }, { key: 'zz2' }]), memberIds: ['zz1', 'zz2'] };
   await runRounds(nodes, 4, () => evilInject(bus, 'evil', (t) => (t === 'h0' ? { setHash: H_AB, memberIds: ['A', 'B'] } : forged)));
   assert.strictEqual(distinctSealed(nodes).size, 1, 'correct nodes sealed more than one set under equivocation');
-  assert.ok(nodes.every((n) => n.sealedHash === H_AB), 'an correct node sealed something other than the true set');
+  assert.ok(nodes.every((n) => n.sealedHash === H_AB), 'a correct node sealed something other than the true set');
   assert.ok(![...bus.mgrs.keys()].some((id) => nodes.find((n) => n.id === id)?.sealedHash === forged.setHash), 'the forged set was sealed');
 });
 

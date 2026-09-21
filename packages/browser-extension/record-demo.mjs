@@ -68,7 +68,7 @@ const VO = {
   incby: 'Arguments work too. Incrementing by forty-one moves the counter to forty-two, recompiled and executed from source on every call.',
   revert: 'Contracts must fail safely. We open the Vault and withdraw far more than its balance — an underflow. The call reverts, and the committed balance stays exactly where it was.',
   crypto: 'Beyond contracts, the node exposes cryptography. The Crypto tab runs real primitives on the live devnet.',
-  zk: 'A zero-knowledge proof: the node verifies an genuine coordinate and rejects a tampered one — a real, green verdict.',
+  zk: 'A zero-knowledge proof: the node verifies a genuine coordinate and rejects a tampered one — a real, green verdict.',
   he: 'Homomorphic encryption: two encrypted numbers are added while they stay encrypted, under a post-quantum scheme.',
   wallet: 'The Wallet tab shows a real balance served by the node bridge — connected, not a fabricated value.',
   node: 'And the Node tab reads the live ledger state root, and maps every module the node runs.',

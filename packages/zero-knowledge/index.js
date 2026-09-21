@@ -18,8 +18,11 @@ export { setup, blindedCurve, prove, verify } from './src/xzk.js';
 // caller supplies an execution trace and the polynomial constraints a correct execution satisfies
 // (an AIR), and gets a proof that a satisfying trace exists without revealing it. Each column is
 // blinded by a multiple of (x^T - 1), which vanishes on every row, so the constraints are untouched
-// while the openings stay underdetermined. Batching challenges come from the ~124-bit quartic
-// extension, so the composition is extension-valued and FRI runs over it directly.
+// while the DIRECT openings stay underdetermined. Batching challenges come from the ~124-bit quartic
+// extension, so the composition is extension-valued and FRI runs over it directly — and because FRI
+// openings would otherwise expose the composition (four public-coefficient equations in two unknowns
+// per opening, enough to interpolate the trace straight out of the proof), the codeword FRI sees is
+// the composition plus a uniformly random extension-valued mask committed before the challenges.
 export {
   setup as airSetup, prove as airProve, verify as airVerify,
   STATEMENTS as AIR_STATEMENTS, statementCtx as airStatementCtx, verifyStatement as airVerifyStatement,

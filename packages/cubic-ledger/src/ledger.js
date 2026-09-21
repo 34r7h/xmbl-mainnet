@@ -303,7 +303,7 @@ export class Ledger extends EventEmitter {
       block = Block.fromTransaction(tx, opts);
     } catch (error) {
       // ⛔ THE SPECULATIVE CONTENT KEY IS TAKEN BACK ON EVERY FAILURE, not just on UNTYPED. The key above is
-      // claimed BEFORE the datum is validated, so a forgery that keeps an genuine anchor's `event` and `hash`
+      // claimed BEFORE the datum is validated, so a forgery that keeps a genuine anchor's `event` and `hash`
       // and breaks anything else (its nonce, its type prefix, its body) left that key claimed forever — and
       // the genuine anchor arriving later was answered `duplicate: true` and never stored. The same
       // denial-of-service as the xid eviction below, through the dedup door instead of the eviction door.
@@ -315,7 +315,7 @@ export class Ledger extends EventEmitter {
       if (error && error.code === 'UNTYPED') { throw error; }   // no identity yet: refused, never evicted
       // ⛔ NEVER EVICT BY A CLAIMED-BUT-UNPROVEN XID. This evicted by `xid:<claimed>` whenever a typed datum
       // failed — and a datum fails validateXid precisely when its body does NOT hash to that xid, i.e. when the
-      // xid belongs to SOMEBODY ELSE'S datum. So anyone could take an genuine anchor's xid, change one byte of
+      // xid belongs to SOMEBODY ELSE'S datum. So anyone could take a genuine anchor's xid, change one byte of
       // the body, submit it, and the genuine anchor was evicted-for-good on every node that saw the forgery —
       // refused forever if it had not arrived yet, and its stored rows DELETED by evict() if it had. A
       // denial-of-service against any transaction whose xid is public, which is all of them.
@@ -398,7 +398,7 @@ export class Ledger extends EventEmitter {
       // ⛔ THE SAME TWO DOORS addTransaction CLOSES, CLOSED HERE TOO — and this is the path that carries real
       // node traffic (consensus `tx:finalized` → lead-worker.handleFinalizedTx → here), while addTransaction
       // is the legacy incremental one. There was no failure handling at all on this side, so a forgery that
-      // kept an genuine anchor's event:hash left that content key claimed forever (the genuine anchor arriving
+      // kept a genuine anchor's event:hash left that content key claimed forever (the genuine anchor arriving
       // later was skipped as a duplicate), and nothing was ever evicted. Release the speculative key on EVERY
       // failure, and record the refusal under a key derived from the forgery's OWN bytes when its claimed xid
       // is not its content address — never under the xid it impersonated, which belongs to somebody else.

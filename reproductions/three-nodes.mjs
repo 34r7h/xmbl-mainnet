@@ -20,7 +20,7 @@
 // in — a tampered anchor whose xid no longer matches its body, and an untyped anchor with no xid at all —
 // which every node must refuse identically. Convergence that only holds on clean input is not convergence.
 //
-// WHAT THIS REPRODUCTION FOUND, on its first run: a forged anchor that reuses an genuine anchor's xid with a
+// WHAT THIS REPRODUCTION FOUND, on its first run: a forged anchor that reuses a genuine anchor's xid with a
 // changed body made the genuine anchor disappear. The ledger evicted by the CLAIMED xid, and a datum fails
 // validation precisely when its body does not hash to that xid — so the eviction always landed on somebody
 // else's datum. Three nodes given the identical 36-anchor set ended at 36 / 35 / 36 blocks, the short one being
@@ -162,7 +162,7 @@ for (let run = 0; run < RUNS; run++) {
     micromineTx({ type: 'anchor', event: i % 3 === 0 ? 'task.created' : i % 3 === 1 ? 'value.transfer' : 'soc.posted',
                   hash: sha(`run${run}-tx${i}`), ts: 1789500000000 + i }));
 
-  // THE FORGERIES every node must refuse identically. The first is the dangerous one: it keeps an genuine
+  // THE FORGERIES every node must refuse identically. The first is the dangerous one: it keeps a genuine
   // anchor's xid and nonce and changes the body, so a node that evicts by the claimed xid loses the genuine
   // anchor instead of the forgery.
   const forgeries = [

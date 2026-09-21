@@ -69,7 +69,7 @@ export class DevnetRpc {
       }
       default: {
         // Node-side capability surface (zk / HE / signature / seal): a real primitive run to a
-        // verdict in this process. Unknown types still fall through to an genuine error.
+        // verdict in this process. Unknown types still fall through to a genuine error.
         const cap = CAPABILITIES[message && message.type];
         if (cap) return cap(message || {});
         return { error: `Unknown message type: ${message && message.type}` };

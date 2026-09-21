@@ -53,6 +53,44 @@ export function eMul(a, b) {
 }
 
 export const polyEval = (c, x) => { let r = 0n; for (let i = c.length - 1; i >= 0; i--) r = add(mul(r, x), c[i]); return r; };
+
+// ── NTT ──────────────────────────────────────────────────────────────────────────────────────────
+// Evaluating a degree-d polynomial at N points by Horner costs N*d multiplications. The ZK mask
+// (see air.js) is a degree-(K-1) polynomial that has to land on all N domain points, and at K=2048,
+// N=16384 that is 33M base multiplications per limb — minutes in BigInt. The radix-2 NTT does it in
+// (N/2)*log2(N) butterflies. It is only correct on a MULTIPLICATIVE SUBGROUP, so a coset x = s*w^i
+// is handled by pre-scaling the coefficients: p(s*w^i) = sum_j (c_j * s^j) * w^(ij).
+export function ntt(a, w) {
+  const n = a.length;
+  for (let i = 1, j = 0; i < n; i++) {           // bit-reversal permutation
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { const t = a[i]; a[i] = a[j]; a[j] = t; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const wl = pw(w, BigInt(n / len)), halfLen = len >> 1;
+    for (let i = 0; i < n; i += len) {
+      let wn = 1n;
+      for (let k = 0; k < halfLen; k++) {
+        const u = a[i + k], v = mul(a[i + k + halfLen], wn);
+        a[i + k] = add(u, v); a[i + k + halfLen] = sub(u, v);
+        wn = mul(wn, wl);
+      }
+    }
+  }
+  return a;
+}
+
+/** Evaluate `coeffs` on the coset `shift * dom`, where dom is the size-N subgroup <dom[1]>. */
+export function evalCoset(coeffs, dom, shift) {
+  const n = dom.length;
+  if (coeffs.length > n) throw new Error(`evalCoset: degree ${coeffs.length - 1} does not fit domain ${n}`);
+  const a = new Array(n).fill(0n);
+  let s = 1n;
+  for (let j = 0; j < coeffs.length; j++) { a[j] = mul(coeffs[j], s); s = mul(s, shift); }
+  return ntt(a, dom[1]);
+}
 export function interpolate(xs, ys) {
   const n = xs.length; let res = new Array(n).fill(0n);
   for (let i = 0; i < n; i++) {
