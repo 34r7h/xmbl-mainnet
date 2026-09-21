@@ -13,7 +13,7 @@
 // written. A synced macOS `say` voiceover teaches the arc; each clip is measured up front and each step
 // holds at least as long as its narration, offsets logged at runtime and muxed over the capture.
 //
-// HONESTY BOUNDARIES baked into the narration (matched to the code shown):
+// GENUINEY BOUNDARIES baked into the narration (matched to the code shown):
 //   • "Verkle" here is a 256-ary SHA-256 authenticated trie — state changes move the root; an
 //     independent verifier recomputes the root from sibling hashes and agrees. NOT polynomial/vector
 //     commitments, NOT small proofs.
@@ -90,7 +90,7 @@ const beats = (label, text, anchors) => {
   }
   return idx.map((start, n) => paras.slice(start, n + 1 < idx.length ? idx[n + 1] : paras.length).join('\n\n'));
 };
-const ZK = beats('zk', REPRO.zk, ['REPRODUCTION', 'honest:', 'tampered:']);   // [setup, verify→write→root moves, tampered/malformed/denied + PASS]
+const ZK = beats('zk', REPRO.zk, ['REPRODUCTION', 'genuine:', 'tampered:']);   // [setup, verify→write→root moves, tampered/malformed/denied + PASS]
 const HE = beats('he', REPRO.he, ['REPRODUCTION', 'decrypt(', 'denied-import']); // [lattice+size, blind add+open+sum≠input, decrypt-denied + PASS]
 const US = beats('usdc', REPRO.usdc, ['REPRODUCTION', 'ethereum re-point', 'seal-boundary']); // [base+arbitrum release, ethereum re-point fails, seal refusals+netting+PASS]
 // First "root before → after" line inside a beat, rendered literally into the SAW caption (the header
@@ -125,11 +125,11 @@ const VO = {
   inc: 'A call commits state: increment moves the counter zero to one, and the tile flashes on a real write.',
   revert: 'It fails safely: over-withdraw the Vault and the whole call reverts, the balance untouched.',
   deploy: 'Deploying derives the id from the contract itself — same source, same id on every node.',
-  boundary: 'The lab is honest: no Verkle root, no cryptography in-page. Those run on a node — let us run them.',
+  boundary: 'The lab is genuine: no Verkle root, no cryptography in-page. Those run on a node — let us run them.',
   devnet: 'A real XMBL network is live, reporting its peers and block height.',
   agentic: 'The node commits every change to a two-hundred-fifty-six-way hash tree: authorized calls move the root, refused calls do not, and two nodes agree. The ledger the treasury trusts.',
   zk1: 'Requirement one — prove a payment authorized without revealing the secret. The payer holds three secret points on a private curve and derives one public coordinate on it. The proof shows the anchors and that coordinate, never the secret points.',
-  zk2: 'The contract verifies the proof, and only then writes state: the honest coordinate verifies, the gated write commits, and the Verkle root moves.',
+  zk2: 'The contract verifies the proof, and only then writes state: the genuine coordinate verifies, the gated write commits, and the Verkle root moves.',
   zk3: 'Now the attacks. Shift the coordinate by one and the proof fails — no write, the root unmoved. A malformed proof fails closed instead of crashing, and a contract that never declared the capability is denied.',
   he1: 'Requirement two — add amounts no one may see. Each payer encrypts a value under a post-quantum lattice key: nearly nine hundred bytes of ciphertext that reveal nothing about the number inside.',
   he2: 'The contract adds the ciphertexts with one host call, holding no key and seeing no number. Only the key holder opens the total off-chain — one plus zero decrypts to one — and the sum is a new ciphertext, not a copy of either input.',
@@ -343,7 +343,7 @@ try {
   // Three narrated beats unroll into ONE terminal: setup → verify+write+root-moves → attacks fail.
   await revealProof('zk1', 'Requirement 1 — prove a payment is authorized without revealing the secret', 'Three secret points on a private curve derive ONE public coordinate; the proof shows only the anchors + coordinate', 'reproductions/contract-zk.mjs', ZK[0],
     'public coordinate + anchors exposed; the 3 secret points are never revealed', 'ok', 6000, true);
-  await revealProof('zk2', 'The contract verifies the proof, and only then writes state', 'Honest coordinate verifies → gated Verkle write commits → the root MOVES', null, ZK[1],
+  await revealProof('zk2', 'The contract verifies the proof, and only then writes state', 'Genuine coordinate verifies → gated Verkle write commits → the root MOVES', null, ZK[1],
     rootLine(ZK[1]) || 'verify = 1 → slot 7 = 1 → root moved', 'ok', 5000, false);
   await revealProof('zk3', 'Now the attacks: tampered proof, malformed proof, unflagged contract', 'Shifted coordinate → verify 0, root UNMOVED; malformed → fails closed (no trap); no capability → denied', null, ZK[2],
     'tampered verify 0 → root unmoved · malformed → 0 (no trap) · unflagged import denied', 'ok', 6500, false);
@@ -364,7 +364,7 @@ try {
   await revealProof('usdc3', 'The amount rides encrypted; the key is sealed, post-quantum, to the receiver', 'Netted while encrypted; wrong receiver or changed amount opens nothing; the chain holds ciphertext, never the key', null, US[2],
     '3 seal refusals (wrong receiver · mutated amount · sub-mainnet ring) · committed state holds no key bytes', 'ok', 6000, false);
 
-  // ════ ACT 6 — THE REST HOLDS BY CONSTRUCTION (reentrancy + honest unaudited status + the gate) ════
+  // ════ ACT 6 — THE REST HOLDS BY CONSTRUCTION (reentrancy + genuine unaudited status + the gate) ════
   const guaranteesText = [
     '$ node reproductions/contracts-reentrancy.mjs   (reentrancy inexpressible by construction)',
     passTail(REPRO.reentrancy),
@@ -395,7 +395,7 @@ try {
 
   // ════ CLOSE ════
   await proofClose();
-  await setCap('Walkthrough complete', 'Lab lifecycle + node-proven: committed state on an authenticated tree, zk + HE settlement, reentrancy-proof, deterministic', 'Every claim shown on a surface that backs it — honest about what is still unaudited', 'ok');
+  await setCap('Walkthrough complete', 'Lab lifecycle + node-proven: committed state on an authenticated tree, zk + HE settlement, reentrancy-proof, deterministic', 'Every claim shown on a surface that backs it — genuine about what is still unaudited', 'ok');
   { const ms = mark('close'); await wait(page, Math.max(3500, ms + 600)); }
   console.log('[rec] recorded: treasury story → lab lifecycle → node/Verkle → zk (3 beats) → HE (3 beats) → USDC settlement (3 beats) → guarantees → EVM finale');
 } catch (e) {

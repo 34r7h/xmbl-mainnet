@@ -79,7 +79,7 @@ App / tooling modules (npm / web only):
   covers it.
 - **Consensus validates in order:** 1. can the transaction happen, 2. is the xid correct, 3. is the geometric
   placement right (`@xmbl/consensus` `validate.js`; every refusal names its stage).
-- **Block hashes are content-only**, so every honest node seals the same cubes from the same typed set.
+- **Block hashes are content-only**, so every correct node seals the same cubes from the same typed set.
 - **Every node runs the latest version or is suspended, and updates itself over the air**: the signed `chain`
   claim carries `versions` and a `build` digest of the code in memory; `xmbl-node` checks the npm `latest`
   tag, suspends itself when behind, installs the latest `@xmbl/core` and restarts (exit 75 under a supervisor).

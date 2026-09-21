@@ -26,7 +26,7 @@ function makeCube(salt = '') {
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 console.log('\n0. control — a truthful cube must VERIFY');
-check('honest cube verifies and recomputes its own id', () => {
+check('genuine cube verifies and recomputes its own id', () => {
   const { payload, id } = makeCube();
   const r = verifyCube(payload, id);
   assert.ok(r.ok, r.reason);

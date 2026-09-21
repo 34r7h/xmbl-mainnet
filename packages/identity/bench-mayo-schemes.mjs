@@ -3,7 +3,7 @@
 // slot) through the SAME loader production uses — `MAYOWasm.load(scheme)` — so the day `wasm-schemes.js`
 // repoints `'mayo-cube'` to its own build, this file measures the new artifact with no edit.
 //
-// Today both tags resolve to the one vendored artifact, so the honest ratio is 1.00. That is not a
+// Today both tags resolve to the one vendored artifact, so the actual ratio is 1.00. That is not a
 // placeholder: it is the recorded BASELINE the adapted build has to beat, taken on the machine and runtime
 // that will take the later number.
 //

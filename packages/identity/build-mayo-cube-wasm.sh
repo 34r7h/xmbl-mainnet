@@ -79,7 +79,7 @@ EMCC_LINE="$(emcc --version | head -1)"
 EMCC_VER="$(printf '%s' "$EMCC_LINE" | sed -n 's/.*replacement + linker emulating GNU ld) \([^ ]*\).*/\1/p')"
 echo "emcc: $EMCC_LINE"
 # Canonical = the pinned emsdk INSIDE the pinned image. The image sets EMSDK_* and is Linux; that is
-# the cheapest honest test for "am I the canonical host" without pretending to fingerprint the world.
+# the cheapest genuine test for "am I the canonical host" without pretending to fingerprint the world.
 IN_CANONICAL_IMAGE=0
 [ "$EMCC_VER" = "$EMSDK_PIN" ] && [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ] && IN_CANONICAL_IMAGE=1
 echo "pin:  emsdk $EMSDK_PIN on linux/x86_64 (this build: '${EMCC_VER:-unknown}' on $(uname -s)/$(uname -m))"

@@ -96,7 +96,7 @@ export class PeerDiscovery {
           // "unreachable (attempt 206/40)" — a counter 166 past the budget that was supposed to bound it.
           // That is the tell, and it is a different fault from the volume: a reader who sees only "too many
           // lines" fixes the verbosity and leaves a loop that has outlived its own bound looking like a bug.
-          // The loop being unbounded IS deliberate (a seed that comes back must reconnect), so the honest
+          // The loop being unbounded IS deliberate (a seed that comes back must reconnect), so the genuine
           // rendering is to stop pretending there is a budget left and say what the loop is actually doing.
           if (tries <= MAX_TRIES || tries % QUIET_EVERY === 0) {
             const where = tries <= MAX_TRIES

@@ -83,7 +83,7 @@ const mined6 = () => { const t = { chain: 'xmbl', from: ['a'], to: ['b'], asset:
   check('4th exceeds MAX -> dropped + ban', w._admitToPool('flooder', signedAnchor('h4')) === false);
   check('submitter:banned emitted with reason=flood', banned && banned.submitterId === 'flooder' && banned.reason === 'flood');
   check('banned submitter dropped even for a valid value-tx', w._admitToPool('flooder', { ...mined6(), sig: 'S' }) === false);
-  check('a DIFFERENT submitter is unaffected', w._admitToPool('honest', signedAnchor()) === true);
+  check('a DIFFERENT submitter is unaffected', w._admitToPool('genuine', signedAnchor()) === true);
   delete process.env.XPC_JUNK_BAN_MAX;
 }
 

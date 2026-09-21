@@ -20,8 +20,8 @@
 // in — a tampered anchor whose xid no longer matches its body, and an untyped anchor with no xid at all —
 // which every node must refuse identically. Convergence that only holds on clean input is not convergence.
 //
-// WHAT THIS REPRODUCTION FOUND, on its first run: a forged anchor that reuses an honest anchor's xid with a
-// changed body made the honest anchor disappear. The ledger evicted by the CLAIMED xid, and a datum fails
+// WHAT THIS REPRODUCTION FOUND, on its first run: a forged anchor that reuses an genuine anchor's xid with a
+// changed body made the genuine anchor disappear. The ledger evicted by the CLAIMED xid, and a datum fails
 // validation precisely when its body does not hash to that xid — so the eviction always landed on somebody
 // else's datum. Three nodes given the identical 36-anchor set ended at 36 / 35 / 36 blocks, the short one being
 // whichever node saw the forgery first. Anyone could have done it to any transaction, since every xid is
@@ -162,8 +162,8 @@ for (let run = 0; run < RUNS; run++) {
     micromineTx({ type: 'anchor', event: i % 3 === 0 ? 'task.created' : i % 3 === 1 ? 'value.transfer' : 'soc.posted',
                   hash: sha(`run${run}-tx${i}`), ts: 1789500000000 + i }));
 
-  // THE FORGERIES every node must refuse identically. The first is the dangerous one: it keeps an honest
-  // anchor's xid and nonce and changes the body, so a node that evicts by the claimed xid loses the honest
+  // THE FORGERIES every node must refuse identically. The first is the dangerous one: it keeps an genuine
+  // anchor's xid and nonce and changes the body, so a node that evicts by the claimed xid loses the genuine
   // anchor instead of the forgery.
   const forgeries = [
     { ...set[0], hash: sha(`run${run}-TAMPERED`) },
@@ -184,7 +184,7 @@ for (let run = 0; run < RUNS; run++) {
 
     const blocks = nodes.map((n) => allBlocks(n).length);
     const bDigests = nodes.map(blockDigest);
-    ok('phase 1: NO HONEST ANCHOR WAS LOST — all three hold every transaction in the set',
+    ok('phase 1: NO CORRECT ANCHOR WAS LOST — all three hold every transaction in the set',
        new Set(blocks).size === 1 && blocks[0] === TXS, `blocks=${blocks.join('/')} expected=${TXS}`);
     ok('phase 1: all three agree on the BLOCK SET digest (content, not order)', new Set(bDigests).size === 1);
 
@@ -208,7 +208,7 @@ for (let run = 0; run < RUNS; run++) {
        refused[0] === refused[1] && refused[1] === refused[2], `refused=${refused.join('/')}`);
 
     const pooled = nodes.map((n) => n.xclt._membershipPool.length);
-    ok('phase 2: nothing sealed on arrival — every honest tx is pooled, awaiting an agreed boundary',
+    ok('phase 2: nothing sealed on arrival — every genuine tx is pooled, awaiting an agreed boundary',
        new Set(pooled).size === 1 && pooled[0] === TXS, `pooled=${pooled.join('/')}`);
 
     // THE AGREEMENT. A seal round agrees WHICH nine are cut; here the agreed list is derived once (hash-sorted,

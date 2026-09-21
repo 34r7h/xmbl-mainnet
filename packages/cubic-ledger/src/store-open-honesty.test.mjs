@@ -28,7 +28,7 @@ test('a second ledger on a LOCKED store reports the store unavailable, and the f
     const evt = await unavailable;
     assert.ok(evt && evt.error, 'store:unavailable carries the error');
 
-    // the honest ledger still works in memory and still answers with an id — it just never claims durability
+    // the genuine ledger still works in memory and still answers with an id — it just never claims durability
     const r = await second.addTransaction(anchor('x'));
     assert.ok(r.id, 'in-memory add still yields the block id');
     let onDisk = 0;

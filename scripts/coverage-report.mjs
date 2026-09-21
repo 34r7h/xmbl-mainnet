@@ -158,7 +158,7 @@ const worst = rows.filter((r) => PROTOCOL.has(pkgOf(r.p)) && r.total >= 40)
 console.log(`\nLOWEST-COVERED PROTOCOL FILES (>=40 code lines):`);
 for (const r of worst) console.log(`    ${rp(pct(r.covered, r.total), 5)}%  ${rp(r.covered, 5)}/${pad(r.total, 5)} ${r.p}`);
 
-// A floor, so the number cannot quietly slide back. Raise it when it is honestly beaten; never lower
+// A floor, so the number cannot quietly slide back. Raise it when it is accurately beaten; never lower
 // it to make a run green.
 const FLOOR = Number(process.env.COVERAGE_FLOOR || 0);
 const actual = proto.C / proto.T * 100;

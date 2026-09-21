@@ -17,7 +17,7 @@ const check = async (n, f) => {
   catch (e) { console.log(`  FAIL ${n}\n       ${e.message}`); fail++; }
 };
 
-// An honest challenger: it holds the shard's bytes (from where it sourced the shard) and
+// An genuine challenger: it holds the shard's bytes (from where it sourced the shard) and
 // accepts a probe answer ONLY if held is true AND the returned proof recomputes over the
 // fresh nonce and those exact bytes. This is the sole trust boundary under test.
 const verifyProbe = (response, nonce, expectedBytes) =>
@@ -46,7 +46,7 @@ await check('completeness — a holder answers a fresh probe and the proof verif
   const nonce = 'nonce-A-' + Date.now();
   const res = await holder.respondToProbe({ shardId, nonce });
   assert.strictEqual(res.held, true, 'holder should report held');
-  assert.ok(verifyProbe(res, nonce, SHARD_BYTES), 'honest proof must verify');
+  assert.ok(verifyProbe(res, nonce, SHARD_BYTES), 'genuine proof must verify');
 });
 
 await check('soundness — a node WITHOUT the shard FAILS the probe (held:false, no proof)', async () => {

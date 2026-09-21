@@ -4,7 +4,7 @@
       <div class="sec-h"><span class="eyebrow">Host capabilities</span>
         <span class="live-dot" :class="{ on: connected }">{{ connected ? 'devnet' : 'no devnet' }}</span>
       </div>
-      <p class="hint">The opt-in crypto host calls a deployed contract can declare. They run on a node (they need node:crypto; an in-page MV3 popup cannot), so each runs for REAL in the devnet and returns a verdict here — the honest result and its negative control, never a fabricated pass.</p>
+      <p class="hint">The opt-in crypto host calls a deployed contract can declare. They run on a node (they need node:crypto; an in-page MV3 popup cannot), so each runs for REAL in the devnet and returns a verdict here — the genuine result and its negative control, never a fabricated pass.</p>
     </div>
 
     <!-- SIGNATURE VERIFY (cryptoHost) -->

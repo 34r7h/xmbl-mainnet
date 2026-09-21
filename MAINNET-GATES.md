@@ -37,7 +37,7 @@ continue-on-error, and in the release workflow before any publish).
       every hop. `verifyChain` enforces EVERY hop (grant/token/action signatures, key↔address
       derivation, scope attenuation ⊆ grant, audience binding, expiry, membership-is-liveness
       revocation) and is the primitive a load-bearing seam calls to REJECT. TEE attestation is
-      honest by default (`NO_ATTESTATION` asserts nothing; a real quote verifier is injected).
+      trusting by default (`NO_ATTESTATION` asserts nothing; a real quote verifier is injected).
       36 conformance checks incl. real MAYO end-to-end. — *delegation.js; delegation.test.mjs*
 - [x] **Action authorization is SINGLE-USE** (no replay / double-spend). Each action-sig binds a
       fresh nonce; `makeAuthorizer` verifies the chain and then CONSUMES `(tokenHash, nonce)`
@@ -177,7 +177,7 @@ continue-on-error, and in the release workflow before any publish).
       while the CLAIMED public value comes from the guest's own memory, which is what binds the
       verdict to bytes the contract chose. `reproductions/contract-air-zk.mjs` proves a contract
       gates a Verkle write on "I know a preimage reaching this digest after 16 rounds of x^3+RC":
-      the root moves on the honest digest, stays unmoved on a digest off by one, a proof of a
+      the root moves on the genuine digest, stays unmoved on a digest off by one, a proof of a
       DIFFERENT statement is refused, a malformed proof returns 0 without trapping, the import is
       denied without the flag, and two nodes agree. — *abi.js `HOST_ABI_AIR_INIT_SOURCE`;
       reproductions/contract-air-zk.mjs*
@@ -443,7 +443,7 @@ continue-on-error, and in the release workflow before any publish).
       commit; a trapping frame reverts the whole transaction. — *xcl/abi.js (`HOST_ABI_COMPOSE_SOURCE`,
       `HOST_IMPORT_KEYS_COMPOSE`, `callerTag`); xcl/contract-host.js (transaction boundary + `_runFrame`
       cascade + `link()`); contract-compose.test.mjs (5/5)*
-- [ ] **T6.2 open remainders (HONEST scope of the "≥ Ethereum, fraction of resources" claim).** What
+- [ ] **T6.2 open remainders (ACCURATE scope of the "≥ Ethereum, fraction of resources" claim).** What
       T6.2 does NOT yet prove, and must not be claimed: *(a)* the UTXO proof contracts are hand-encoded
       and use **i64** amounts, not the `~u256` word width — LNG cannot yet EMIT `xmbl_utxo_*` calls from
       `~contract` source. Same LANGUAGE-DESIGN blocker as T6.1-d: the UTXO ABI names UTXO ids and
@@ -505,7 +505,7 @@ continue-on-error, and in the release workflow before any publish).
       an in-repo EVM EXECUTION engine to measure the EVM side (solc gives us compile + structural
       assertion, not runtime cost), which is a new mainnet-repo dependency DECISION, not a wiring task —
       a gas-estimate-vs-measured-cpuMs comparison is not like-for-like and is NOT claimed. So the
-      "fraction of the resources" claim keeps its honest scope: a real MEASUREMENT basis, no cross-VM
+      "fraction of the resources" claim keeps its accurate scope: a real MEASUREMENT basis, no cross-VM
       COMPARISON. **(d) is CLOSED BY SCOPE (2026-09-16):** no user-facing document makes a cross-VM claim
       any more (README carries none; the only remaining mention, `COMPUTE-ISOLATION-THREAT-MODEL.md`, is
       the disclaimer that the basis is not a comparison), so there is nothing to prove. Should a like-for-
@@ -554,14 +554,14 @@ continue-on-error, and in the release workflow before any publish).
       cubic-ledger/deterministic-placement.js; cube-sync.js*
 - [x] **CONTENT-ONLY BLOCK HASH — every node seals the same cubes (A7, operator: rolled out to every node).**
       `block.hash` = sha256 of the consensus body (the xid; for an anchor {type,event,hash,ts,xid}), never the
-      envelope (relayer, signature, validator clock, submitter id), so two honest nodes holding the same typed
+      envelope (relayer, signature, validator clock, submitter id), so two correct nodes holding the same typed
       set hash-sort identical faces and seal identical cubes; `block.id` is its first 16 hex. A wire-format
       change: old and new nodes cannot verify each other's cubes, so it ships with the network-wide canonical
       rebuild the operator ordered. — *block.js; cube-sync.js; content-id-eviction.test.mjs; ledger-determinism.test.mjs*
 
 - [x] Ingress guard + invalid-eviction covered by node tests. — *ingress-guard, invalid-eviction*
 - [x] Byzantine / no-fork test matrix drives the **real** `SealRoundManager` across an in-memory
-      gossip bus with a partition mask, asserting the one safety property — honest seal-leads
+      gossip bus with a partition mask, asserting the one safety property — correct seal-leads
       converge on ONE sealed set-hash or safely STALL, never seal two different sets: **(a)** an
       equivocating Byzantine peer cannot manufacture a second sealed set (pigeonhole: ≤1 vote per
       hash per node); **(b)** a minority without the member data STALLS (never fabricates) and later
@@ -572,7 +572,7 @@ continue-on-error, and in the release workflow before any publish).
 - [x] **FORK DEFECT FOUND + FIXED (this gate):** the seal quorum (`XMBLCore._sealQuorum`) divided the
       strict-majority threshold by the **presence-live** lead subset (`getLiveLeaders()`, TTL-filtered),
       so a network partition shrank the denominator and each side independently reached a smaller
-      majority → two honest partitions seal two different faces from divergent pools → **permanent
+      majority → two correct partitions seal two different faces from divergent pools → **permanent
       fork with f=0** (on heal neither can `adoptSet` the other's set: its members already left the
       pool). Seal is a *selection* (which set becomes this face), unlike validation's *predicate*
       (idempotent, safe to shrink). Fixed: the denominator is now the **fixed configured lead set**
@@ -608,7 +608,7 @@ continue-on-error, and in the release workflow before any publish).
       padded/short face count, lying face or cube merkleRoot, and a valid cube served under the
       **wrong id** (fork attempt) — is rejected and **local state is left byte-for-byte unchanged**
       (no cube record, no member block, no partial adoption). A mutation dropping the requested-id
-      binding adopts the id-substituted and fork payloads → the test fails. Honest sync still
+      binding adopts the id-substituted and fork payloads → the test fails. Genuine sync still
       converges (control). — *cube-sync.js; cube-sync-manager.js; cube-sync-adversarial.test.mjs*
 
 ## `@xmbl/networking` — libp2p P2P
@@ -655,7 +655,7 @@ continue-on-error, and in the release workflow before any publish).
       (`//!`) "⚠ NON-PRODUCTION (pre-mainnet stub)" notice (rendered at the top of the docs.rs page,
       where a consumer looks), and a regression guard FAILS if any label is removed — it also
       discovers the crate set from the filesystem, so a ninth crate added without a label fails too.
-      Parity itself remains future work; the label is the honest, enforced interim. — *crates/crate-status.test.mjs (9/9), in `test:protocol`*
+      Parity itself remains future work; the label is the accurate, enforced interim. — *crates/crate-status.test.mjs (9/9), in `test:protocol`*
 - [ ] Version `0.x` communicates pre-mainnet. Do **not** cut `1.0.0` until every ⛔ AUDIT gate
       above is closed.
 
@@ -729,10 +729,10 @@ continue-on-error, and in the release workflow before any publish).
       anchor ended at **36 / 35 / 36 blocks**. Two doors, the same attack, no key material required, and every
       xid and every anchor `event:hash` is public. (1) The ledger evicted an invalid TYPED datum by the xid it
       CLAIMED — but a datum fails `validateXid` precisely when its body does not hash to that xid, i.e. when
-      the xid belongs to someone else's datum. So copying an honest anchor's xid and changing one byte evicted
-      the HONEST anchor for good: refused forever if it had not arrived yet, and its stored rows DELETED by
+      the xid belongs to someone else's datum. So copying an genuine anchor's xid and changing one byte evicted
+      the GENUINE anchor for good: refused forever if it had not arrived yet, and its stored rows DELETED by
       `evict()` if it had. (2) The anchor content key `event:hash` was claimed BEFORE validation and kept on
-      failure, so a forgery sharing an honest anchor's event and hash made every later honest copy answer
+      failure, so a forgery sharing an genuine anchor's event and hash made every later correct copy answer
       `duplicate: true` and vanish. Now: a datum whose claimed xid is not its content address is evicted under
       a digest of ITS OWN bytes (`forged:<sha256>`), the speculative content key is released on every failure,
       and both errors carry `code: 'XID_MISMATCH'`. The forgery is still refused forever; what it impersonated
@@ -857,7 +857,7 @@ as a handoff PREP task under the audit goal. Nothing external can start until th
 - [x] **T2.2** — formal Cubic-curve construction + security-assumptions spec authored:
       `docs/xmbl-cubic-cryptography-whitepaper.md` (the reviewer-facing package the ⛔ AUDIT attacks).
       Specifies `CubicCurveSource` step-by-step (§3), states the cryptanalysis assumptions A1–A3 + open
-      questions O1/O2 (§2, incl. the honest finding that derived curves have NO group-order/weak-curve
+      questions O1/O2 (§2, incl. the finding that derived curves have NO group-order/weak-curve
       screening), and Cubic-SIG's EUF-CMA-under-ECDLP-in-ROM reduction (§5.2) — flagging that Cubic-SIG
       signs on **standard secp256k1** (`a=0`), so its group security is inherited, not novel. Resolves the
       code's previously-dangling whitepaper citations (curve-source §2/§3.1, cubic-sig §5.2, cubic-lwe

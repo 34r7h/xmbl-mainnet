@@ -29,7 +29,7 @@ export function validateCanHappen(tx) {
   const signed = typeof tx.sig === 'string' && tx.sig.length > 0 && hasSender;
   if (!contentAddressed && !signed) return fail('can-happen', 'unsigned: no signature or no sender — nothing can ever validate it');
   // A type-6 names its payer in the mined body, so a missing one is a broken body. An anchor names no sender at
-  // all (its body is {from:[prior],to:[hash],how:'anchor'}), so requiring one would refuse every honest anchor.
+  // all (its body is {from:[prior],to:[hash],how:'anchor'}), so requiring one would refuse every genuine anchor.
   if (tx.type === 'tx' && !hasSender) return fail('can-happen', 'type-6 with no payer');
   // VALUE. Where the type carries an amount it must be a number that can exist.
   if ((tx.type === 'utxo' || tx.type === 'tx') && tx.amount !== undefined) {

@@ -1,14 +1,14 @@
 // @xmbl/consensus Byzantine / no-fork seal-agreement matrix (MAINNET-GATES §@xmbl/consensus, T7.1).
 //
-// THE PROPERTY UNDER TEST — the whole point of the seal boundary: honest seal-leads either converge on
+// THE PROPERTY UNDER TEST — the whole point of the seal boundary: correct seal-leads either converge on
 // ONE sealed set-hash or safely STALL; they NEVER seal two different sets for the same face. Proven here
 // by driving the REAL SealRoundManager (not a re-implementation) across an in-memory gossip bus with a
 // partition mask, for the three adversarial scenarios the gate names:
 //   (a) an EQUIVOCATING peer  — a Byzantine lead broadcasts conflicting (setHash,memberIds) to different
-//                               honest nodes; it must not manufacture a second sealed set.
+//                               correct nodes; it must not manufacture a second sealed set.
 //   (b) WITHHELD coverage/data — a minority holds the agreed hash but not the member data; it must STALL
 //                               (never fabricate a seal) and later CONVERGE to the same hash once data arrives.
-//   (c) a network PARTITION    — two disjoint honest groups with DIVERGENT pools. With the correct fixed
+//   (c) a network PARTITION    — two disjoint genuine groups with DIVERGENT pools. With the correct fixed
 //                               quorum both STALL (no fork); with the presence-SHRUNK quorum both seal
 //                               DIFFERENT sets → a PERMANENT fork that survives heal. The contrast is the
 //                               demonstration that the quorum DENOMINATOR is load-bearing (see @xmbl/core
@@ -54,8 +54,8 @@ class Bus {
   }
 }
 
-// An honest seal-lead: a REAL SealRoundManager over a mutable pool, recording what it actually seals.
-function honest(bus, id, pool, quorumFn) {
+// An correct seal-lead: a REAL SealRoundManager over a mutable pool, recording what it actually seals.
+function genuine(bus, id, pool, quorumFn) {
   const items = pool.map((p) => ({ ...p }));
   const st = { id, sealed: [], sealedHash: null, items, bus };
   const drop = (set) => { for (const it of set) { const i = items.findIndex((p) => p.id === it.id); if (i >= 0) items.splice(i, 1); } };
@@ -93,15 +93,15 @@ const H_AB = H([A, B]), H_AC = H([A, C]);
 assert.notStrictEqual(H_AB, H_AC, 'fixture sanity: divergent sets must hash differently');
 
 // ---- (a) EQUIVOCATION: a Byzantine peer cannot manufacture a second sealed set --------------------------
-await check('(a) equivocating peer: honest majority seals ONE set; the forged set seals nowhere', async () => {
+await check('(a) equivocating peer: correct majority seals ONE set; the forged set seals nowhere', async () => {
   const bus = new Bus();
-  const Q = () => 3;                                   // fixed majority of 4 configured leads (3 honest + evil)
-  const nodes = [honest(bus, 'h0', [A, B], Q), honest(bus, 'h1', [A, B], Q), honest(bus, 'h2', [A, B], Q)];
-  // evil equivocates: tells h0 the honest set, but tells h1/h2 a FORGED set with fabricated member ids.
+  const Q = () => 3;                                   // fixed majority of 4 configured leads (3 genuine + evil)
+  const nodes = [genuine(bus, 'h0', [A, B], Q), genuine(bus, 'h1', [A, B], Q), genuine(bus, 'h2', [A, B], Q)];
+  // evil equivocates: tells h0 the genuine set, but tells h1/h2 a FORGED set with fabricated member ids.
   const forged = { setHash: H([{ key: 'zz1' }, { key: 'zz2' }]), memberIds: ['zz1', 'zz2'] };
   await runRounds(nodes, 4, () => evilInject(bus, 'evil', (t) => (t === 'h0' ? { setHash: H_AB, memberIds: ['A', 'B'] } : forged)));
-  assert.strictEqual(distinctSealed(nodes).size, 1, 'honest nodes sealed more than one set under equivocation');
-  assert.ok(nodes.every((n) => n.sealedHash === H_AB), 'an honest node sealed something other than the true set');
+  assert.strictEqual(distinctSealed(nodes).size, 1, 'correct nodes sealed more than one set under equivocation');
+  assert.ok(nodes.every((n) => n.sealedHash === H_AB), 'an correct node sealed something other than the true set');
   assert.ok(![...bus.mgrs.keys()].some((id) => nodes.find((n) => n.id === id)?.sealedHash === forged.setHash), 'the forged set was sealed');
 });
 
@@ -109,8 +109,8 @@ await check('(a) equivocating peer: honest majority seals ONE set; the forged se
 await check('(b) withheld coverage: minority stalls without the member data, then adopts the SAME hash', async () => {
   const bus = new Bus();
   const Q = () => 3;                                   // majority = 3 of 4
-  const maj = [honest(bus, 'h0', [A, B], Q), honest(bus, 'h1', [A, B], Q), honest(bus, 'h2', [A, B], Q)];
-  const m = honest(bus, 'm', [C], Q);                  // minority: has NEITHER A nor B (data withheld); own pool < chunk
+  const maj = [genuine(bus, 'h0', [A, B], Q), genuine(bus, 'h1', [A, B], Q), genuine(bus, 'h2', [A, B], Q)];
+  const m = genuine(bus, 'm', [C], Q);                  // minority: has NEITHER A nor B (data withheld); own pool < chunk
   await runRounds([...maj, m], 4);
   assert.ok(maj.every((n) => n.sealedHash === H_AB), 'the majority failed to seal the agreed set');
   assert.strictEqual(m.sealedHash, null, 'the minority fabricated a seal it had no data for');
@@ -125,8 +125,8 @@ await check('(b) withheld coverage: minority stalls without the member data, the
 await check('(c) partition + FIXED quorum(3 of 4): both sides STALL, then converge to one set on heal', async () => {
   const bus = new Bus();
   const Q = () => 3;                                   // FIXED denominator = all 4 configured leads
-  const left = [honest(bus, 'h0', [A, B], Q), honest(bus, 'h1', [A, B], Q)];   // pool {A,B}
-  const right = [honest(bus, 'h2', [A, C], Q), honest(bus, 'h3', [A, C], Q)];  // DIVERGENT pool {A,C}
+  const left = [genuine(bus, 'h0', [A, B], Q), genuine(bus, 'h1', [A, B], Q)];   // pool {A,B}
+  const right = [genuine(bus, 'h2', [A, C], Q), genuine(bus, 'h3', [A, C], Q)];  // DIVERGENT pool {A,C}
   bus.partition = [new Set(['h0', 'h1']), new Set(['h2', 'h3'])];
   await runRounds([...left, ...right], 4);
   assert.strictEqual(distinctSealed([...left, ...right]).size, 0, 'a partition side sealed below the fixed quorum — FORK');
@@ -134,14 +134,14 @@ await check('(c) partition + FIXED quorum(3 of 4): both sides STALL, then conver
   bus.heal();
   for (const n of [...left, ...right]) { for (const it of [A, B, C]) if (!n.items.find((p) => p.id === it.id)) n.items.push({ ...it }); }
   await runRounds([...left, ...right], 5);
-  assert.strictEqual(distinctSealed([...left, ...right]).size, 1, 'honest nodes did not converge to a single sealed set after heal');
+  assert.strictEqual(distinctSealed([...left, ...right]).size, 1, 'correct nodes did not converge to a single sealed set after heal');
 });
 
 await check('(c-contrast) partition + SHRUNK quorum(2 per side): forks, and the fork is PERMANENT on heal', async () => {
   const bus = new Bus();
   const Q = () => 2;                                   // BUG: presence-shrunk denominator (each side sees only 2 live)
-  const left = [honest(bus, 'h0', [A, B], Q), honest(bus, 'h1', [A, B], Q)];
-  const right = [honest(bus, 'h2', [A, C], Q), honest(bus, 'h3', [A, C], Q)];
+  const left = [genuine(bus, 'h0', [A, B], Q), genuine(bus, 'h1', [A, B], Q)];
+  const right = [genuine(bus, 'h2', [A, C], Q), genuine(bus, 'h3', [A, C], Q)];
   bus.partition = [new Set(['h0', 'h1']), new Set(['h2', 'h3'])];
   await runRounds([...left, ...right], 4);
   assert.strictEqual(distinctSealed([...left, ...right]).size, 2, 'the shrunk-quorum partition did not fork as expected');

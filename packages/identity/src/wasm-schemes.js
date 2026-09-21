@@ -13,7 +13,7 @@
  * upstream baseline except the F1a `shake256` build-correctness fix; see
  * mayo-cube/VENDOR.md). The distinct cube-curve scheme's crypto does NOT exist
  * yet ("seams now, MAYO math later"). So 'mayo' (default) and 'mayo-cube' both
- * currently resolve to that one working artifact — honest, not a masked
+ * currently resolve to that one working artifact — genuine, not a masked
  * behavioral divergence. When the cube-curve build lands, 'mayo-cube' repoints
  * to its own artifact by editing ONE entry below; no caller and no loader
  * change is needed.

@@ -6,7 +6,7 @@
 // The rest of the ledger measures block timestamps in NANOSECONDS (face.getAverageTimestamp multiplies a
 // non-BigInt by 1e6 to get there), so epoch-ms is scaled here rather than stored raw, which the old line
 // also got wrong for the numeric case it was written for. Anything unparseable still yields 0n — that is
-// the honest answer for an anchor that recorded no time, and it is never guessed at from local wall clock.
+// the direct answer for an anchor that recorded no time, and it is never guessed at from local wall clock.
 export function anchorTimestampNanos(ts) {
   let ms = null;
   if (typeof ts === 'bigint') return ts < 0n ? 0n : ts;          // already nanoseconds

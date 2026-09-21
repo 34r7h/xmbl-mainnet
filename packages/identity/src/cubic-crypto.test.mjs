@@ -87,7 +87,7 @@ const { sk, pk } = sigKeyGen();
 const msg = 'XMBL-TRANSACTION-DATA-TRANSFER-100';
 const sig = sigSign(msg, sk, pk, req1);
 
-assert.strictEqual(sigVerify(msg, sig, pk, req1), true, 'Honest signature must verify');
+assert.strictEqual(sigVerify(msg, sig, pk, req1), true, 'Genuine signature must verify');
 assert.strictEqual(sigVerify(msg + '-tampered', sig, pk, req1), false, 'Tampered message must be rejected');
 
 // A DIFFERENT non-collinear plane → different normal → replay must be rejected.

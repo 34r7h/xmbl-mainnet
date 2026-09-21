@@ -262,7 +262,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const { sk, pk } = keyGen();
   const msg = 'XMBL-TRANSFER-42-XYM';
   const sig1 = sign(msg, sk, pk, ctx);
-  console.log(`cubic-sig honest verify:          ${ok(verify(msg, sig1, pk, ctx))}  (want PASS)`);
+  console.log(`cubic-sig genuine verify:          ${ok(verify(msg, sig1, pk, ctx))}  (want PASS)`);
   console.log(`cubic-sig tampered msg rejected:   ${ok(!verify(msg + '-x', sig1, pk, ctx))}  (want PASS)`);
 
   // Replay in a different cube context must fail

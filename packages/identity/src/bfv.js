@@ -237,7 +237,7 @@ export const decryptVec = (sk, ct) => decodeBatch(decrypt(sk, ct));
 
 /**
  * Remaining noise budget in bits: log2(Q/T) minus the size of the current error. Decryption is
- * correct while this stays above zero, so it is the honest measure of how many more operations a
+ * correct while this stays above zero, so it is the real measure of how many more operations a
  * ciphertext can take. Needs the secret key, so it is a diagnostic, not a chain-side call.
  */
 export function noiseBudget(sk, ct) {

@@ -74,12 +74,12 @@ ok('a good anchor passes both and is handed to placement', validateForConsensus(
 // ── STAGE 3: is the geometric placement right ──
 const blocks = Array.from({ length: 9 }, (_, i) => Block.fromTransaction(micromineTx({ type: 'anchor', event: 'face.member', hash: sha('f' + i), ts: 10 + i })));
 const ranked = [...blocks].sort((a, b) => (a.hash < b.hash ? -1 : 1));
-const honestFace = { blocks: ranked.map((b, i) => ({ hash: b.hash, position: i })) };
-ok('a face whose nine positions ARE the hash ranks passes stage 3', validatePlacementStage(honestFace).ok === true);
-const moved = { blocks: honestFace.blocks.map((b, i) => (i === 3 ? { ...b, position: 7 } : b)) };
+const genuineFace = { blocks: ranked.map((b, i) => ({ hash: b.hash, position: i })) };
+ok('a face whose nine positions ARE the hash ranks passes stage 3', validatePlacementStage(genuineFace).ok === true);
+const moved = { blocks: genuineFace.blocks.map((b, i) => (i === 3 ? { ...b, position: 7 } : b)) };
 ok('one block moved to a position its hash does not rank at is REFUSED at stage 3',
    validatePlacementStage(moved).ok === false && /ranks/.test(validatePlacementStage(moved).reason));
-const short = { blocks: honestFace.blocks.slice(0, 8) };
+const short = { blocks: genuineFace.blocks.slice(0, 8) };
 ok('a face that is not nine blocks is refused at stage 3', validatePlacementStage(short).ok === false);
 
 // ── THE REAL DOOR: the ingress guard applies stages 1→2 to live traffic ──

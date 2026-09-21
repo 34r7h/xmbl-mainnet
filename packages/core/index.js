@@ -118,7 +118,7 @@ export class XMBLCore {
     // never started yet at this point in the constructor.
     this.gossip = null;
 
-    // E1 (validate role): honest 0 until the validate role is enabled and a
+    // E1 (validate role): genuine 0 until the validate role is enabled and a
     // validation actually completes — see metrics-server.js's collectMetrics.
     this.validationsCompleted = 0;
     this.validationWorker = null;
@@ -169,7 +169,7 @@ export class XMBLCore {
     // WAIT FOR THE STORES. The ledger and the state machine open their LevelDBs and rehydrate (pools, the
     // anchor-dedup set, the eviction list, the verkle trie) from their constructors, asynchronously. Nothing
     // used to join on that, so a control-socket `chain` or `status` read a moment after "XMBL Core started"
-    // saw a store mid-rebuild and reported "empty" for "not ready yet". ready() is each store's honest join
+    // saw a store mid-rebuild and reported "empty" for "not ready yet". ready() is each store's genuine join
     // point; boot is not done until both have resolved.
     await Promise.all([
       this.xclt?.ready?.() ?? Promise.resolve(),
@@ -326,7 +326,7 @@ export class XMBLCore {
     // tampered with AFTER consensus — in the seal path, in a relayed batch, by a bug between the layers —
     // reached the block store unexamined. Enabling it required A5 first: while consensus injected its clock
     // into the signed body, a finalized tx could not re-verify and this resolver would have refused every
-    // honest tx. Same resolver, same registry, same asymmetry (the allowlist scopes who may VALIDATE, never
+    // genuine tx. Same resolver, same registry, same asymmetry (the allowlist scopes who may VALIDATE, never
     // whose signature can be verified), so a signed tx is now verified at both doors.
     this.xclt.getPublicKeyByAddress = resolveKey;
     // LIVENESS IS THE WHOLE POINT OF THE NAME, and it was never checked. `lastSeen` was written on every

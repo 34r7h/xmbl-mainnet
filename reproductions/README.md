@@ -35,7 +35,7 @@ sources it compiles — so a reviewer can confirm the exact bytes that produced 
 | `cubic-ledger.mjs` | `cubic-ledger` | Same anchor set → same chain in any order; a rebuild preserves what the set does not describe; a rebuild that would empty the chain is refused; a forgery cannot evict the datum it impersonates |
 | `state-machine.mjs` | `state-machine` | The verkle root is a pure function of the applied set, a divergent node converges on adopting it, and the root plus the applied count survive a restart |
 | `consensus.mjs` | `consensus` | The operator's order — can it happen, is the xid correct, is the placement right — with the first failing stage named in every refusal |
-| `storage-compute.mjs` | `storage-compute` | A guest that loops forever is killed at the operator's deadline and still billed at the maximum; an honest job is metered; custody is proved from the shard's bytes |
+| `storage-compute.mjs` | `storage-compute` | A guest that loops forever is killed at the operator's deadline and still billed at the maximum; an genuine job is metered; custody is proved from the shard's bytes |
 | `networking.mjs` | `networking` | Two real libp2p nodes dial by peer id and a published message arrives intact — the transport every convergence argument assumes |
 | `lng.mjs` | `lng` | One source: the interpreter and the WASM backend agree call for call, the Solidity output is real, and non-determinism is a compile-time refusal |
 | `contracts-reentrancy.mjs` | `packages/contracts` | A called contract never runs nested inside its caller's frame, so classic reentrancy is inexpressible by construction. |

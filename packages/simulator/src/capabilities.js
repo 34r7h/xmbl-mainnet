@@ -2,7 +2,7 @@
 // zk / homomorphic-encryption / signature primitives in-page (they need node:crypto; an MV3 page
 // CSP and WebCrypto's async sha256 make a faithful in-page port impossible), so the devnet node
 // process — which already loads the REAL modules — runs each primitive end-to-end and returns a
-// JSON-safe verdict. Each runner does the honest thing and its NEGATIVE control in one call: it
+// JSON-safe verdict. Each runner does the right thing and its NEGATIVE control in one call: it
 // proves the capability verifies true input AND rejects tampered input, so a green card on screen
 // is backed by a real refusal, not a fabricated pass. Every flow mirrors the headless
 // reproductions in @xmbl/contracts (reproductions/contract-zk.mjs, contract-he.mjs,
@@ -25,7 +25,7 @@ const CUBE_CONTEXT = {
 
 // ── Coordinate / curve zero-knowledge (@xmbl/zero-knowledge, FRI, ⛔ UNAUDITED) ──
 // A prover shows a coordinate (derivedX, derivedY) lies on a curve through secret points, and a
-// verifier checks it WITHOUT the secret points. We prove the honest coordinate and reject a
+// verifier checks it WITHOUT the secret points. We prove the genuine coordinate and reject a
 // tampered y (derivedY+1) — the exact pair reproductions/contract-zk.mjs gates a Verkle write on.
 export function zkProof({ derivedX = 99 } = {}) {
   const ctx = setup();
@@ -34,14 +34,14 @@ export function zkProof({ derivedX = 99 } = {}) {
   const dX = bi(derivedX);
   const { Pt, derivedY } = blindedCurve(ctx, { publicPoints, secretPoints, derivedX: dX });
   const proof = prove(ctx, { Pt, publicPoints, derivedX: dX, derivedY });
-  const honest = zkVerify(ctx, { proof, publicPoints, derivedX: dX, derivedY });
+  const genuine = zkVerify(ctx, { proof, publicPoints, derivedX: dX, derivedY });
   const tampered = zkVerify(ctx, { proof, publicPoints, derivedX: dX, derivedY: derivedY + 1n });
   return {
-    ok: honest === true && tampered === false,
+    ok: genuine === true && tampered === false,
     scheme: 'xzk (FRI coordinate/curve proof, UNAUDITED)',
     derivedX: str(dX), derivedY: str(derivedY),
     publicAnchors: publicPoints.length,
-    honestVerifies: honest, tamperedRejected: tampered === false,
+    genuineVerifies: genuine, tamperedRejected: tampered === false,
     note: 'proof checked without the secret points; a coordinate off the curve is rejected',
   };
 }

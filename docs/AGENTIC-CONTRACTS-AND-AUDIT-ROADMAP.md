@@ -94,7 +94,7 @@ overlay gives read-your-writes across frames, a frame cap makes a runaway cascad
 revert, and any frame that throws reverts the whole cascade. Because a contract can never re-enter
 another mid-execution, the classic reentrancy attack is not defended against — it **cannot be
 written**. (What remains the author's responsibility is cross-frame *sequencing*, the ordinary
-actor-model hazard; that scope is stated honestly in `MAINNET-GATES.md` T6.2c.)
+actor-model hazard; that scope is stated accurately in `MAINNET-GATES.md` T6.2c.)
 
 ### 5. Declared read footprints — capabilities are bounded up front
 
@@ -128,7 +128,7 @@ contract be reproduced and proven, not just executed.
 
 ### 8. Metering and billing — an agent pays for what it uses, and cannot DoS for free
 
-A paid execution surface that an agent drives must bill honestly. The compute worker measures real
+A paid execution surface that an agent drives must bill accurately. The compute worker measures real
 per-thread CPU time and peak WASM-linear memory, and now also **meters the V8 heap**
 (`heapUsedBytes`, `packages/storage-compute/src/compute.js:189`). A job **killed at the deadline** is
 no longer free: the runtime attaches maximum-charge metrics to the deadline rejection
@@ -164,7 +164,7 @@ not replay, could not re-enter, and could not mint.
 ## Part II — Remaining external audits (the ⛔ gates)
 
 These cannot be closed in-repo: they require a signed report from an independent reviewer. The repo's
-job — **done** — is to hand each reviewer a complete, honest attack-target package (the T2.x prep
+job — **done** — is to hand each reviewer a complete, genuine attack-target package (the T2.x prep
 deliverables) that states its own assumptions and pre-discloses its own weaknesses. Nothing external
 starts until the matching prep item is `[x]`; all are.
 
@@ -195,7 +195,7 @@ starts until the matching prep item is `[x]`; all are.
 - **Scope.** Cubic-SIG / Cubic-KEM: elliptic-curve parameter material derived from the cube-of-cubes
   ledger geometry. Novel, with no external cryptanalysis.
 - **Prep doc.** `docs/xmbl-cubic-cryptography-whitepaper.md` — `CubicCurveSource` specified step by
-  step (§3), cryptanalysis assumptions **A1–A3** and open questions **O1/O2** (§2, including the honest
+  step (§3), cryptanalysis assumptions **A1–A3** and open questions **O1/O2** (§2, including the genuine
   finding that derived curves get **no** group-order / weak-curve screening), Cubic-SIG's
   EUF-CMA-under-ECDLP-in-ROM reduction (§5.2).
 - **Findings already surfaced.** Cubic-SIG signs on **standard secp256k1** (`a=0`), so its group

@@ -18,7 +18,7 @@ export const PAPER_RATES = Object.freeze({
   storage: 1,
   compute: 1,
   // E4 (leader participation) hasn't landed yet, so this rate is unused today
-  // — lead.units stays honestly 0 below until core exposes a lead counter.
+  // — lead.units stays accurately 0 below until core exposes a lead counter.
   lead: 5,
 });
 
@@ -26,7 +26,7 @@ export const PAPER_RATES = Object.freeze({
  * Build the earnings snapshot from the live core. Every field is read via
  * optional chaining with a `?? 0` fallback: on a node where a given role
  * isn't enabled (or hasn't merged yet), that role's units — and therefore
- * its earned total — are honestly 0, never faked.
+ * its earned total — are accurately 0, never faked.
  * @param {import('./index.js').XMBLCore} core
  * @returns {{currency: string, by_role: object, total_earned: number}}
  */

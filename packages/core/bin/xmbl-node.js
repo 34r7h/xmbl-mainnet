@@ -175,7 +175,7 @@ function toCoreConfig(cfg, dataDir) {
 }
 
 // Set by the `--ppid` watch below when one is armed; called by the control socket's `detach` op. Null
-// when no watch exists (a pm2/systemd-managed node), which the op reports honestly rather than faking.
+// when no watch exists (a pm2/systemd-managed node), which the op reports accurately rather than faking.
 let detachPpidWatch = null;
 let detached = false;
 

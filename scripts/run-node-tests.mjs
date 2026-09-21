@@ -39,7 +39,7 @@ if (dirs.length === 0) {
   process.exit(2);
 }
 
-// Honest coverage: a dir with 0 test files contributes 0/0 and would otherwise be
+// Genuine coverage: a dir with 0 test files contributes 0/0 and would otherwise be
 // invisible in a "N/N passed" line, overstating how much is actually covered. List those
 // dirs loudly so the gap is legible. They do not fail the build — the missing suites are
 // tracked as open gates in MAINNET-GATES.md, not regressions — but they must not hide.

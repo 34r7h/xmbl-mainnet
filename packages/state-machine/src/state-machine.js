@@ -34,7 +34,7 @@ export class StateMachine extends EventEmitter {
     
     // Initialize database. KEEP THE PROMISE: `_dbOpen` flips true the moment Level opens, long before the
     // diff sweep and the tree rehydration have finished, so anything that polls `_dbOpen` and then reads a
-    // count is reading a store mid-rebuild. `ready()` is the only honest join point.
+    // count is reading a store mid-rebuild. `ready()` is the only genuine join point.
     this._ready = this._initDb().catch(() => {});
     
     // Listen to ledger events if available

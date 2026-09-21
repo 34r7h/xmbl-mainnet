@@ -50,7 +50,7 @@ const close = async ({ dir, xclt, xvsm }) => {
 console.log('\n1. a SEALED face reaches the state tree (the missing block:added doorbell)');
 {
   const env = await fresh();
-  await check('the tree starts empty — the honest baseline, not an assumption', async () => {
+  await check('the tree starts empty — the true baseline, not an assumption', async () => {
     eq(env.xvsm.getStateRoot(), ZERO, 'initial root');
   });
   await check('sealing 9 txs moves state_root off zero and applies 9 diffs', async () => {

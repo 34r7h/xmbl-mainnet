@@ -33,7 +33,7 @@ Your blockchain is a growing 3D grid that never stops. Transactions (txs or “t
 
 ### Explanation
 
-Before txs, tfaces, or blocks join the main structure, they sit in a pool organized like a web (DAG). Each piece links to others it approves—like a tx saying, “This tf is good.” To submit something, you stake money (set by the network, say 10 tokens). You pick an awaiting structure (e.g., a tf missing a tx) to validate. If that structure gets locked into a tcube or bcube and approved, your stake comes back. This keeps everyone honest and speeds up building.
+Before txs, tfaces, or blocks join the main structure, they sit in a pool organized like a web (DAG). Each piece links to others it approves—like a tx saying, “This tf is good.” To submit something, you stake money (set by the network, say 10 tokens). You pick an awaiting structure (e.g., a tf missing a tx) to validate. If that structure gets locked into a tcube or bcube and approved, your stake comes back. This keeps everyone genuine and speeds up building.
 
 ### Formal Specs
 

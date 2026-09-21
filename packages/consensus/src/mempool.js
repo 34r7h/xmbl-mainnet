@@ -422,7 +422,7 @@ export class Mempool extends EventEmitter {
       }
       this._rawCountAt = 0;   // force a recount: the cached size predates the eviction we just did
       // Reported, never silent — and it reports the SHORTFALL too. If the pool is over the cap but nothing
-      // is old enough to evict, the pool is LOADED, not leaking, and the honest answer is capacity rather
+      // is old enough to evict, the pool is LOADED, not leaking, and the direct answer is capacity rather
       // than dropping live work. Saying so is what stops a future reader "fixing" it by widening eviction.
       if (victims.length) console.warn(`[XPC-BOUND] over ${MAX} by ${over} — evicted ${victims.length} abandoned raw tx (pool now ${this.rawCount()})`);
       else console.warn(`[XPC-BOUND] over ${MAX} by ${over} — nothing past the abandon age; pool is in flight, not leaking (no eviction)`);

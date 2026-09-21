@@ -7,7 +7,7 @@
 //
 // SECTION 6 RECORDS A GAMEABLE PROPERTY rather than asserting it is correct: score is
 // count / (avgResponseTime + 1), and a node that omits responseTime keeps avgResponseTime at 0, so it
-// outranks an identically-active node that honestly reported fast responses. The evidence is
+// outranks an identically-active node that accurately reported fast responses. The evidence is
 // self-reported, so this is an incentive to report nothing. Pinned here as behaviour, flagged as a
 // question for whoever owns leader selection — the test asserts what the code does today.
 import { LeaderElection } from './leader-election.js';
@@ -163,19 +163,19 @@ const ok = (n, c) => { if (c) { pass++; console.log('ok   ' + n); } else { fail+
 // ── 6. THE SCORING ASYMMETRY, PINNED AS BEHAVIOUR (see this file's header) ──
 // score = count / (avgResponseTime + 1). Evidence is self-reported, and omitting responseTime leaves
 // avgResponseTime at 0, which maximises the score. Two nodes, identical activity: the one that reported
-// nothing beats the one that reported honestly fast responses.
+// nothing beats the one that reported accurately fast responses.
 {
   const e = new LeaderElection();
   for (let i = 0; i < 5; i++) {
-    e.recordPulse('honest', '10.0.0.1', 5);              // reports a genuinely fast 5ms
+    e.recordPulse('genuine', '10.0.0.1', 5);              // reports a genuinely fast 5ms
     e.recordPulse('silent', '10.0.0.2');                 // reports no measurement at all
   }
   ok('both nodes accumulated identical presence',
-     e.getUptime('honest').count === e.getUptime('silent').count);
+     e.getUptime('genuine').count === e.getUptime('silent').count);
   ok('TODAY, THE NODE THAT REPORTED NOTHING OUTRANKS THE ONE THAT REPORTED FAST RESPONSES',
      e.forceElection(1)[0] === '10.0.0.2');
   ok('...because its average stayed at the maximal-score value of 0',
-     e.getUptime('silent').avgResponseTime === 0 && e.getUptime('honest').avgResponseTime === 5);
+     e.getUptime('silent').avgResponseTime === 0 && e.getUptime('genuine').avgResponseTime === 5);
 }
 
 console.log(`\n${pass}/${pass + fail} passed`);

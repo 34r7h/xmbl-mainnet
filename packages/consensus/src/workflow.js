@@ -508,7 +508,7 @@ export class ConsensusWorkflow extends EventEmitter {
         // recoverStrandedRawTxs's test, so a sweep that only counted recoveries declared itself complete
         // while the pool was still full of txs one comparison away from processing.
         // AWAITED, not fired. A floating promise here let tick N+1 start while tick N was still walking the
-        // pool — the overlap the in-flight guard now also refuses. Awaiting is the honest fix: the tick is
+        // pool — the overlap the in-flight guard now also refuses. Awaiting is the real fix: the tick is
         // already async and nothing downstream depends on it returning fast.
         const p = await this.promoteSatisfiedRawTxs().catch(() => 0);
         if (n === 0 && p === 0 && this._recoverySweep) {

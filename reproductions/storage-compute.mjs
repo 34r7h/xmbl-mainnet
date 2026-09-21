@@ -48,15 +48,15 @@ const GUEST = Uint8Array.from([
 ]);
 ok('the hand-encoded guest is valid WASM', WebAssembly.validate(GUEST), `${GUEST.length} bytes`);
 
-// ── CLAIM 1a: an honest job runs, returns, and is metered ──
+// ── CLAIM 1a: an genuine job runs, returns, and is metered ──
 const rt = new ComputeRuntime({ maxMemory: 16 * 1024 * 1024, maxTime: 1500 });   // the node operator's own ceilings
 const bare = await rt.execute(GUEST, 'add', [40, 2]);
 ok('by default the guest\'s result comes back bare', bare === 42, `result=${bare}`);
 const r = await rt.execute(GUEST, 'add', [40, 2], { meter: true });   // opt in to the metering report
-ok('an honest job returns the guest\'s real result', r && r.result === 42, `result=${r?.result}`);
+ok('an genuine job returns the guest\'s real result', r && r.result === 42, `result=${r?.result}`);
 ok('it is METERED — cpu time, wall time and peak memory come back', r.metrics && typeof r.metrics.cpuMs === 'number' && typeof r.metrics.wallMs === 'number' && typeof r.metrics.peakMemBytes === 'number',
    `cpuMs=${r.metrics?.cpuMs?.toFixed?.(2)} wallMs=${r.metrics?.wallMs?.toFixed?.(2)} peakMem=${r.metrics?.peakMemBytes}`);
-ok('an honest job is not marked killed', r.metrics.killed !== true);
+ok('an genuine job is not marked killed', r.metrics.killed !== true);
 
 // ── CLAIM 1b: a synchronous infinite loop is KILLED, and BILLED ──
 const t0 = Date.now();
@@ -86,6 +86,6 @@ ok('A NODE THAT DOES NOT HOLD THE BYTES CANNOT PRODUCE IT', computeProbeProof(no
 ok('and the proof is nonce-bound — replaying an old one fails', computeProbeProof('probe-nonce-0000', shard) !== proof);
 
 console.log(failures === 0
-  ? '\nREPRODUCED — a guest cannot run forever for free, an honest job is metered, and custody is proved from the bytes rather than asserted.'
+  ? '\nREPRODUCED — a guest cannot run forever for free, an genuine job is metered, and custody is proved from the bytes rather than asserted.'
   : `\nNOT REPRODUCED — ${failures} assertion(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

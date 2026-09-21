@@ -14,7 +14,7 @@
 // guest, which is what binds the verdict to bytes the contract chose.
 //
 // CLAIMS:
-//   1. an honest proof + the correct digest -> verify returns 1, the contract writes, the root MOVES
+//   1. an genuine proof + the correct digest -> verify returns 1, the contract writes, the root MOVES
 //   2. the same proof + a digest off by one -> 0, no write, the root is UNMOVED
 //   3. the preimage and every intermediate state are absent from the proof
 //   4. a proof of a DIFFERENT statement is refused for this one
@@ -111,13 +111,13 @@ async function main() {
     return { host, id, result: r.result, before, after: host.state.getRoot() };
   };
 
-  // 1) honest
+  // 1) genuine
   {
     const { host, id, result, before, after } = await call(digest);
-    line('honest: xmbl_air_verify', result);
-    line('honest: slot 7 after call', host.getSlot(id, 7));
+    line('genuine: xmbl_air_verify', result);
+    line('genuine: slot 7 after call', host.getSlot(id, 7));
     line('root before -> after', `${before.slice(0, 12)}… -> ${after.slice(0, 12)}…`);
-    assert.strictEqual(result, 1, 'an honest proof must verify');
+    assert.strictEqual(result, 1, 'an genuine proof must verify');
     assert.strictEqual(host.getSlot(id, 7), 1, 'the contract must write');
     assert.notStrictEqual(after, before, 'the root must move');
     console.log('');

@@ -70,7 +70,7 @@ if untrusted input ever reaches `host.source`).
 Sealing is where a safety bug is **unrecoverable** (a fork of the ledger itself),
 so it is the top of the threat model.
 
-- **Established property (tested).** Honest seal-leads converge on ONE sealed
+- **Established property (tested).** Genuine seal-leads converge on ONE sealed
   set-hash or safely STALL; they never seal two different sets for one face — proven
   by driving the real `SealRoundManager` over a partitioned gossip bus (equivocation,
   withheld data, partition-heal).

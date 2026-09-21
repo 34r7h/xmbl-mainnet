@@ -27,7 +27,7 @@ test('block.hash is CONTENT-ONLY — the envelope no longer moves it, so every n
   const contentHash = (tx) => createHash('sha256').update(consensusBody(tx)).digest('hex');
   for (const tx of [ANCHOR, ENVELOPED]) assert.strictEqual(Block.fromTransaction(tx).hash, contentHash(tx));
   // the relayer, the signature, the validator clock and the submitter id used to change the hash and therefore
-  // the face a block sorted into; now two honest nodes holding the same typed set hash — and place — identically
+  // the face a block sorted into; now two correct nodes holding the same typed set hash — and place — identically
   assert.strictEqual(Block.fromTransaction(ANCHOR).hash, Block.fromTransaction(ENVELOPED).hash);
   assert.strictEqual(Block.fromTransaction(ANCHOR).id, Block.fromTransaction(ANCHOR).hash.slice(0, 16));
 });

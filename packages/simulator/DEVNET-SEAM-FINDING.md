@@ -5,7 +5,7 @@ opts into ledger-side signature verification — it wires **both** `xid` and
 `getPublicKeyByAddress` into the `Ledger` — which is precisely the caller configuration that
 exercises defects no production code path currently reaches. Two of the three defects below are
 now **FIXED**; the third is a genuine signature-domain decision left for the audit and documented
-honestly rather than papered over. All are covered by `src/devnet.test.mjs`.
+accurately rather than papered over. All are covered by `src/devnet.test.mjs`.
 
 ## Where ledger-side verification runs
 
@@ -92,7 +92,7 @@ architectural choices, **which is an audit-level signature-domain / block-identi
 Both touch `block.js`, ledger dedup, and cross-node determinism, so neither rides in on a tooling
 commit. Until one is made and audited, **ledger-side re-verification stays OFF in production**
 (the `getPublicKeyByAddress` lookup is deliberately not wired into the `Ledger`), and consensus
-remains the single verification point. This is the honest, current posture — not a silent gap.
+remains the single verification point. This is the genuine, current posture — not a silent gap.
 
 ## Why the devnet drives the direct path
 

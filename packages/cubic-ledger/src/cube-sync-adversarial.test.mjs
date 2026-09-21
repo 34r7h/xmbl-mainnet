@@ -3,7 +3,7 @@
 // remaining clause of the gate: when an inconsistent/contradictory block set is fed through the
 // live ingestion path (CubeSyncManager._onCube → adopt, the code that actually WRITES to the
 // ledger), the peer's lie must be REJECTED and LOCAL STATE MUST BE UNCHANGED — no cube record,
-// no member block, no partial adoption slips into the db. Honest sync still converges (control).
+// no member block, no partial adoption slips into the db. Genuine sync still converges (control).
 // Run: node cube-sync-adversarial.test.mjs
 import { createHash } from 'crypto';
 import { micromineTx } from './transaction-validator.js';
@@ -55,15 +55,15 @@ async function feed(mgr, payload) {
 }
 const newMgr = (ledger) => new CubeSyncManager({ xn: null, ledger, nodeId: 'self' });
 
-// ---- 0. control: the honest path MUST adopt, or every rejection below is vacuous --------------
-await check('control — an HONEST cube fed to the ingestion path is adopted (state grows)', async () => {
+// ---- 0. control: the genuine path MUST adopt, or every rejection below is vacuous --------------
+await check('control — an GENUINE cube fed to the ingestion path is adopted (state grows)', async () => {
   const l = new FakeLedger();
   const m = newMgr(l);
-  const honest = makePayload('ok');
-  await feed(m, honest);
-  assert.strictEqual(m.stats.adopted, 1, 'honest cube was not adopted');
-  assert.strictEqual(m.stats.rejected, 0, 'honest cube was wrongly rejected');
-  assert.ok(l.store.has(`cube:${honest.id}`), 'cube record not written');
+  const genuine = makePayload('ok');
+  await feed(m, genuine);
+  assert.strictEqual(m.stats.adopted, 1, 'genuine cube was not adopted');
+  assert.strictEqual(m.stats.rejected, 0, 'genuine cube was wrongly rejected');
+  assert.ok(l.store.has(`cube:${genuine.id}`), 'cube record not written');
   assert.strictEqual([...l.store.keys()].filter(k => k.startsWith('block:')).length, 27, 'expected 27 member blocks');
 });
 
@@ -111,22 +111,22 @@ await check('partial adoption is impossible — a single corrupt face writes NON
   assert.strictEqual([...l.store.keys()].filter(k => k.startsWith('block:')).length, 0, 'blocks from the valid faces were persisted anyway');
 });
 
-// ---- 3. a contradictory SET cannot corrupt already-adopted honest state ------------------------
-await check('a fork attempt (same id, different bytes) does NOT overwrite the honest cube', async () => {
+// ---- 3. a contradictory SET cannot corrupt already-adopted genuine state ------------------------
+await check('a fork attempt (same id, different bytes) does NOT overwrite the genuine cube', async () => {
   const l = new FakeLedger();
   const m = newMgr(l);
-  const honest = makePayload('fork-honest');
-  await feed(m, honest);
-  const afterHonest = snapshot(l);
+  const genuine = makePayload('fork-genuine');
+  await feed(m, genuine);
+  const afterGenuine = snapshot(l);
   assert.strictEqual(m.stats.adopted, 1);
 
-  // Attacker replays the honest id but with different member bytes — the recomputed id will not
-  // match honest.id, so it is rejected; the honest cube's records must be untouched.
+  // Attacker replays the genuine id but with different member bytes — the recomputed id will not
+  // match genuine.id, so it is rejected; the genuine cube's records must be untouched.
   const forged = makePayload('fork-evil');
-  forged.id = honest.id;                          // claim the honest id
+  forged.id = genuine.id;                          // claim the genuine id
   await feed(m, forged);
   assert.strictEqual(m.stats.rejected, 1, 'the fork payload was not rejected');
-  assert.strictEqual(snapshot(l), afterHonest, 'the honest cube state was mutated by the fork attempt');
+  assert.strictEqual(snapshot(l), afterGenuine, 'the genuine cube state was mutated by the fork attempt');
 });
 
 // ---- 4. garbage input is rejected without throwing (the loop survives one bad peer) ------------

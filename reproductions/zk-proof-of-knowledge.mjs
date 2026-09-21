@@ -139,9 +139,9 @@ for (let k = 0; k < 3; k++) {
   assert.strictEqual(lhs, rhs);
 }
 kv('', `… ${proof.cons.length - 3} more openings checked the same way`);
-const okHonest = verify(ctx, { proof, publicPoints, derivedX, derivedY });
-kv('verify(proof, public, x*, y*)', okHonest ? 'ACCEPT' : 'REJECT');
-assert.strictEqual(okHonest, true);
+const okGenuine = verify(ctx, { proof, publicPoints, derivedX, derivedY });
+kv('verify(proof, public, x*, y*)', okGenuine ? 'ACCEPT' : 'REJECT');
+assert.strictEqual(okGenuine, true);
 
 hr('STEP 11 — SOUNDNESS: the same proof against a FALSE claim');
 for (const [label, y] of [['y* + 1', add(derivedY, 1n)], ['y* − 1', sub(derivedY, 1n)], ['y* = 0', 0n]]) {

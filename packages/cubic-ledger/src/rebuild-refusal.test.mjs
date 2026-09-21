@@ -60,7 +60,7 @@ const dir2 = mkdtempSync(join(tmpdir(), 'xmbl-refuse2-'));
 const fresh = new Ledger({ dbPath: dir2 });
 await fresh.initialize?.();
 const onEmpty = await fresh.rebuildFromAnchors(oldFeed);
-ok('an EMPTY node is not refused — it has no chain to lose (0 rebuilt, 40 untyped, reported honestly)',
+ok('an EMPTY node is not refused — it has no chain to lose (0 rebuilt, 40 untyped, reported accurately)',
    onEmpty.refused === undefined && onEmpty.untyped === 40 && onEmpty.anchors === 0);
 
 await l.close?.(); await fresh.close?.();

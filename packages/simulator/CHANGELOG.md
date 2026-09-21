@@ -18,7 +18,7 @@
     never under the xid it claims (a datum fails `validateXid` precisely when that xid is somebody else's), and
     the anchor dedup key claimed before validation is released on every failure. Both doors are closed on BOTH
     entry points — `addTransaction` and `addSealedBatch`, the path a finalized transaction actually takes — and
-    one invalid entry in a batch no longer discards the honest transactions behind it.
+    one invalid entry in a batch no longer discards the genuine transactions behind it.
   - consensus: a content-addressed type-6 value tx is admitted on its content address (it carries no in-body
     signature by design); a malformed anchor is refused at the door by the ledger's own `validateTransaction`;
     `finalizeTransaction` preserves the signed `id`.
@@ -28,7 +28,7 @@
   - networking: self-elected circuit-relay server; NO_FATAL transport tolerance; throttled bootstrap warnings.
   - storage-compute: `CoordinateDelivery` (broken: `require` in ESM, keyed on the public key) is removed.
   - core: ships the node daemon as the `xmbl-node` bin; the control socket implements the coordinator
-    contract (`xsc`, `submit_batch`, `ledger_capabilities`, `identity_status`, a signed `chain` claim, honest
+    contract (`xsc`, `submit_batch`, `ledger_capabilities`, `identity_status`, a signed `chain` claim, genuine
     `submit_tx` rejections) and reports the RUNNING versions; boot waits for the stores.
   - every package exports a load-time `VERSION`.
   - PROTOCOL (operator, 2026-09-16): every transaction is typed by its xid (tokens.json type codes; `micromineTx`/

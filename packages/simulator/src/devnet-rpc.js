@@ -17,7 +17,7 @@
 // It ALSO serves the node-side capability surface the extension cannot run in-page — each a REAL
 // primitive run end-to-end in this node process, verdict returned JSON-safe (see capabilities.js):
 //   getStateRoot    {type}                  → { root, pooled, landed }   // live ledger state root
-//   zkProof         {type, derivedX?}       → { ok, derivedX, derivedY, honestVerifies, tamperedRejected, … }
+//   zkProof         {type, derivedX?}       → { ok, derivedX, derivedY, genuineVerifies, tamperedRejected, … }
 //   heAdd           {type, a?, b?}          → { ok, a, b, sum, expected, … }  // homomorphic add
 //   sigVerify       {type, message?}        → { ok, signedVerifies, tamperedRejected, … }  // Cubic-SIG
 //   seal            {type, secret?}         → { ok, roundTrip, … }             // PQ KEM seal
@@ -69,7 +69,7 @@ export class DevnetRpc {
       }
       default: {
         // Node-side capability surface (zk / HE / signature / seal): a real primitive run to a
-        // verdict in this process. Unknown types still fall through to an honest error.
+        // verdict in this process. Unknown types still fall through to an genuine error.
         const cap = CAPABILITIES[message && message.type];
         if (cap) return cap(message || {});
         return { error: `Unknown message type: ${message && message.type}` };

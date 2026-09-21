@@ -216,7 +216,7 @@ export function decryptBitDetail(sk, ciphertext) {
  * `heHost` → env.xmbl_he_add): a contract can aggregate sealed inputs and persist the encrypted
  * aggregate, which only the key holder can open off-chain.
  *
- * MESSAGE SPACE / NOISE (honest bounds, not a bug): with the single-bit q/2 scaling of
+ * MESSAGE SPACE / NOISE (stated bounds, not a bug): with the single-bit q/2 scaling of
  * {@link encryptBit}, a bit sum is taken mod 2 (ENC(1) ⊞ ENC(1) decrypts to 0) — summing integers
  * that do not wrap needs a wider-scaled plaintext encoding, which is the documented next extension
  * (the same relationship the XCL slot ABI has to the byte-pointer ABI), not wired here. Noise grows

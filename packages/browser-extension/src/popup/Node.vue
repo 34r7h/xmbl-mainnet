@@ -44,7 +44,7 @@ const status = reactive({ running: false, peers: 0, height: 0 })
 const root = reactive({ root: null, pooled: 0, landed: 0 })
 let poll = null
 
-// The whole xmbl-mainnet module set and the honest surface each has in the extension.
+// The whole xmbl-mainnet module set and the actual surface each has in the extension.
 const MODULES = [
   { name: '@xmbl/lng', desc: 'The LNG contract language → WASM compiler.', where: 'inpage', whereLabel: 'in-page' },
   { name: '@xmbl/contracts', desc: 'XCL contract runtime — compile, deploy, call, test.', where: 'inpage', whereLabel: 'in-page' },

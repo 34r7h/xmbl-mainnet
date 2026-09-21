@@ -75,15 +75,15 @@ ok('NOTHING was deleted — the chain is exactly as it was', a.blocks.size === h
 
 // ── 4. A FORGERY CANNOT EVICT WHAT IT IMPERSONATES ──
 const c = await newLedger();
-const honest = micromineTx({ type: 'anchor', event: 'task.created', hash: sha('honest'), ts: 99 });
-const forgery = { ...honest, hash: sha('forged') };          // same xid + nonce, different body
+const genuine = micromineTx({ type: 'anchor', event: 'task.created', hash: sha('genuine'), ts: 99 });
+const forgery = { ...genuine, hash: sha('forged') };          // same xid + nonce, different body
 let threw = null;
 try { await c.addTransaction(forgery); } catch (e) { threw = e; }
 ok('the forgery is refused, and says why', threw !== null && threw.code === 'XID_MISMATCH');
-ok('the impersonated xid was NOT evicted', !c._evicted.has(`xid:${honest.xid}`));
+ok('the impersonated xid was NOT evicted', !c._evicted.has(`xid:${genuine.xid}`));
 ok('the forgery WAS evicted, under a digest of its own bytes', [...c._evicted].some((k) => k.startsWith('forged:')));
-const admitted = await c.addTransaction(honest);
-ok('the honest anchor still gets in afterwards', !!admitted && admitted.evicted !== true && c._membershipPool.length === 1);
+const admitted = await c.addTransaction(genuine);
+ok('the genuine anchor still gets in afterwards', !!admitted && admitted.evicted !== true && c._membershipPool.length === 1);
 
 // ── 5. AN INVALID DATUM IS EVICTED FOR GOOD — across a restart ──
 const d = mkdtempSync(join(tmpdir(), 'xmbl-repro-cl-evict-')); dirs.push(d);

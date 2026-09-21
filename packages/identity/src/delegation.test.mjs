@@ -166,7 +166,7 @@ const policyFor = (root, extra = {}) => ({ rootAddress: root.address, signer: fa
   eq('args tampered after signing → action-sig', (await verifyChain({ ...pres, args: [9999] }, policyFor(root))).reason, 'action-sig');
 }
 
-// ================= (6) TEE attestation is honest + enforceable =================
+// ================= (6) TEE attestation is genuine + enforceable =================
 {
   const { root, pres } = await buildValid();
   // default NO_ATTESTATION asserts nothing; with requireAttestation the chain is refused

@@ -115,6 +115,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const { Pt, derivedY } = blindedCurve(ctx, { publicPoints, secretPoints, derivedX: 99n });
   const proof = prove(ctx, { Pt, publicPoints, derivedX: 99n, derivedY });
   const ok = (b) => (b ? 'PASS' : 'FAIL');
-  console.log(`xzk honest proof verifies:            ${ok(verify(ctx, { proof, publicPoints, derivedX: 99n, derivedY }))}  (want PASS)`);
+  console.log(`xzk genuine proof verifies:            ${ok(verify(ctx, { proof, publicPoints, derivedX: 99n, derivedY }))}  (want PASS)`);
   console.log(`xzk rejects forged derived y*+1:       ${ok(!verify(ctx, { proof, publicPoints, derivedX: 99n, derivedY: add(derivedY, 1n) }))}  (want PASS->rejected)`);
 }

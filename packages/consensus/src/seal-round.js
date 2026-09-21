@@ -4,7 +4,7 @@
 //
 // ROUND-NUMBER-AGNOSTIC by design: the agreement is keyed by the candidate's SET-HASH, not a round counter.
 // Every node independently computes the SAME bounded lowest-prefix from the same unsealed set (deterministic
-// content order), so honest nodes propose the identical set-hash and converge — no cross-node round-number to
+// content order), so correct nodes propose the identical set-hash and converge — no cross-node round-number to
 // coordinate. A node whose unsealed set diverges (missing/extra item) proposes a DIFFERENT set-hash and simply
 // STALLS until it converges (commit-2 delivers the missing data). Once a set seals, its members leave the pool so
 // the next candidate (next-lowest prefix) differs → the next set-hash → the next agreement. The set-hash IS the

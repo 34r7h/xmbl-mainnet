@@ -268,7 +268,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const proof = prove(ctx, { trace, transitions, boundary });
     const ms = Date.now() - t0;
     console.log(`AIR fibonacci  K=${ctx.K} N=${ctx.N}  prove ${ms} ms`);
-    console.log(`  honest proof verifies                  : ${ok(verify(ctx, { proof, transitions, boundary }))}`);
+    console.log(`  genuine proof verifies                  : ${ok(verify(ctx, { proof, transitions, boundary }))}`);
     const wrong = boundary.slice(); wrong[2] = { row: T - 1, col: 0, value: add(trace[T - 1][0], 1n) };
     console.log(`  a wrong claimed output is rejected     : ${ok(!verify(ctx, { proof, transitions, boundary: wrong }))}`);
     // a trace that breaks the recurrence must not produce an accepted proof
@@ -290,7 +290,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const t0 = Date.now();
     const proof = prove(ctx, { trace, transitions, boundary });
     console.log(`AIR preimage   K=${ctx.K} N=${ctx.N}  prove ${Date.now() - t0} ms`);
-    console.log(`  honest proof verifies                  : ${ok(verify(ctx, { proof, transitions, boundary }))}`);
+    console.log(`  genuine proof verifies                  : ${ok(verify(ctx, { proof, transitions, boundary }))}`);
     const blob = JSON.stringify(proof, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
     console.log(`  the secret preimage is not in the proof: ${ok(!blob.includes(secret.toString()))}`);
     const other = [{ row: T - 1, col: 0, value: add(digest, 1n) }];

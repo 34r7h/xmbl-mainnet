@@ -9,7 +9,7 @@
 //   leaf hash            = sha256(value canonicalised)            (value node at depth 32)
 //   internal node hash   = sha256( concat of 256 child slots, each 32 bytes; empty slot = 32 zeros )
 //   a key's nibble at depth d = sha256(key)[d]
-// A proof carries, per level, the sibling hashes at that node; the honest verifier fills the key's own
+// A proof carries, per level, the sibling hashes at that node; the correct verifier fills the key's own
 // slot with the hash carried up from below and every other slot from the siblings (or zeros), hashes,
 // and repeats to the root. The proof is SOUND iff the reconstructed root equals the tree's real root —
 // which the verifier learns independently (tree.getRoot()), never from the attacker-supplied proof.root.

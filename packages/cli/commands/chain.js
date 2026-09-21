@@ -24,7 +24,7 @@ const POINTER = '.xmbl-devnet.json';
 const STATE_FILE = 'devnet.json';
 // The devnet's named participants. Index 0 is the FAUCET: it funds every other account at start with real,
 // signed transfers, so a fresh devnet has spendable balances — and its own balance reads NEGATIVE by exactly the
-// amount it minted, because a devnet balance is the honest net of applied deltas (LocalDevnet.balanceOf).
+// amount it minted, because a devnet balance is the genuine net of applied deltas (LocalDevnet.balanceOf).
 const ACCOUNT_NAMES = ['faucet', 'alice', 'bob', 'charlie', 'deployer', 'validator1', 'validator2', 'validator3', 'storage1', 'compute1'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

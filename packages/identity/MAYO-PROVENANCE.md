@@ -25,7 +25,7 @@ The pin was verified against the live upstream remote: the commit resolves on
 `github.com/PQCMayo/MAYO-C`, and the vendored C subtree is byte-identical to that
 commit except for one line (see T2.1-c).
 
-> **Honesty note for the auditor.** `ad7e80d` (2026-09-07) is when this subtree
+> **Genuiney note for the auditor.** `ad7e80d` (2026-09-07) is when this subtree
 > entered *this* repository, not a substantiated *upstream retrieval* date — the
 > subtree was carried in from earlier internal work at scaffold time. The pin
 > (`4b7cd94…`) is the authoritative statement of "what upstream this is"; treat the

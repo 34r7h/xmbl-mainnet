@@ -201,7 +201,7 @@ export class VerkleStateTree {
   // transactions instead of the structure that actually commits them. This returns the real nodes and the
   // real parent->child edges, bounded, with the counts needed to say what was left out.
   //
-  // Bounded on BOTH axes and honest about it: `maxDepth` limits how far down, `maxNodes` caps the total, and
+  // Bounded on BOTH axes and genuine about it: `maxDepth` limits how far down, `maxNodes` caps the total, and
   // the result carries `truncated` plus each node's own `descendants` so a cut branch reports its real size
   // rather than looking like a leaf. A viewer that silently stopped at 500 nodes would draw a tree that is
   // simply the wrong shape.
@@ -217,7 +217,7 @@ export class VerkleStateTree {
     }
     if (!start.hash) this._updateHash(start);
 
-    // Subtree size is what makes a truncated branch honest, so it is computed for every node we emit.
+    // Subtree size is what makes a truncated branch genuine, so it is computed for every node we emit.
     const sizeOf = (node) => {
       let n = 1;
       for (const c of node.children.values()) n += sizeOf(c);

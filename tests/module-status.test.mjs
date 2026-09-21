@@ -8,8 +8,8 @@
 //
 // It deliberately does NOT assert that every module is "done": that is the work the ledger tracks,
 // not an invariant to enforce here (a gate that can't fail is not a gate, and a gate that fails for
-// honest in-progress work would only pressure someone to lie in the ledger). What it enforces is
-// that the ledger is COMPLETE and HONEST about coverage.
+// genuine in-progress work would only pressure someone to lie in the ledger). What it enforces is
+// that the ledger is COMPLETE and GENUINE about coverage.
 import assert from 'node:assert';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';

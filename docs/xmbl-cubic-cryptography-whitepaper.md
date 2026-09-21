@@ -24,7 +24,7 @@ implementation and can be recomputed. Authoritative sources:
 
 ---
 
-## 1. Scope, threat model, and the honest-claims boundary
+## 1. Scope, threat model, and the claims boundary
 
 ### 1.1 What is standard (inherited security)
 
@@ -60,7 +60,7 @@ implementation and can be recomputed. Authoritative sources:
 Adversary is polynomial-time, sees all public ledger state (cube addresses,
 coordinates, plane normals, public keys, signatures, curve parameter blocks), can
 adaptively request signatures/curve blocks (chosen-message / chosen-context), and
-controls the network. Adversary does **not** hold any honest secret key. Quantum
+controls the network. Adversary does **not** hold any genuine secret key. Quantum
 adversaries: Cubic-SIG and any secp256k1-based primitive are **broken by Shor**
 and are explicitly CLASSICAL-ONLY; post-quantum signing is `mayo.wasm` (MAYO,
 `MAYO-PROVENANCE.md`) and PQ confidentiality is Cubic-LWE (§4). The random oracle
@@ -80,7 +80,7 @@ to resist. **These are conjectures offered for attack, not theorems.**
 The input coordinates are ledger geometry, visible to everyone, and carry
 **< ~10 bits of entropy** each in practice (small signed integers). The
 construction therefore makes **no secrecy assumption** about them. They serve as
-*verifiable public evaluation points*: two honest nodes with identical ledger
+*verifiable public evaluation points*: two correct nodes with identical ledger
 state derive byte-identical curve parameters (determinism is a *feature*, tested
 in `cubic-crypto.test.mjs`), and any party can recompute and check the derivation.
 Security must come from the hash expansion (§2.2), never from coordinate secrecy.
@@ -407,7 +407,7 @@ rejected" property.
 `ctx₂ ≠ ctx₁` because the verifier computes a different challenge — i.e. contexts
 are separated, exactly as distinct messages are. It does **not** establish any
 hardness *about geometry* (e.g., it is not a claim that binding to a plane adds
-cryptographic strength beyond domain separation). The honest statement: **spatial
+cryptographic strength beyond domain separation). The genuine statement: **spatial
 binding = message/domain binding on the tuple `(normal, coordinates, cubeAddress)`;
 its value is non-transferability by construction, and its security is precisely
 that of the challenge being collision-resistant over these inputs.** The audit is
@@ -525,7 +525,7 @@ block of §3.1 — is the only insertion point that can move the number material
 
 *What it replaces:* AES-128-CTR expansion of 144,495 bytes. *What it could save:* up to
 0.524 ms of a 0.612 ms verify, if the coordinate-structured generator were free, which it
-would not be — the honest bound is "some fraction of 85.7%", and no fraction can be
+would not be — the conservative bound is "some fraction of 85.7%", and no fraction can be
 claimed before an implementation exists to time.
 
 *What it adds:* **M2, and it is not a small assumption.** MAYO's security rests on the

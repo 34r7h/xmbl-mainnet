@@ -4,7 +4,7 @@ import { validateTransaction, XID_RE } from './transaction-validator.js';
 import { calculateAbsoluteCoords, calculateVector, calculateFractalAddress } from './geometry.js';
 import { anchorTimestampNanos } from './timestamps.js';
 
-// THE CONSENSUS CONTENT OF A TRANSACTION — the part two honest nodes must agree on, and nothing else.
+// THE CONSENSUS CONTENT OF A TRANSACTION — the part two correct nodes must agree on, and nothing else.
 // Everything a node adds on the way past is ENVELOPE: who relayed it (`from`, `agent`,
 // `agent_xmbl_address`), their signature (`sig`), when their own validator saw it (`validationTimestamp`)
 // and whatever id their submitter happened to mint (`id`). The block id used to be sha256 of the WHOLE tx,
@@ -105,7 +105,7 @@ export class Block {
     validateTransaction(tx);
 
     // CONTENT-ONLY HASH (operator, 2026-09-16 — rolled out to every node with a canonical rebuild). The hash
-    // used to cover the whole envelope (relayer, signature, validator clock), so two honest nodes holding the
+    // used to cover the whole envelope (relayer, signature, validator clock), so two correct nodes holding the
     // identical typed set still sorted their nine-block faces differently and sealed different cubes. Now the
     // hash is a pure function of the consensus body — the xid — and so is the id (its first 16 hex chars).
     // cube-sync's verifyCube recomputes exactly this from a block's tx.

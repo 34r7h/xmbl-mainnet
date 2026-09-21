@@ -46,7 +46,7 @@ function newNonce() { return randomBytes(12).toString('hex'); }
 /** Default crypto seam: MAYO through signer.js. Both are async. */
 const MAYO_SIGNER = { sign: mayoSign, verify: mayoVerify };
 
-// ---- Tier-1 TEE attestation: HONEST by default ----
+// ---- Tier-1 TEE attestation: GENUINE by default ----
 // A verifier takes a grant's `tee` envelope and returns { attested, verifier, claims? }. The
 // default asserts NOTHING — mirroring CubicCurveSource.describe() reporting secure:false until
 // an audit. A real SGX/SEV/TDX quote verifier is injected by the deployment; nothing in this
@@ -216,7 +216,7 @@ export async function verifyChain(pres, policy) {
     return fail('token-agent-address', 2);
   if (policy.isRevoked && policy.isRevoked(tokenHash(token))) return fail('revoked', 2);
 
-  // Tier 1 — TEE attestation of the coordinator (honest: NO_ATTESTATION asserts nothing)
+  // Tier 1 — TEE attestation of the coordinator (genuine: NO_ATTESTATION asserts nothing)
   const av = policy.attestationVerifier || NO_ATTESTATION;
   const att = await av.verify(grant.tee);
   if (policy.requireAttestation && !att.attested) return fail('tee-unattested', 1);

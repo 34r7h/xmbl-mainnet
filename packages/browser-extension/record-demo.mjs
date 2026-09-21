@@ -68,7 +68,7 @@ const VO = {
   incby: 'Arguments work too. Incrementing by forty-one moves the counter to forty-two, recompiled and executed from source on every call.',
   revert: 'Contracts must fail safely. We open the Vault and withdraw far more than its balance — an underflow. The call reverts, and the committed balance stays exactly where it was.',
   crypto: 'Beyond contracts, the node exposes cryptography. The Crypto tab runs real primitives on the live devnet.',
-  zk: 'A zero-knowledge proof: the node verifies an honest coordinate and rejects a tampered one — a real, green verdict.',
+  zk: 'A zero-knowledge proof: the node verifies an genuine coordinate and rejects a tampered one — a real, green verdict.',
   he: 'Homomorphic encryption: two encrypted numbers are added while they stay encrypted, under a post-quantum scheme.',
   wallet: 'The Wallet tab shows a real balance served by the node bridge — connected, not a fabricated value.',
   node: 'And the Node tab reads the live ledger state root, and maps every module the node runs.',
@@ -255,10 +255,10 @@ try {
   await page.waitForTimeout(700);
   { const d = await liveDot(); await saw('Opened the Crypto tab', 'Connected to the live devnet', d, /no devnet/.test(d) ? 'bad' : 'ok'); }
 
-  await step('zk', 'Running the coordinate/curve zero-knowledge proof on the node', 'A REAL green verdict: the honest coordinate verifies, a tampered one is rejected');
+  await step('zk', 'Running the coordinate/curve zero-knowledge proof on the node', 'A REAL green verdict: the genuine coordinate verifies, a tampered one is rejected');
   await page.locator('.cap', { hasText: 'Coordinate' }).getByRole('button', { name: /Prove/ }).click();
   await page.locator('.cap', { hasText: 'Coordinate' }).locator('.verdict.ok').waitFor({ timeout: 15000 });
-  { const v = (await page.locator('.cap', { hasText: 'Coordinate' }).locator('.verdict').first().textContent() || '').trim(); await saw('Ran the zk coordinate proof on the devnet', 'A REAL green verdict (honest verifies, tampered rejected)', v.slice(0, 120)); }
+  { const v = (await page.locator('.cap', { hasText: 'Coordinate' }).locator('.verdict').first().textContent() || '').trim(); await saw('Ran the zk coordinate proof on the devnet', 'A REAL green verdict (genuine verifies, tampered rejected)', v.slice(0, 120)); }
 
   await step('he', 'Running the homomorphic encrypted add on the node', 'A REAL green verdict: ciphertexts summed blind, under the post-quantum scheme');
   await page.locator('.cap', { hasText: 'Encrypted add' }).getByRole('button', { name: /Add under/ }).click();

@@ -54,7 +54,7 @@ try {
 
   // ── node-side capability surface: each a REAL primitive verified + negative-controlled ──
   const zk = await call({ type: 'zkProof', derivedX: 99 });
-  ok('zkProof verifies the honest coordinate and rejects the tampered one', zk.ok === true && zk.honestVerifies === true && zk.tamperedRejected === true, JSON.stringify(zk));
+  ok('zkProof verifies the genuine coordinate and rejects the tampered one', zk.ok === true && zk.genuineVerifies === true && zk.tamperedRejected === true, JSON.stringify(zk));
 
   const he1 = await call({ type: 'heAdd', a: 1, b: 0 });
   ok('heAdd: ENC(1) ⊞ ENC(0) decrypts to 1 (blind add)', he1.ok === true && he1.sum === 1, JSON.stringify(he1));

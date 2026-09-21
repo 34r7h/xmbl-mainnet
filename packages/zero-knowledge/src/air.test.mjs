@@ -34,7 +34,7 @@ const proveMs = Date.now() - t0;
 const tv = Date.now();
 const fibOk = verify(fibCtx, { proof: fibProof, transitions: fibTransitions, boundary: fibBoundary });
 const verifyMs = Date.now() - tv;
-ok(`an honest Fibonacci execution verifies (prove ${proveMs} ms, verify ${verifyMs} ms)`, fibOk === true);
+ok(`an genuine Fibonacci execution verifies (prove ${proveMs} ms, verify ${verifyMs} ms)`, fibOk === true);
 ok('the proof commits one root per column plus the composition', fibProof.roots.length === 2 && typeof fibProof.rootC === 'string');
 ok('the composition commitment IS the FRI codeword', fibProof.friC.roots[0] === fibProof.rootC);
 

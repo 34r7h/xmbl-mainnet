@@ -19,12 +19,12 @@
 //     slot 7 = 1. The coordinate is READ FROM THE GUEST'S MEMORY — the guest supplies it.
 //   • ContractHost stages the proof + public points (chain-provided, identical on every node) and
 //     attaches the async zk init that import()s @xmbl/zero-knowledge inside the compute worker.
-//   1. HONEST coordinate  → zk_verify returns 1 → the contract commits slot 7 → the Verkle ROOT MOVES.
+//   1. GENUINE coordinate  → zk_verify returns 1 → the contract commits slot 7 → the Verkle ROOT MOVES.
 //   2. TAMPERED coordinate (y+1) → zk_verify returns 0 → no write → the Verkle ROOT IS UNMOVED.
 //      (This is the binding proof: the verdict tracked the contract's asserted bytes.)
 //   3. The same import declared WITHOUT the zkHost opt-in → DENIED (deny-by-default holds).
 //   4. A MALFORMED staged proof → zk_verify returns 0, never traps → root unmoved (fail-closed, not DoS).
-//   5. Two independent nodes run the honest call → the SAME root (deterministic verdict).
+//   5. Two independent nodes run the genuine call → the SAME root (deterministic verdict).
 //
 // OPT-IN / UNAUDITED: @xmbl/zero-knowledge is an experimental, UNAUDITED post-quantum FRI prototype
 // (MAINNET-GATES ⛔). This wiring is per-contract opt-in (the `zkHost` deploy flag) and does NOT gate
@@ -110,7 +110,7 @@ async function main() {
   const derivedX = 99n;
   const { Pt, derivedY } = blindedCurve(ctx, { publicPoints, secretPoints, derivedX });
   const proof = prove(ctx, { Pt, publicPoints, derivedX, derivedY });
-  assert.strictEqual(verify(ctx, { proof, publicPoints, derivedX, derivedY }), true, 'sanity: honest proof verifies standalone');
+  assert.strictEqual(verify(ctx, { proof, publicPoints, derivedX, derivedY }), true, 'sanity: genuine proof verifies standalone');
   assert.strictEqual(verify(ctx, { proof, publicPoints, derivedX, derivedY: derivedY + 1n }), false, 'sanity: a wrong coordinate is rejected standalone');
   line('derivedX (public coordinate)', derivedX);
   line('derivedY (on the secret curve)', derivedY);
@@ -120,19 +120,19 @@ async function main() {
 
   const stagedZk = { opts: {}, proof, publicPoints }; // chain-staged material: identical on every node
 
-  // 2) HONEST coordinate → verify=1 → state write → Verkle root MOVES.
+  // 2) GENUINE coordinate → verify=1 → state write → Verkle root MOVES.
   const host = new ContractHost({ runtime: runtime(), state: new VerkleStateTree() });
-  const honest = zkGatedContract(word32(derivedX), word32(derivedY));
-  const { id: idH } = host.deploy(honest, [7], { zkHost: true });
-  const rootBeforeHonest = host.state.getRoot();
+  const genuine = zkGatedContract(word32(derivedX), word32(derivedY));
+  const { id: idH } = host.deploy(genuine, [7], { zkHost: true });
+  const rootBeforeGenuine = host.state.getRoot();
   const rH = await host.call(idH, 'check', [], { zk: stagedZk });
-  const rootAfterHonest = host.state.getRoot();
-  line('honest: xmbl_zk_verify result', rH.result);
-  line('honest: slot 7 after call', host.getSlot(idH, 7));
-  line('root before → after (honest)', `${rootBeforeHonest.slice(0, 12)}… → ${rootAfterHonest.slice(0, 12)}…`);
-  assert.strictEqual(rH.result, 1, 'honest coordinate must verify to 1');
+  const rootAfterGenuine = host.state.getRoot();
+  line('genuine: xmbl_zk_verify result', rH.result);
+  line('genuine: slot 7 after call', host.getSlot(idH, 7));
+  line('root before → after (genuine)', `${rootBeforeGenuine.slice(0, 12)}… → ${rootAfterGenuine.slice(0, 12)}…`);
+  assert.strictEqual(rH.result, 1, 'genuine coordinate must verify to 1');
   assert.strictEqual(host.getSlot(idH, 7), 1, 'a verified proof must commit the gated state write');
-  assert.notStrictEqual(rootAfterHonest, rootBeforeHonest, 'committing gated state must MOVE the Verkle root');
+  assert.notStrictEqual(rootAfterGenuine, rootBeforeGenuine, 'committing gated state must MOVE the Verkle root');
   console.log('');
 
   // 3) TAMPERED coordinate (y+1) → verify=0 → NO write → Verkle root UNMOVED. (binding proof)
@@ -152,7 +152,7 @@ async function main() {
   // 4) DENY: the same import declared WITHOUT zkHost is refused (deny-by-default).
   let denied = 0;
   const hostNoZk = new ContractHost({ runtime: runtime() });
-  const { id: idN } = hostNoZk.deploy(honest, [7]); // NO zkHost → no zk init attached
+  const { id: idN } = hostNoZk.deploy(genuine, [7]); // NO zkHost → no zk init attached
   await assert.rejects(() => hostNoZk.call(idN, 'check', [], { zk: stagedZk }), /denied import: env\.xmbl_zk_verify/);
   denied += 1;
   line('denied-import refusals', denied);
@@ -160,7 +160,7 @@ async function main() {
 
   // 5) NEVER TRAPS: a malformed staged proof → verify returns 0, no trap → root unmoved.
   const hostBad = new ContractHost({ runtime: runtime(), state: new VerkleStateTree() });
-  const { id: idB } = hostBad.deploy(honest, [7], { zkHost: true });
+  const { id: idB } = hostBad.deploy(genuine, [7], { zkHost: true });
   const rootBeforeBad = hostBad.state.getRoot();
   const rB = await hostBad.call(idB, 'check', [], { zk: { opts: {}, proof: { rootP: 'deadbeef', garbage: true }, publicPoints } });
   line('malformed proof: result (no trap)', rB.result);
@@ -177,7 +177,7 @@ async function main() {
   assert.strictEqual(verify(cheatCtx, { proof: cheatProof, publicPoints, derivedX, derivedY: cheat.derivedY }), true,
     'the inflated proof must be internally consistent at its own bound (else this proves nothing)');
   const hostK = new ContractHost({ runtime: runtime(), state: new VerkleStateTree() });
-  const { id: idK } = hostK.deploy(honest, [7], { zkHost: true });
+  const { id: idK } = hostK.deploy(genuine, [7], { zkHost: true });
   const rootBeforeK = hostK.state.getRoot();
   const rK = await hostK.call(idK, 'check', [], { zk: { opts: { degreeBound: 64 }, proof: cheatProof, publicPoints } });
   line('prover-staged degree bound: result', rK.result);
@@ -185,11 +185,11 @@ async function main() {
   assert.strictEqual(hostK.state.getRoot(), rootBeforeK, 'a staged degreeBound must leave the root unmoved');
   console.log('');
 
-  // 6) DETERMINISM: two independent nodes run the honest call → the same root.
+  // 6) DETERMINISM: two independent nodes run the genuine call → the same root.
   const n1 = new ContractHost({ runtime: runtime(), state: new VerkleStateTree() });
   const n2 = new ContractHost({ runtime: runtime(), state: new VerkleStateTree() });
-  const i1 = n1.deploy(honest, [7], { zkHost: true }).id;
-  const i2 = n2.deploy(honest, [7], { zkHost: true }).id;
+  const i1 = n1.deploy(genuine, [7], { zkHost: true }).id;
+  const i2 = n2.deploy(genuine, [7], { zkHost: true }).id;
   const o1 = await n1.call(i1, 'check', [], { zk: stagedZk });
   const o2 = await n2.call(i2, 'check', [], { zk: stagedZk });
   line('node1 root === node2 root', n1.state.getRoot() === n2.state.getRoot());

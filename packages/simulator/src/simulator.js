@@ -613,7 +613,7 @@ export class SystemSimulator extends EventEmitter {
     // Compute operations can trigger state changes. This used to call a fake
     // xvsm.executeTransaction with a comment string as "WASM"; that path is gone (real
     // contract execution is @xmbl/contracts' ContractHost over @xmbl/storage-compute). The
-    // simulator's honest job here is just to drive a state change, so it uses the real
+    // simulator's genuine job here is just to drive a state change, so it uses the real
     // state-diff path directly.
     if (this.modules.xvsm && chance.bool({ likelihood: 70 })) {
       setTimeout(() => {

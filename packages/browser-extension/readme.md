@@ -49,7 +49,7 @@ select `packages/browser-extension/`.
   unaudited), **Encrypted add** (heHost · post-quantum cubic-LWE), and **Seal / USDC settlement**
   (zkHost + heHost + seal). These need `node:crypto` and cannot run in an MV3 popup, so each runs for
   REAL in the devnet process (`packages/simulator/src/capabilities.js`) and returns a JSON-safe
-  verdict — the honest result **and its negative control** (a tampered coordinate/message rejected),
+  verdict — the genuine result **and its negative control** (a tampered coordinate/message rejected),
   never a fabricated pass. With no devnet the cards disable and show "no devnet".
 - **Wallet tab** — balance / send / node status, served by a **real node bridge**: `src/background.js`
   proxies the wallet/node messages over loopback HTTP to a running **XMBL LocalDevnet** RPC
@@ -59,7 +59,7 @@ select `packages/browser-extension/`.
   never fabricates a balance or txId. Proven end-to-end against a real devnet RPC by
   `tests/background-bridge.test.mjs`.
 - **Node tab** — live status (peers / height / pooled / landed), the ledger **state root**, node
-  start/stop, and a **map of every xmbl-mainnet module** and its honest surface (in-page vs devnet vs
+  start/stop, and a **map of every xmbl-mainnet module** and its genuine surface (in-page vs devnet vs
   config vs cli). A P2P node or storage market cannot run inside a popup; those are used/configured
   through the node, not faked.
 - **Config tab** — the devnet RPC endpoint, saved to `browser.storage.local` key `xmbl:devnetUrl`

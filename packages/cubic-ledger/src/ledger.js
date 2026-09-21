@@ -303,9 +303,9 @@ export class Ledger extends EventEmitter {
       block = Block.fromTransaction(tx, opts);
     } catch (error) {
       // ⛔ THE SPECULATIVE CONTENT KEY IS TAKEN BACK ON EVERY FAILURE, not just on UNTYPED. The key above is
-      // claimed BEFORE the datum is validated, so a forgery that keeps an honest anchor's `event` and `hash`
+      // claimed BEFORE the datum is validated, so a forgery that keeps an genuine anchor's `event` and `hash`
       // and breaks anything else (its nonce, its type prefix, its body) left that key claimed forever — and
-      // the honest anchor arriving later was answered `duplicate: true` and never stored. The same
+      // the genuine anchor arriving later was answered `duplicate: true` and never stored. The same
       // denial-of-service as the xid eviction below, through the dedup door instead of the eviction door.
       if (ckey && this._anchorKeys.has(ckey)) this._anchorKeys.delete(ckey);
       // An invalid tx is evicted here, at the door, and recorded so it is never examined again. Without the
@@ -315,14 +315,14 @@ export class Ledger extends EventEmitter {
       if (error && error.code === 'UNTYPED') { throw error; }   // no identity yet: refused, never evicted
       // ⛔ NEVER EVICT BY A CLAIMED-BUT-UNPROVEN XID. This evicted by `xid:<claimed>` whenever a typed datum
       // failed — and a datum fails validateXid precisely when its body does NOT hash to that xid, i.e. when the
-      // xid belongs to SOMEBODY ELSE'S datum. So anyone could take an honest anchor's xid, change one byte of
-      // the body, submit it, and the honest anchor was evicted-for-good on every node that saw the forgery —
+      // xid belongs to SOMEBODY ELSE'S datum. So anyone could take an genuine anchor's xid, change one byte of
+      // the body, submit it, and the genuine anchor was evicted-for-good on every node that saw the forgery —
       // refused forever if it had not arrived yet, and its stored rows DELETED by evict() if it had. A
       // denial-of-service against any transaction whose xid is public, which is all of them.
       // MEASURED by reproductions/three-nodes.mjs before this fix: three nodes given the identical 36-anchor
       // set plus one forgery ended with 36 / 35 / 36 blocks — the node that happened to receive the forgery
-      // first was the one that lost the honest anchor.
-      // The forgery is still refused forever, under a key derived from ITS OWN bytes, which no honest datum
+      // first was the one that lost the genuine anchor.
+      // The forgery is still refused forever, under a key derived from ITS OWN bytes, which no genuine datum
       // can collide with because those bytes do not content-address to anything.
       const ekey = (error && error.code === 'XID_MISMATCH') ? this._forgedKey(tx) : (ckey || null);
       if (ekey) await this.evict(ekey, error.message);
@@ -355,9 +355,9 @@ export class Ledger extends EventEmitter {
       throw new Error('addSealedBatch: txs must be an array');
     }
     // ⛔ A REFUSAL REFUSES ONE TRANSACTION, NOT THE BATCH. This loop used to let the first invalid entry throw
-    // straight out, so every honest transaction BEHIND it in the list was dropped on the floor, unsealed and
+    // straight out, so every genuine transaction BEHIND it in the list was dropped on the floor, unsealed and
     // unrecorded — a denial of service needing no xid collision at all, just a forgery sent ahead of real
-    // traffic. The refusal is still raised to the caller (after the honest entries are admitted and sealed),
+    // traffic. The refusal is still raised to the caller (after the genuine entries are admitted and sealed),
     // because a finalized transaction the ledger will not take is a fault consensus must hear about.
     let firstError = null;
     for (const tx of txs) {
@@ -398,7 +398,7 @@ export class Ledger extends EventEmitter {
       // ⛔ THE SAME TWO DOORS addTransaction CLOSES, CLOSED HERE TOO — and this is the path that carries real
       // node traffic (consensus `tx:finalized` → lead-worker.handleFinalizedTx → here), while addTransaction
       // is the legacy incremental one. There was no failure handling at all on this side, so a forgery that
-      // kept an honest anchor's event:hash left that content key claimed forever (the honest anchor arriving
+      // kept an genuine anchor's event:hash left that content key claimed forever (the genuine anchor arriving
       // later was skipped as a duplicate), and nothing was ever evicted. Release the speculative key on EVERY
       // failure, and record the refusal under a key derived from the forgery's OWN bytes when its claimed xid
       // is not its content address — never under the xid it impersonated, which belongs to somebody else.
@@ -459,7 +459,7 @@ export class Ledger extends EventEmitter {
     // This is a DRY PASS over the set before a single row is deleted. Every anchor is typed by its xid now, so
     // a canonical set minted before typing rebuilds to NOTHING — measured on the live broker's default feed:
     // 0 of 4008 rebuilt, 3991 untyped, 17 rejected. The wipe used to run first regardless, so handing an old
-    // feed to a typed-only node destroyed its chain and honestly reported the zero afterwards. That cannot be
+    // feed to a typed-only node destroyed its chain and accurately reported the zero afterwards. That cannot be
     // left to the caller's version: a coordinator process still holding pre-gate code, or restarted in the
     // wrong order during an OTA roll, would drive exactly that call. So the NODE refuses it. The rule is
     // deliberately narrow — it only refuses when the rebuild would produce no blocks at all while this ledger
