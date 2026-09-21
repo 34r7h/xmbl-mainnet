@@ -32,7 +32,9 @@ jobs:
       - run: npm ci
       - name: Build desktop app (${{ matrix.target }})
         working-directory: packages/desktop-app
-        run: npx --yes electron-builder --${{ matrix.target }} --publish never
+        # --config is REQUIRED: this package is "type": "module", so electron-builder cannot
+        # auto-load a CommonJS config and would silently package with no appId and no targets.
+        run: npx --yes electron-builder --${{ matrix.target }} --publish never --config electron-builder.config.cjs
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:

@@ -17,7 +17,10 @@ export default defineConfig({
   plugins: [vue(), vueDevTools()],
   resolve: {
     alias: {
-      buffer: path.resolve(__dirname, 'node_modules', 'buffer'),
+      // NO `buffer` alias here. It used to be path.resolve(__dirname, 'node_modules', 'buffer'),
+      // which npm workspaces hoist to the ROOT node_modules — the app-local path does not exist,
+      // so `vite build` died with ENOENT on every release and the web bundle was never produced.
+      // `buffer` is a declared dependency; ordinary resolution finds it.
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
   },

@@ -209,7 +209,7 @@ if (props.xtype == 'array') {
         )
       ">
         <ui :xscope="!xscope ? stateselect : xscope + '.' + stateselect" xtype="state"
-          :xstate="!xstate ? $state[stateselect] : xstate[stateselect]" :xid="@xmbl/identity" xlabel=" ." />
+          :xstate="!xstate ? $state[stateselect] : xstate[stateselect]" :xid="xid" xlabel=" ." />
       </span>
 
       <b v-else>

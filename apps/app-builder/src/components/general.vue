@@ -59,7 +59,7 @@ const renderElement = (element) => {
 </script>
 
 <template>
-    <div :id="@xmbl/identity">
+    <div :id="props.xid">
         <template v-for="(element, index) in elements" :key="element.id || index">
             <component :is="renderElement(element)" />
         </template>

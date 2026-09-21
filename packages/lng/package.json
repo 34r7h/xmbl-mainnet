@@ -4,7 +4,10 @@
   "type": "module",
   "main": "index.js",
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "browser": "./dist/lng.browser.js",
+      "default": "./index.js"
+    },
     "./browser": "./dist/lng.browser.js",
     "./package.json": "./package.json"
   },
