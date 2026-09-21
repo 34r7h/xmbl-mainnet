@@ -59,6 +59,10 @@ jobs:
 
   artifacts:
     name: Attach packaged builds
-    needs: [npm, cargo]
+    # Gated on npm ONLY, and deliberately not on cargo. crates.io had no token from the first tag
+    # until 2026-09-21, so `needs: [npm, cargo]` skipped this job on EVERY release ever cut and the
+    # repo reached v0.1.13 with zero downloadable builds for any platform. A registry the packages
+    # do not depend on must never be able to withhold the binaries.
+    needs: [npm]
     uses: ./.github/workflows/package.yml
     secrets: inherit
