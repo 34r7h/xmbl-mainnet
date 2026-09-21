@@ -1,5 +1,30 @@
 # @xmbl/identity
 
+## 0.1.14
+
+### Patch Changes
+
+- **Every prebuilt binary was broken; all four causes are fixed.** `gh release list` returned
+  nothing for any version of this repo. The release workflow gated its artifacts job on the
+  crates.io job, which had no token from the first tag onward, so packaging was SKIPPED on every
+  release ever cut — and underneath that, all three packaging jobs would have failed anyway:
+
+  - **desktop** — `packages/desktop-app` is `"type": "module"`, so the CommonJS
+    `electron-builder.config.js` threw on load and electron-builder fell back to a `build` key that
+    does not exist: appId, targets, output directory and file globs were all dead. Renamed `.cjs`
+    and passed explicitly. `electron` was also a runtime dependency (electron-builder refuses to
+    package at all) and npm workspaces hoist it out of the project, so the version could not be
+    computed. Both fixed, with the author/maintainer fields `deb` and `AppImage` require, both
+    target architectures for mac/win/linux, and the `deb` target the workflow always globbed for.
+  - **web** — `apps/app-builder/vite.config.js` aliased `buffer` into the app's own
+    `node_modules`, which npm workspaces hoist to the root, so `vite build` died with ENOENT. Two
+    Vue templates also carried `:id="@xmbl/identity"`, which is not a JavaScript expression.
+  - **extension** — `@xmbl/lng`'s exports map had no `browser` condition, so bundlers resolved the
+    node entry, which reads its own `package.json` through `node:fs` at module scope. **`@xmbl/lng`
+    now declares `browser` -> `dist/lng.browser.js` in `exports`**, which is the one change in this
+    release that affects consumers: a bundler targeting the browser now gets the prebuilt bundle
+    (same export surface, including `VERSION`) instead of failing on `node:fs`.
+
 ## 0.1.13
 
 ### Patch Changes
