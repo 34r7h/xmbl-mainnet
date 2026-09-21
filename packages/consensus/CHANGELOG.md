@@ -1,5 +1,13 @@
 # @xmbl/consensus
 
+## 0.2.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @xmbl/identity@1.0.0
+  - @xmbl/cubic-ledger@1.0.0
+
 ## 0.1.11
 
 ### Patch Changes

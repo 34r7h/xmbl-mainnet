@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/contracts",
-  "version": "0.1.11",
+  "version": "0.2.0",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -19,14 +19,14 @@
     "url": "https://github.com/34r7h/xmbl-mainnet.git",
     "directory": "packages/contracts"
   },
-  "description": "XCL \u2014 the XMBL Contract Layer. Binds contracts compiled by @xmbl/lng to cubic-ledger coordinates and Verkle state, executing them in the @xmbl/storage-compute sandbox.",
+  "description": "XCL — the XMBL Contract Layer. Binds contracts compiled by @xmbl/lng to cubic-ledger coordinates and Verkle state, executing them in the @xmbl/storage-compute sandbox.",
   "dependencies": {},
   "peerDependencies": {
-    "@xmbl/lng": "^0.1.11",
-    "@xmbl/storage-compute": "^0.1.11",
-    "@xmbl/state-machine": "^0.1.11",
-    "@xmbl/identity": "^0.1.11",
-    "@xmbl/zero-knowledge": "^0.1.11"
+    "@xmbl/lng": "^0.2.0",
+    "@xmbl/storage-compute": "^0.2.0",
+    "@xmbl/state-machine": "^0.2.0",
+    "@xmbl/identity": "^0.2.0",
+    "@xmbl/zero-knowledge": "^0.2.0"
   },
   "peerDependenciesMeta": {
     "@xmbl/lng": {

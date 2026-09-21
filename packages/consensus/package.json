@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/consensus",
-  "version": "0.1.11",
+  "version": "0.2.0",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -19,8 +19,8 @@
     "directory": "packages/consensus"
   },
   "dependencies": {
-    "@xmbl/cubic-ledger": "^0.1.11",
-    "@xmbl/identity": "^0.1.11",
+    "@xmbl/cubic-ledger": "^0.2.0",
+    "@xmbl/identity": "^0.2.0",
     "level": "^10.0.0",
     "webtorrent": "^2.8.4"
   },

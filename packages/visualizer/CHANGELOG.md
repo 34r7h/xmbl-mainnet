@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.2.0
+
 ## 0.1.11
 
 All notable changes to the `xv` module will be documented in this file.

@@ -1,5 +1,18 @@
 # @xmbl/core
 
+## 0.2.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @xmbl/zero-knowledge@1.0.0
+  - @xmbl/identity@1.0.0
+  - @xmbl/consensus@1.0.0
+  - @xmbl/cubic-ledger@1.0.0
+  - @xmbl/storage-compute@1.0.0
+  - @xmbl/networking@1.0.0
+  - @xmbl/state-machine@1.0.0
+
 ## 0.1.11
 
 ### Patch Changes

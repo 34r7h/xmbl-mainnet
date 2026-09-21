@@ -1,5 +1,56 @@
 # @xmbl/contracts
 
+## 0.2.0
+
+### Minor Changes
+
+- Zero-knowledge for arbitrary computation, and unbounded-depth homomorphic encryption.
+
+  **`@xmbl/zero-knowledge`**
+
+  - `airProve` / `airVerify` prove ARBITRARY computation, not only the cube-curve statement. A caller
+    supplies an execution trace and the polynomial constraints a correct execution satisfies; each
+    column is blinded by a multiple of `x^T - 1` (which vanishes on every row, so the constraints are
+    untouched while the openings stay underdetermined), evaluated on a coset, committed, and the
+    composition is proved low-degree with FRI. `K` and `N` are derived from the trace length and
+    constraint degree. `AIR_STATEMENTS` is a fixed registry of named statements for contract use.
+  - Fiat-Shamir challenges now come from the quartic extension `F_p[X]/(X^4-11)` (~124 bits) instead
+    of the 31-bit base field, the rate is 1/16 with 88 queries, and the query transcript carries 20
+    bits of proof-of-work. Soundness goes from ~8 bits to ~100 bits provable.
+  - `friVerify` takes the degree bound, domain size, query count, grinding bits and leaf encoding as
+    VERIFIER parameters; a proof can no longer declare its own. The AIR transcript binds the whole
+    statement, not just the column roots.
+  - The cube-curve blind is fresh randomness per proof, and `xzk.verify` binds the low-degree test to
+    the constraint openings.
+
+  **`@xmbl/identity`**
+
+  - `fhe*`: leveled homomorphic encryption (BFV over `Z_q[X]/(X^4096+1)`). Ciphertexts ADD and
+    MULTIPLY with no secret key, on integers mod 65537, with 4096 SIMD slots — one multiply produces
+    4096 products.
+  - `boot*`: bootstrapping. A gate is computed on LWE ciphertexts and refreshed by homomorphically
+    evaluating the decryption circuit, so noise is reset after every gate and depth is unbounded.
+    NAND is functionally complete, so this is a universal homomorphic evaluator.
+  - `cubic-lwe` and `seal` are unchanged: the cubic dimensions remain the identity KEM and the
+    sealing primitive.
+
+  **`@xmbl/contracts`**
+
+  - `fheHost` — `env.xmbl_fhe_add` / `_mul` / `_digest`, handle-based, no decryption on any surface.
+  - `airHost` — `env.xmbl_air_verify`, gating state on a proof of arbitrary computation. The
+    constraint system is named from the fixed registry; the claimed value comes from guest memory.
+  - The zk host builds its verifier parameters from module defaults, so a caller can no longer stage
+    the degree bound its own proof is checked against.
+
+### Patch Changes
+
+- Updated dependencies
+  - @xmbl/zero-knowledge@1.0.0
+  - @xmbl/identity@1.0.0
+  - @xmbl/storage-compute@1.0.0
+  - @xmbl/lng@1.0.0
+  - @xmbl/state-machine@1.0.0
+
 ## 0.1.11
 
 ### Patch Changes

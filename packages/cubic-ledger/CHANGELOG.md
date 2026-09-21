@@ -1,5 +1,12 @@
 # @xmbl/cubic-ledger
 
+## 0.2.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @xmbl/identity@1.0.0
+
 ## 0.1.11
 
 ### Patch Changes

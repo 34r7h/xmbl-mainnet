@@ -1,5 +1,7 @@
 # @xmbl/lng
 
+## 0.2.0
+
 ## 0.1.11
 
 ### Patch Changes
