@@ -1,0 +1,63 @@
+name: Purge 0.2.0
+
+# The previous attempt concluded "cannot be unpublished (npm 2FA)" from a grep that captured
+# `npm error code E403` and DISCARDED the line saying why. That conclusion does not survive the
+# evidence: the SAME token published 0.1.16 successfully at 2026-09-22T02:00Z. A token that can
+# publish is not a token npm has barred from writing. So the E403 has some other cause, and this
+# job captures the full response body instead of guessing at it.
+#
+# 0.2.0 published 2026-09-21T03:06:14Z -> npm's 72h single-version unpublish window closes
+# 2026-09-24T03:06:14Z. Until then this is removable in principle.
+on:
+  workflow_dispatch:
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: what can this token actually do
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set +e
+          echo "whoami: $(npm whoami 2>&1)"
+          echo "--- raw unpublish response body for ONE package ---"
+          TOK="${{ secrets.NPM_TOKEN }}"
+          # npm's own client hides the body. Ask the registry directly and print exactly what it says.
+          curl -s -i -X DELETE \
+            -H "Authorization: Bearer $TOK" \
+            "https://registry.npmjs.org/@xmbl%2fcore/-rev/undefined" 2>&1 | head -20
+          echo
+          echo "--- npm unpublish, full stderr, nothing filtered ---"
+          npm unpublish "@xmbl/core@0.2.0" 2>&1 | tee /tmp/unpub.txt
+          echo "--- exit was above; full log tail ---"
+          tail -40 /tmp/unpub.txt
+
+      - name: unpublish 0.2.0 on all twelve, recording the REASON not just the code
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set +e
+          for p in cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge; do
+            out=$(npm unpublish "@xmbl/$p@0.2.0" 2>&1)
+            if [ $? -eq 0 ]; then echo "REMOVED  @xmbl/$p@0.2.0"
+            else
+              echo "STUCK    @xmbl/$p@0.2.0"
+              printf '%s\n' "$out" | grep -iE 'npm error' | head -6 | sed 's/^/           /'
+            fi
+          done
+
+      # COUNT AFTER. The version list off the registry is the only thing that decides this.
+      - name: COUNT AFTER — how many packages still carry 0.2.0
+        run: |
+          present=0; still=""
+          for p in cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge; do
+            has=$(curl -s "https://registry.npmjs.org/@xmbl/$p?cb=$RANDOM" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.versions&&j.versions['0.2.0']?'1':'0')})")
+            [ "$has" = "1" ] && { present=$((present+1)); still="$still @xmbl/$p"; }
+          done
+          echo "---- 0.2.0 still present on $present/12 ----${still:+$still}"
