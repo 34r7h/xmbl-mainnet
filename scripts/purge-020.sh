@@ -29,6 +29,18 @@ mode() { npm profile get 2>/dev/null | sed -n 's/^two-factor auth: *//p'; }
 echo "2FA mode: $(mode)"
 
 if [ "$(mode)" != "auth-only" ]; then
+  # `npm profile enable-2fa` reads the password straight off the terminal. Claude Code's `!` and
+  # any piped/background shell give it EOF instead, so it prints "npm password:" and instantly
+  # gives up with the mode unchanged — which looks like a silent no-op. Refuse early and say where
+  # to go instead of burning a run.
+  if [ ! -t 0 ]; then
+    echo
+    echo "NO TTY — npm cannot read a password here, so the 2FA switch would silently fail."
+    echo "Do ONE of these, then re-run:"
+    echo "  a) flip it in a real terminal:  bash $0"
+    echo "  b) flip it on the web: https://www.npmjs.com/settings/34r7h/tfa -> 'Authorization only'"
+    exit 1
+  fi
   echo
   echo ">>> Switching 2FA to auth-only. Enter your npm password at the prompt. <<<"
   npm profile enable-2fa auth-only
