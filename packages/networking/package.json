@@ -1,6 +1,7 @@
 {
   "name": "@xmbl/networking",
   "version": "0.1.17",
+  "description": "XMBL P2P — libp2p with Kademlia WAN discovery, circuit-relay self-election and deny-by-default routing.",
   "type": "module",
   "main": "index.js",
   "exports": {
