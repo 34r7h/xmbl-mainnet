@@ -1,0 +1,47 @@
+name: Purge 0.2.0
+
+# 0.2.0 was published in error and is still the SEMVER-MAX version on all twelve packages, so
+# anything that reads a version list (npm view versions, the npm web page, a resolver asking for the
+# maximum) sees it above 0.1.16. Deprecation did not remove it. This job attempts the actual removal
+# with the CI token and reports EXACTLY what the registry says for each package, so the blocker is a
+# measured fact rather than a guess. Delete this file once 0.2.0 is gone.
+on:
+  workflow_dispatch:
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: whoami + 2FA mode
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "whoami: $(npm whoami 2>&1 || true)"
+          echo "profile:"; npm profile get --json 2>&1 | head -40 || true
+      - name: attempt unpublish of 0.2.0 on every package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set +e
+          gone=0; stuck=0
+          for p in cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge; do
+            out=$(npm unpublish "@xmbl/$p@0.2.0" 2>&1)
+            code=$?
+            if [ $code -eq 0 ]; then echo "REMOVED  @xmbl/$p@0.2.0"; gone=$((gone+1));
+            else echo "STUCK    @xmbl/$p@0.2.0 :: $(echo "$out" | grep -m1 -iE 'npm error (code )?[0-9A-Z]|may not perform|forbidden|cannot' | head -1)"; stuck=$((stuck+1)); fi
+          done
+          echo "---- removed=$gone stuck=$stuck ----"
+      - name: COUNT AFTER — what is the semver max now
+        run: |
+          for p in cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge; do
+            curl -s "https://registry.npmjs.org/@xmbl/$p" | node -e "
+              let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{
+                const j=JSON.parse(s);const vs=Object.keys(j.versions);
+                const mx=[...vs].sort((a,b)=>{const A=a.split('.').map(Number),B=b.split('.').map(Number);return A[0]-B[0]||A[1]-B[1]||A[2]-B[2]}).pop();
+                console.log('  @xmbl/$p'.padEnd(28)+'semver-max='+mx+'  has_0.2.0='+(vs.includes('0.2.0')?'YES':'no'));
+              });"
+          done
