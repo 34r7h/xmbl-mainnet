@@ -710,6 +710,23 @@ continue-on-error, and in the release workflow before any publish).
       where a consumer looks), and a regression guard FAILS if any label is removed — it also
       discovers the crate set from the filesystem, so a ninth crate added without a label fails too.
       Parity itself remains future work; the label is the accurate, enforced interim. — *crates/crate-status.test.mjs (9/9), in `test:protocol`*
+- [x] **A VERSION CANNOT MOVE BY ACCIDENT.** On 2026-09-21 `npm run version` computed 1.0.0 from
+      accumulated changesets, a hand edit made it 0.2.0, and the tag published twelve packages at a
+      minor bump nobody had asked for — permanently, because npm will not unpublish it (the
+      criterion is package-level and this project's own 0.1.x line is the dependent). Nothing in the
+      repo objected, because nothing had an opinion about what the NEXT version was allowed to be.
+      `scripts/version-guard.mjs` is that opinion: against the highest release tag, the only legal
+      next versions are the next PATCH, or a minor/major that `VERSION-BUMP` authorizes by naming
+      the exact version (`minor 0.2.0`), so a leftover flag can never wave a later bump through.
+      `0.1.17 -> 0.1.19` is refused for skipping `0.1.18`; `0.2.0` and `1.0.0` are refused unbadged;
+      a new line must start at `.0`; a decrease is refused; and with NO tag to count from the guard
+      REFUSES rather than passing, since a check that waves everything through when it cannot tell
+      is the check that was missing. It runs on every push and PR (`ci.yml`), inside the hard gate
+      (`version-guard.test.mjs`, 29/29), and again at the tag, where it also refuses a tag whose
+      name disagrees with the tree — `git tag v0.1.19` on a 0.1.17 tree would publish 0.1.17 under a
+      name nobody can find it by. Both checkouts fetch tags, or the guard has no baseline and says
+      so. — *scripts/version-guard.mjs; packages/core/version-guard.test.mjs; ci.yml; release.yml;
+      RELEASING.md*
 - [x] **THE RELEASE PRODUCES BINARIES AND BOTH REGISTRIES (0.1.14, 0.1.15).** `gh release list`
       returned NOTHING for any version: no `.dmg`, `.AppImage`, `.deb`, `.exe`, web bundle or
       extension zip had ever been built. The artifacts job was gated on the crates.io job, which had

@@ -14,12 +14,24 @@ jobs:
     name: JS packages (build + test)
     runs-on: ubuntu-latest
     steps:
+      # TAGS ARE PART OF THE CHECKOUT. scripts/version-guard.mjs counts the version in the tree
+      # against the highest release TAG, and a default checkout is shallow with no tags at all — the
+      # guard would then find no baseline. It REFUSES in that case rather than passing, so forgetting
+      # this turns the build red instead of quietly disarming the check.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      # THE VERSION CANNOT MOVE BY ACCIDENT. Run before anything else and on EVERY push and PR, so a
+      # bad bump is refused at the commit that writes it rather than at the tag that ships it: the
+      # next version is the next patch, or a minor/major that VERSION-BUMP names by version.
+      - name: Version is the next one, or a flag says otherwise
+        run: node scripts/version-guard.mjs
       # HARD GATE. The eight protocol packages carry the consensus/crypto/isolation
       # invariants; their suites must pass or the build fails. No continue-on-error.
       - run: npm run test:protocol

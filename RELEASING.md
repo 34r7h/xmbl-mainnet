@@ -16,13 +16,43 @@ a registry — they ship as GitHub Release artifacts.
    npm run version
    ```
    Then bump `workspace.package.version` in `Cargo.toml` to the same number so npm and crates
-   stay in lockstep.
-3. **Tag and push** — this is the only trigger:
+   stay in lockstep, rebuild `packages/lng/dist/lng.browser.js` (`node packages/lng/build-browser.mjs`
+   — it bakes its `VERSION` in at build time), and sync the lockfile
+   (`npm install --package-lock-only`).
+
+   **The next version is the next one.** `scripts/version-guard.mjs` counts the tree against the
+   highest release tag and refuses anything else, on every push and PR and again at the tag:
+
+   | from `v0.1.17` | |
+   |---|---|
+   | `0.1.18` | ok — the next patch |
+   | `0.1.19` | **refused** — it skips `0.1.18` |
+   | `0.2.0` | **refused** unless `VERSION-BUMP` says exactly `minor 0.2.0` |
+   | `1.0.0` | **refused** unless `VERSION-BUMP` says exactly `major 1.0.0` |
+   | `0.2.3`, `0.3.0`, `1.0.1`, `0.1.16` | **refused** — a line starts at `.0`, and nothing skips or goes back |
+
+   Check it yourself before tagging: `node scripts/version-guard.mjs`.
+
+3. **A minor or major bump needs a flag, in the same commit.** Write one line naming the exact
+   version it authorizes:
+   ```bash
+   echo "minor 0.2.0" > VERSION-BUMP      # or: major 1.0.0
+   ```
+   It authorizes that version and nothing else, so a file left behind can never wave a later bump
+   through. There is no env override — writing the file is the deliberate act, the same way flipping
+   `AUDIT_GATES_OPEN` is. Raising the line also means editing `LINE_MAJOR`/`LINE_MINOR` in
+   `packages/core/release.test.mjs` in that commit.
+
+4. **Tag and push** — this is the only trigger, **and it is now a fleet rollout**: the handoff broker
+   auto-follows the registry, so anything published on the live track reaches every node within a
+   minute, with no deploy step.
    ```bash
    git commit -am "release: vX.Y.Z"
    git tag vX.Y.Z
    git push origin main --tags
    ```
+   The tag must name the version the tree carries; the release job checks that first
+   (`node scripts/version-guard.mjs --tag "$GITHUB_REF_NAME"`) and refuses to publish otherwise.
 
 ## What the tag does (`.github/workflows/release.yml`)
 

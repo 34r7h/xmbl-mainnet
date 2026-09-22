@@ -27,13 +27,24 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth 0 + tags: the version guard below counts against the release tags, and a shallow
+      # checkout has none.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
       - run: npm ci
+      # THE TAG AND THE TREE MUST BE THE SAME VERSION, and that version must be a legal next one.
+      # `git tag v0.1.19` on a tree carrying 0.1.17 would otherwise publish 0.1.17 under a name
+      # nobody can find it by, and the whole point of a tag-only release is that the tag is the
+      # decision — so it is the thing that has to be checked before npm sees anything.
+      - name: Version guard (tag matches the tree, and the bump is legal)
+        run: node scripts/version-guard.mjs --tag "${GITHUB_REF_NAME}"
       # HARD GATE before any publish: the protocol invariants must hold at the tag.
       - run: npm run test:protocol
       # Published packages are plain ESM; app builds happen in packaging, not here.
