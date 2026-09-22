@@ -96,6 +96,15 @@ jobs:
           fi
           echo "all 8 crates live at $VERSION"
 
+  # 0.2.0 is unremovable and stays semver-max, so its tombstone must keep pointing at the version
+  # that actually shipped. Re-run on every release rather than leaving it stale.
+  tombstone:
+    name: Re-point the 0.2.0 tombstone
+    needs: [npm]
+    if: startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/tombstone-020.yml
+    secrets: inherit
+
   artifacts:
     name: Attach packaged builds
     # Gated on npm ONLY, and deliberately not on cargo. crates.io had no token from the first tag

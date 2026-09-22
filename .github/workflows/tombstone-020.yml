@@ -1,0 +1,49 @@
+name: Tombstone 0.2.0
+
+# 0.2.0 was published in error. It CANNOT be removed: `npm unpublish` returns E403 on all twelve
+# packages even with the live CI token — "Granular access tokens that bypass two-factor
+# authentication may not perform this action" — and no automation credential can satisfy an
+# interactive 2FA challenge. Measured 2026-09-22: removed=0, stuck=12.
+#
+# So 0.2.0 stays SEMVER-MAX forever, and anything that reads a version list rather than a dist-tag
+# sees it above the real latest. The only lever left is the deprecation string, which rides in the
+# packument next to the version itself. This job rewrites it to say, in the place a reader is
+# already looking, exactly what the version is and what to use instead — and it re-points at the
+# CURRENT latest rather than the stale 0.1.12 the first pass wrote.
+#
+# Re-run this whenever the line moves, so the tombstone never points at an old version.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  tombstone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: rewrite the 0.2.0 deprecation to point at the live latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for p in cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge; do
+            latest=$(npm view "@xmbl/$p" dist-tags.latest)
+            npm deprecate "@xmbl/$p@0.2.0" \
+              "DO NOT USE. 0.2.0 was published by mistake and is not part of this version line; it cannot be unpublished (npm 2FA). It is the highest version number but NOT the newest code. The current release is $latest -- install @xmbl/$p@latest."
+            echo "tombstoned @xmbl/$p@0.2.0 -> points at $latest"
+          done
+      - name: COUNT AFTER — read the message back off the registry
+        run: |
+          ok=0
+          for p in cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge; do
+            msg=$(curl -s "https://registry.npmjs.org/@xmbl/$p" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(String(j.versions['0.2.0']?.deprecated||''))})")
+            case "$msg" in
+              "DO NOT USE."*) ok=$((ok+1)); echo "  @xmbl/$p OK";;
+              *) echo "  @xmbl/$p NOT TOMBSTONED :: $msg";;
+            esac
+          done
+          echo "---- tombstoned $ok/12 ----"
+          [ "$ok" = 12 ]
