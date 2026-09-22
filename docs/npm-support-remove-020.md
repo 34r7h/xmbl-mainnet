@@ -9,7 +9,7 @@ removed with `npm unpublish` on 2026-09-22:
 
     cli  contracts  core  lng
 
-Eight refuse, every attempt, with:
+Eight refuse, every attempt — from CI and from the owner's own terminal — with:
 
     405 Method Not Allowed - PUT https://registry.npmjs.org/@xmbl%2f<pkg>/-rev/<rev>
     You can no longer unpublish this package.
@@ -57,13 +57,16 @@ will do it. The workflow was deleted rather than left to be re-run. Unpublish is
 interactive-only: `scripts/purge-020-webauth.sh` from the owner's terminal, one browser approval
 per package, before the window closes at **2026-09-24T03:06:14Z**.
 
-One thing the 405s have never explained: the 0.1.x line pins `^0.1.12`/`^0.1.16`, and a caret range
-on a 0.x version cannot match 0.2.0 — so the shipping release is not a dependent *of 0.2.0*. The
-only ranges that match it are 0.2.0's own: consensus -> identity, cubic-ledger; cubic-ledger ->
-identity; storage-compute -> identity; the other five depend on nothing. If npm's criterion is
-version-level, six of the eight are removable today and the earlier failures were a dependents
-index that had not caught up with cli/contracts/core/lng going away minutes before. If it is
-package-level, none are and support is the only route. One interactive pass settles it.
+The interactive pass settled the open question, against the hopeful reading. On 2026-09-22, inside
+the 72-hour window, the owner ran `scripts/purge-020-webauth.sh` with a browser approval per package
+and **all eight returned 405 "You can no longer unpublish"** — including `networking`, `simulator`,
+`state-machine` and `zero-knowledge`, which have NO 0.2.0-matching dependent of any kind: the 0.1.x
+line pins `^0.1.12`/`^0.1.16`, and a caret range on a 0.x version cannot match 0.2.0.
+
+So npm's criterion is **package-level** — does anything in the registry depend on the *package* —
+not version-level. The only dependents are this project's own shipping release, which means the
+criterion cannot be cleared without unpublishing 0.1.x itself. Registry count after the run: 0.2.0
+present on 8/12. There is nothing further to try from here.
 
 ## If npm declines
 
