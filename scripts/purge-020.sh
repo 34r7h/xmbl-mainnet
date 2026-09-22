@@ -24,8 +24,18 @@
 # unpublishes (they take ~12s total), so a single code does the job.
 set -uo pipefail
 
-OTP="${1:-}"
-[ -n "$OTP" ] || { echo "usage: bash scripts/purge-020.sh <6-digit-OTP>"; exit 2; }
+# Takes either a 6-digit OTP, or the base32 TOTP secret that `npm profile enable-2fa auth-only`
+# printed — with the secret it generates a fresh code itself, and re-generates one for each
+# package so a slow run cannot drift out of the 30s window.
+ARG="${1:-}"
+[ -n "$ARG" ] || { echo "usage: bash scripts/purge-020.sh <6-digit-OTP | BASE32-TOTP-SECRET>"; exit 2; }
+HERE=$(cd "$(dirname "$0")" && pwd)
+otp() {
+  case "$ARG" in
+    [0-9][0-9][0-9][0-9][0-9][0-9]) printf '%s' "$ARG" ;;
+    *) node "$HERE/totp.mjs" "$ARG" ;;
+  esac
+}
 
 PKGS="cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge"
 
@@ -46,7 +56,7 @@ echo
 
 gone=0; stuck=0
 for p in $PKGS; do
-  out=$(npm unpublish "@xmbl/$p@0.2.0" --otp="$OTP" 2>&1)
+  out=$(npm unpublish "@xmbl/$p@0.2.0" --otp="$(otp)" 2>&1)
   if [ $? -eq 0 ]; then
     echo "REMOVED  @xmbl/$p@0.2.0"; gone=$((gone+1))
   else
