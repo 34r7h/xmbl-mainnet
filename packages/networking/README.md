@@ -51,7 +51,12 @@ the seed may still be the hinge, one layer up.
 | `MessageRouter` | **Deny-by-default**: an unknown or forged message type invokes no handler, it throws. |
 | `PubSubManager` | Topic pub/sub over floodsub. |
 | `loadOrCreatePeerKey` | A stable peer id across restarts. |
-| `GossipManager` | A WebTorrent-swarm gossip path. ⚠ **Not constructed anywhere** — see the open gate in [MAINNET-GATES.md](../../MAINNET-GATES.md#xmblnetworking--libp2p-p2p). |
+
+`GossipManager` and the `webtorrent` dependency were **removed at 0.1.17**. It was a second, eager
+WebTorrent client that nothing had ever constructed, while the swarm path that actually runs is
+`ConsensusGossip` in [`@xmbl/consensus`](../consensus), built by `@xmbl/core` and loading webtorrent
+lazily. A duplicate alive only in its own test reads like a capability — the same defect as the
+imported-and-never-called DHT it sat beside.
 
 ## Relay self-election
 

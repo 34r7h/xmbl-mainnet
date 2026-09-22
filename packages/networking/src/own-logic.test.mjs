@@ -2,7 +2,7 @@
 //
 // SCOPE NOTE. The transport-level properties originally listed on this gate — NAT traversal, gossip
 // fan-out rounds, Kademlia routing-table poisoning — are behaviour of libp2p / WebTorrent, reached
-// through thin wrappers here (PubSubManager, GossipManager); this package has NO peer routing table
+// through thin wrappers here (PubSubManager, and ConsensusGossip in @xmbl/consensus); this package
 // to poison (MessageRouter is message-TYPE dispatch). Asserting those against a hand-written mesh
 // would test the mock, so they are refiled to the simulator/integration + whole-protocol audit.
 // This suite covers what the package ITSELF owns and had zero tests for, adversarially:

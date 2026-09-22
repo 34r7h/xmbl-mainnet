@@ -666,11 +666,15 @@ continue-on-error, and in the release workflow before any publish).
       peer routing, so it cannot satisfy that. 1/5 against 0.1.16 ("No peer routers available"), 5/5
       after. STILL OPEN: the share of prod boxes that reach DHT *server* mode is uncounted, so the
       seed may remain the hinge one layer up. — *node.js; wan-discovery.test.mjs*
-- [ ] ⛔ `GossipManager` (`src/gossip.js`, exported from `index.js`) has never been constructed
-      anywhere but its own test: `grep -rn 'new GossipManager' packages | grep -v '\.test\.'` is
-      empty, and `webtorrent` ^2.8.4 is a dependency every node pays for. Either wire it as the
-      second discovery path it looks built for, or remove it and the dependency — removing a public
-      export is a minor bump, not a patch, so it does not belong in 0.1.17.
+- [x] **`GossipManager` is gone, and so is `webtorrent` from this package.** It had never been
+      constructed anywhere but its own test — `grep -rn 'new GossipManager' packages | grep -v
+      '\.test\.'` was empty from the first commit — while `webtorrent` ^2.8.4 was a dependency every
+      node installed for it, and its constructor built a WebTorrent client EAGERLY. The swarm path
+      that actually runs is `ConsensusGossip` in `@xmbl/consensus`, constructed by `@xmbl/core`
+      (index.js:181) and loading webtorrent lazily, so nothing is lost: the duplicate only read like
+      a capability, the same defect as the imported-and-never-called DHT beside it. Removed at
+      0.1.17 with the export; count after: 0 references outside the note that records it.
+      — *networking/index.js; peer-identity.test.mjs*
 - [ ] ⛔ INTEGRATION/AUDIT (refiled from the row above) — discovery under NAT, gossip fan-out
       rounds, and Kademlia routing-table poisoning resistance are behaviour of libp2p / WebTorrent
       reached through thin wrappers here (this package has no peer routing table of its own), so they

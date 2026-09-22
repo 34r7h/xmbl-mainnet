@@ -7,14 +7,10 @@
 // two simultaneous starts minting two different identities for one node, and the 0600 mode on a file
 // that IS the node's identity.
 //
-// gossip.js was 14.3% covered: only its constructor ran. Its failure handling is the point — an
-// unhandled WebTorrent 'error' is a process-killing event, and gossip is best-effort while the node is
-// not. Those paths are driven here without standing up a real swarm.
 import { mkdtempSync, rmSync, statSync, writeFileSync, readFileSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadOrCreatePeerKey } from './peer-identity.js';
-import { GossipManager } from './gossip.js';
 
 let pass = 0, fail = 0;
 const ok = (n, c) => { if (c) { pass++; console.log('ok   ' + n); } else { fail++; console.log('FAIL ' + n); } };
@@ -96,76 +92,14 @@ const dir = mkdtempSync(join(tmpdir(), 'xmbl-peerkey-'));
      readFileSync(corrupt, 'utf8').startsWith('this is not'));
 }
 
-// ── 6. GOSSIP IS BEST-EFFORT; THE NODE IS NOT ──
-{
-  const warnings = [];
-  const realWarn = console.warn, realError = console.error;
-  console.warn = (...a) => warnings.push(a.join(' '));
-  const errors = [];
-  console.error = (...a) => errors.push(a.join(' '));
-
-  const g = new GossipManager();
-  ok('the manager is an EventEmitter with a WebTorrent client', typeof g.on === 'function' && g.client);
-  ok('no swarm is joined until asked', g.swarm === null);
-
-  // The transport error that used to kill the process (EADDRINUSE when a second node shares the box).
-  g.client.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
-  ok('A TRANSPORT ERROR IS WARNED, NOT THROWN — an unhandled "error" event would kill the daemon',
-     warnings.some((w) => /EADDRINUSE/.test(w) && /keeps running/.test(w)));
-  g.client.emit('error', new Error('no code, just a message'));
-  ok('an error with no code still degrades gracefully',
-     warnings.some((w) => /no code, just a message/.test(w)));
-
-  // broadcast with no swarm must be a no-op, not a crash.
-  let broke = null;
-  try { await g.broadcast({ hello: 'world' }); } catch (e) { broke = e; }
-  ok('BROADCASTING BEFORE JOINING A SWARM IS A NO-OP, not a throw', broke === null);
-
-  // A fake swarm lets the send path run without a network.
-  const sent = [];
-  g.swarm = { wires: [
-    { send: (m) => sent.push(m) },
-    { send: () => { throw new Error('peer went away mid-send'); } },   // the expected case
-    { send: (m) => sent.push(m) },
-  ] };
-  await g.broadcast({ type: 'anchor', hash: 'abc' });
-  ok('a message reaches every wire that can take it', sent.length === 2);
-  ok('ONE DEAD PEER DOES NOT STOP THE BROADCAST reaching the others', sent.length === 2);
-  ok('the payload on the wire is the JSON-encoded message',
-     JSON.parse(sent[0].toString()).hash === 'abc' && Buffer.isBuffer(sent[0]));
-
-  // Inbound parsing: a malformed frame from a peer must not take the node down.
-  const got = [];
-  g.on('message', (m) => got.push(m));
-  g._handleMessage({ type: 'inbound', n: 1 });
-  ok('a parsed message is re-emitted to subscribers', got.length === 1 && got[0].n === 1);
-
-  // Drive the real wire handler the same way joinSwarm wires it up.
-  const handlers = {};
-  const fakeWire = { on: (ev, fn) => { handlers[ev] = fn; } };
-  const fakeSwarm = { on: (ev, fn) => { if (ev === 'wire') fn(fakeWire); }, wires: [] };
-  g.client.add = () => fakeSwarm;
-  await g.joinSwarm('deadbeef');
-  ok('joining a swarm registers a wire handler', typeof handlers.message === 'function');
-
-  handlers.message(Buffer.from(JSON.stringify({ type: 'gossip', v: 2 })));
-  ok('a well-formed inbound frame is emitted', got.length === 2 && got[1].v === 2);
-  let crashed = null;
-  try { handlers.message(Buffer.from('{not json')); } catch (e) { crashed = e; }
-  ok('A MALFORMED FRAME FROM A PEER IS LOGGED, NOT THROWN — this is attacker-controlled input',
-     crashed === null && errors.some((e) => /Error parsing gossip message/.test(e)));
-  ok('...and it is not emitted as a message', got.length === 2);
-
-  g.destroy();
-  ok('destroy tears the client down', true);
-  const g2 = new GossipManager();
-  g2.client = null;
-  let d = null;
-  try { g2.destroy(); } catch (e) { d = e; }
-  ok('destroying a manager with no client is harmless', d === null);
-
-  console.warn = realWarn; console.error = realError;
-}
+// ── 6. (was: the GossipManager error paths) ──
+// packages/networking/src/gossip.js is GONE as of 0.1.17. It was a second, EAGER WebTorrent client
+// that nothing ever constructed — `grep -rn 'new GossipManager' packages | grep -v '.test.'` was
+// empty from the first commit — while the swarm path that actually runs is ConsensusGossip in
+// @xmbl/consensus, built by @xmbl/core at index.js:181 and lazily loading webtorrent. Keeping a
+// duplicate alive only in its own test is the same defect as the imported-and-never-called DHT it
+// sat beside: it reads like a capability. The error-handling behaviour those checks covered lives
+// on in @xmbl/consensus/src/gossip.js, where it is reached by running code.
 
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n${pass}/${pass + fail} passed`);

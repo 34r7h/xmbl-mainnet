@@ -12,7 +12,13 @@ import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const PER_FILE_TIMEOUT_MS = 120_000;
+// A GUARD AGAINST A HUNG SUITE, NOT A PERFORMANCE BUDGET. At 120s this was a coin flip: the FHEW
+// suite legitimately takes ~119s on this machine (90s CPU, 18 checks over a bootstrapped FHE key),
+// so it passed on a quiet box and TIMED OUT the moment anything else ran beside it — a red gate
+// that means nothing about the code, on the run that decides whether a release publishes. A suite
+// that is genuinely wedged blows any of these numbers; the limit only has to be far enough above
+// the slowest honest suite that load cannot cross it.
+const PER_FILE_TIMEOUT_MS = 600_000;
 
 function findTests(dir) {
   const out = [];
