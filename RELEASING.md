@@ -53,7 +53,22 @@ the upload (`ENEEDAUTH` on npm, "please provide a non-empty token" on cargo). Ch
 Both secrets existed by name and were empty on 2026-09-16. `NPM_TOKEN` was set that day from the
 token in this box's `.env` (validated with `npm whoami`, never used to publish by hand), which means
 **CI currently publishes with the laptop's own token**: rotate it locally and the next tag fails.
-`CARGO_REGISTRY_TOKEN` is still empty, and the eight crates have never published.
+`CARGO_REGISTRY_TOKEN` was set on 2026-09-21 and all eight crates are live at 0.1.15.
+
+## Resuming an interrupted release
+
+`release.yml` also takes a `workflow_dispatch` with a `version` input. It runs the **cargo job
+alone** — npm and packaging are guarded to tag pushes — and the cargo job skips any crate already
+on the registry at that version. Use it when crates.io stops mid-run; never re-tag to retry.
+
+Two things make a first cargo release impossible in one run, and both are handled in the job:
+
+- **A verified email is required.** Without it every publish returns
+  `400 A verified email address is required to publish crates to crates.io`, which looks like a bad
+  token and is not. Verify at <https://crates.io/settings/profile>.
+- **New crates are rate-limited**: a burst of 5, then one per hour. Eight new crates therefore
+  cannot publish in a single run — the sixth returns `429`. The job retries across the refill and
+  reports every crate still missing rather than stopping at the first.
 
 ## Never publish by hand
 

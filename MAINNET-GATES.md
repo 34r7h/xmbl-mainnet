@@ -674,6 +674,25 @@ continue-on-error, and in the release workflow before any publish).
       where a consumer looks), and a regression guard FAILS if any label is removed — it also
       discovers the crate set from the filesystem, so a ninth crate added without a label fails too.
       Parity itself remains future work; the label is the accurate, enforced interim. — *crates/crate-status.test.mjs (9/9), in `test:protocol`*
+- [x] **THE RELEASE PRODUCES BINARIES AND BOTH REGISTRIES (0.1.14, 0.1.15).** `gh release list`
+      returned NOTHING for any version: no `.dmg`, `.AppImage`, `.deb`, `.exe`, web bundle or
+      extension zip had ever been built. The artifacts job was gated on the crates.io job, which had
+      failed on an empty token since the first tag, so packaging was SKIPPED every time — and
+      underneath that, all three packaging jobs were independently broken: `electron-builder`'s
+      CommonJS config could not load under the desktop package's `"type": "module"` (so appId,
+      targets and file globs were all dead), `electron` sat in `dependencies` (which
+      electron-builder refuses), npm workspaces hoisted `electron` out of reach of the version
+      probe, the scoped package name `@xmbl/desktop-app` made fpm write into `dist/@xmbl/`, a
+      `classic-level` node-gyp rebuild killed every Windows `.exe`, the app-builder aliased `buffer`
+      into a hoisted-away path, two Vue templates carried `:id="@xmbl/identity"` (not an
+      expression), and `@xmbl/lng` had no `browser` export condition so bundlers resolved a node
+      entry that reads `node:fs` at module scope. **v0.1.15 attaches 12 assets**: macOS dmg (x64,
+      arm64), Linux AppImage (x86_64, arm64) and deb (amd64, arm64), Windows exe (universal, x64,
+      arm64), both web tarballs and the extension zip. **crates.io is 8/8 live at 0.1.15**, counted
+      off the registry API — the token needed a verified account email, and new crates are capped at
+      a burst of 5 then one per hour, so the job is now idempotent, retries the refill, and is
+      resumable by `workflow_dispatch` without re-tagging. — *.github/workflows/{release,package}.yml;
+      packages/desktop-app/electron-builder.config.cjs; RELEASING.md "Resuming an interrupted release"*
 - [ ] Version `0.x` communicates pre-mainnet. Do **not** cut `1.0.0` until every ⛔ AUDIT gate
       above is closed.
 
