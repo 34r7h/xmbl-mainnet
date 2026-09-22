@@ -14,29 +14,22 @@
 #
 # crates.io is NOT affected: all eight xmbl-* crates carry only 0.1.15/0.1.16 (checked 2026-09-22).
 #
-# RUN IT:
-#   npm login          # web auth
-#   bash scripts/purge-020.sh <6-digit-OTP>
-#
-# The OTP is required. A plain `npm login` session is NOT enough: the registry answers
-#   "Two-factor authentication or granular access token with bypass 2fa enabled is required"
-# and one TOTP code stays valid for its whole 30s window, which comfortably covers all twelve
-# unpublishes (they take ~12s total), so a single code does the job.
 set -uo pipefail
 
-# Takes either a 6-digit OTP, or the base32 TOTP secret that `npm profile enable-2fa auth-only`
-# printed — with the secret it generates a fresh code itself, and re-generates one for each
-# package so a slow run cannot drift out of the 30s window.
-ARG="${1:-}"
-[ -n "$ARG" ] || { echo "usage: bash scripts/purge-020.sh <6-digit-OTP | BASE32-TOTP-SECRET>"; exit 2; }
-HERE=$(cd "$(dirname "$0")" && pwd)
-otp() {
-  case "$ARG" in
-    [0-9][0-9][0-9][0-9][0-9][0-9]) printf '%s' "$ARG" ;;
-    *) node "$HERE/totp.mjs" "$ARG" ;;
-  esac
-}
-
+# No OTP argument. npm KILLED TOTP enrolment — `npm profile enable-2fa auth-only` now answers
+#   404 Adding a new TOTP 2FA is no longer supported ... add a security key 2FA method instead
+# so there is no six-digit code to pass and never will be on this account. The only 2FA npm still
+# accepts is WebAuthn (a passkey; Touch ID counts), and a security key cannot emit six digits.
+#
+# The way a WebAuthn account authorises a write is `npm login --auth-type=web`: the challenge is
+# answered in the browser and the resulting session token is already 2FA-satisfied, so unpublish
+# needs no --otp at all.
+#
+# SETUP, once:
+#   1. add a passkey at https://npmjs.com/settings/34r7h/tfa   (Touch ID works; no hardware key)
+#   2. npm login --auth-type=web
+#   3. bash scripts/purge-020.sh
+#
 PKGS="cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge"
 
 # The repo root holds a .npmrc with a CI-style _authToken, and a project .npmrc OUTRANKS the
@@ -48,7 +41,7 @@ cd "$RUNDIR"
 
 WHO=$(npm whoami 2>&1) || {
   echo "NOT AUTHENTICATED as a 2FA-satisfied user: $WHO"
-  echo "Run 'npm login' (web auth) first. A token in an .npmrc will NOT work — that is the E403."
+  echo "Run 'npm login --auth-type=web' first, with a passkey enrolled on the account."
   exit 1
 }
 echo "whoami: $WHO"
@@ -56,7 +49,7 @@ echo
 
 gone=0; stuck=0
 for p in $PKGS; do
-  out=$(npm unpublish "@xmbl/$p@0.2.0" --otp="$(otp)" 2>&1)
+  out=$(npm unpublish "@xmbl/$p@0.2.0" 2>&1)
   if [ $? -eq 0 ]; then
     echo "REMOVED  @xmbl/$p@0.2.0"; gone=$((gone+1))
   else
