@@ -27,9 +27,19 @@ services.dht = kadDHT({
 ```
 
 libp2p registers it as a discovery source through the peer-discovery symbol it exposes. mDNS stays —
-LAN discovery was never the bug, being LAN-*only* was. `wan-discovery.test.mjs` asserts this on a
-**started** node (a check for the import passes even when nothing is wired) and reads 1/4 against
-0.1.16, 4/4 after.
+LAN discovery was never the bug, being LAN-*only* was.
+
+`wan-discovery.test.mjs` asserts it on a **started** node, because a check for the import passes even
+when nothing is wired, and ends on the outcome: three nodes, two of which know only the seed, and one
+resolves the *other* through `peerRouting.findPeer` — a query over `/xmbl/kad/1.0.0` answered from the
+seed's routing table. mDNS implements no peer routing, so it cannot be what satisfies that. **1/5
+against 0.1.16** (the outcome check fails with "No peer routers available"), **5/5 after**.
+
+⚠ What this does *not* yet establish: `clientMode: false` means libp2p promotes a node to DHT
+**server** once it has a publicly dialable address, and on this mesh the seed may be the only box that
+does. Measured only on loopback so far, where all three nodes promoted. Until the share of prod boxes
+in server mode is counted, "peers find each other without the seed" is the design, not a measurement —
+the seed may still be the hinge, one layer up.
 
 ## What it owns
 

@@ -46,5 +46,32 @@ check(`the DHT runs on an xmbl protocol, not the public IPFS one (${kadProtocols
   kadProtocols.length > 0 && kadProtocols.every((p) => p.startsWith('/xmbl/')));
 
 await n.stop?.();
-console.log(`\n${4 - failures}/4 passed`);
+
+// AND IT MUST ACTUALLY FIND A PEER. Everything above is configuration — true of a service that
+// constructs and then does nothing. This is the outcome: three nodes, two of which know only the
+// seed, and one of them resolves the OTHER through peer routing. `peerRouting.findPeer` is a query
+// over /xmbl/kad/1.0.0 answered by the seed's routing table; mDNS implements no peer routing at
+// all, so it cannot be what satisfies this, and against `peerDiscovery: [mdns()]` alone libp2p has
+// no router to ask and the call throws. This is the shape of the outage: one box that everyone
+// reaches, and peers that have to find each other THROUGH it rather than from a constant.
+const A = new XNNode({ addresses: ['/ip4/127.0.0.1/tcp/47917'], announce: ['/dns4/seed.test.invalid/tcp/47917'] });
+await A.start();
+const seed = `/ip4/127.0.0.1/tcp/47917/p2p/${A.node.peerId.toString()}`;
+const B = new XNNode({ addresses: ['/ip4/127.0.0.1/tcp/0'], bootstrap: [seed] });
+const C = new XNNode({ addresses: ['/ip4/127.0.0.1/tcp/0'], bootstrap: [seed] });
+await B.start();
+await C.start();
+await new Promise((r) => setTimeout(r, 6000));
+
+let resolved = null;
+try {
+  resolved = await B.node.peerRouting.findPeer(C.node.peerId, { signal: AbortSignal.timeout(20000), useCache: false });
+} catch (e) {
+  console.log('    findPeer: ' + String(e && e.message).slice(0, 120));
+}
+check(`a node resolves a peer it was never given, through the DHT (${resolved ? (resolved.multiaddrs || []).length + ' addrs' : 'not resolved'})`,
+  resolved != null);
+
+await C.stop?.(); await B.stop?.(); await A.stop?.();
+console.log(`\n${5 - failures}/5 passed`);
 process.exit(failures ? 1 : 0);

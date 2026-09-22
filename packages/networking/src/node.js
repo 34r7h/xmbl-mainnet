@@ -146,8 +146,10 @@ export class XNNode extends EventEmitter {
       // times. MEASURED 2026-09-20: the single published seed was re-provisioned onto an ephemeral port
       // under a fresh peer id, every box in the fleet dialled a port nothing listened on, and nothing
       // went red anywhere — the boxes stayed up, kept beaconing and served `current` while the mesh was
-      // partitioned. A star topology cannot report its own partition. With a DHT one box changing
-      // address is a non-event: peers ask peers and re-find each other.
+      // partitioned. A star topology cannot report its own partition. With a DHT a peer is found by
+      // ASKING peers — measured in wan-discovery.test.mjs, where a node resolves another it was never
+      // given. How much that decentralises depends on how many boxes reach DHT server mode (below),
+      // which is a count nobody has taken on prod yet.
       //
       // A DISTINCT PROTOCOL, not the default. `/ipfs/kad/1.0.0` is the public IPFS DHT: joining it fills
       // the routing table with strangers and puts xmbl lookups in a keyspace shared with everyone.

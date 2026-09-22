@@ -661,7 +661,11 @@ continue-on-error, and in the release workflow before any publish).
       A distinct protocol so the routing table is xmbl nodes and not the public IPFS DHT;
       passthrough addresses because most of this mesh is reachable only at a `/p2p-circuit` address.
       The gate asserts it on a STARTED node — a source-level check for the import passed every day
-      this was broken — and reads 1/4 against 0.1.16, 4/4 after. — *node.js; wan-discovery.test.mjs*
+      this was broken — and ends on the OUTCOME: three nodes, two knowing only the seed, one
+      resolving the other through `peerRouting.findPeer` over `/xmbl/kad/1.0.0`; mDNS implements no
+      peer routing, so it cannot satisfy that. 1/5 against 0.1.16 ("No peer routers available"), 5/5
+      after. STILL OPEN: the share of prod boxes that reach DHT *server* mode is uncounted, so the
+      seed may remain the hinge one layer up. — *node.js; wan-discovery.test.mjs*
 - [ ] ⛔ `GossipManager` (`src/gossip.js`, exported from `index.js`) has never been constructed
       anywhere but its own test: `grep -rn 'new GossipManager' packages | grep -v '\.test\.'` is
       empty, and `webtorrent` ^2.8.4 is a dependency every node pays for. Either wire it as the
