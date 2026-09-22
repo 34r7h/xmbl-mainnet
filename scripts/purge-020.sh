@@ -16,18 +16,18 @@
 #
 set -uo pipefail
 
-# No OTP argument. npm KILLED TOTP enrolment — `npm profile enable-2fa auth-only` now answers
-#   404 Adding a new TOTP 2FA is no longer supported ... add a security key 2FA method instead
-# so there is no six-digit code to pass and never will be on this account. The only 2FA npm still
-# accepts is WebAuthn (a passkey; Touch ID counts), and a security key cannot emit six digits.
+# No OTP argument, and none is possible. npm killed TOTP enrolment — `npm profile enable-2fa
+# auth-only` answers "404 Adding a new TOTP 2FA is no longer supported ... add a security key
+# instead" — so this account's 2FA is a passkey, and a passkey cannot emit six digits.
 #
-# The way a WebAuthn account authorises a write is `npm login --auth-type=web`: the challenge is
-# answered in the browser and the resulting session token is already 2FA-satisfied, so unpublish
-# needs no --otp at all.
+# With 2FA left at auth-and-writes, npm answers EOTP on every single unpublish and hands back a
+# browser URL to authenticate: twelve packages, twelve Touch ID taps. Setting the mode to
+# auth-only keeps 2FA enrolled (which the registry requires before it will unpublish at all) while
+# letting the session token carry the writes, so the twelve run unattended.
 #
 # SETUP, once:
-#   1. add a passkey at https://npmjs.com/settings/34r7h/tfa   (Touch ID works; no hardware key)
-#   2. npm login --auth-type=web
+#   1. passkey enrolled at https://npmjs.com/settings/34r7h/tfa   (Touch ID qualifies)
+#   2. npm profile enable-2fa auth-only     <- INTERACTIVE, prompts for the npm password
 #   3. bash scripts/purge-020.sh
 #
 PKGS="cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge"
