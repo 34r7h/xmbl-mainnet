@@ -1,5 +1,39 @@
 # @xmbl/storage-compute
 
+## 0.1.16
+
+### Patch Changes
+
+- **SECURITY — 0.1.15 still leaked the AIR trace, by a second route.** The mask added in 0.1.13
+  closed the linear attack; it did not close this one, and the published 0.1.15 bytes return the
+  exact secret.
+
+  Base-field Merkle leaves were `H('l:' + value)` and the field is 31 bits. Every opening hands the
+  verifier its authentication path, whose FIRST element is the level-0 SIBLING's leaf hash —
+  inverting it is a sweep of 2^31 SHA-256, measured at **450 seconds** for the whole field, once,
+  reusable against every proof ever made. So each of the `2*nc` trace openings donated one more
+  evaluation of `col'` for nothing: **80 opened + 80 swept = 160** points against a polynomial of
+  degree `T + blindDeg = 104` that needs **105**. Interpolate, evaluate at `g^0`, read row 0.
+  Measured against published 0.1.15: `RECOVERED 570682118` / `ACTUAL 570682118`. The blind cannot
+  see this — `blindDeg = 2*nc + 8` is sized against what is opened DIRECTLY.
+
+  **Fix**: `@xmbl/zero-knowledge` exports `merkleSalted`, `mverifySalted` and `randomSalts`; a
+  base-field leaf is now `H('ls:' + value + ':' + salt)` with a fresh 128-bit salt per leaf, carried
+  in the opening as `sCur`/`sNxt`. A missing or short salt is refused, so a salt-stripped proof does
+  not verify. Extension-field leaves are ~124 bits and stay unsalted.
+
+  **BREAKING for AIR proofs**: the statement tag is versioned `zk3` and the opening shape gained the
+  salts, so **no proof made by 0.1.13–0.1.15 verifies on 0.1.16**. Re-prove. `airSetup`/`airProve`/
+  `airVerify`/`AIR_STATEMENTS` signatures are unchanged.
+
+  `xzk` (the cube-curve statement) is unaffected and deliberately not salted: its FRI layer 0 IS the
+  curve codeword in the clear, `Pt` is public by construction, and its hiding is the witness family
+  (`Pt = P + Z_R*B`, a 2-parameter family per proof) rather than leaf secrecy.
+
+  The standing regression check is no longer a guess at the next attack. It is a COUNT: the points
+  an adversary can hold must stay strictly below `T + blindDeg + 1`. At the shipped parameters that
+  is `80 + 0 < 105`; un-salting the leaves makes it `160 < 105` and fails.
+
 ## 0.1.15
 
 ### Patch Changes

@@ -236,7 +236,47 @@ of degree 18 while `(P − I_R)/Z_R` has degree 1, so the recovered curve is con
 a 2-parameter family of secret point sets. `xzk.test.mjs` exhibits a second witness and the
 legal blind that carries the same proof.
 
-### 3.8 What the tests establish
+### 3.8 FINDING F6 — unsalted 31-bit trace leaves handed the trace back (FOUND AND FIXED, 2026-09-22)
+
+The §3.7 mask closed the LINEAR route and 0.1.15 shipped on the belief that was the whole
+break. It was not, and the second route was in the report that produced the first fix —
+the salt was point 3 of four and was the one point not implemented.
+
+Base-field Merkle leaves were `H('l:' + value)` and the field is 31 bits. Every opening
+hands the verifier its authentication path, and the FIRST element of that path is the
+LEVEL-0 SIBLING's leaf hash. Inverting it is a sweep of 2^31 SHA-256 — measured at
+1.73 M h/s on this box, **450 seconds** for the whole field, once, reusable against every
+proof ever produced. So each of the `2*nc` trace openings donated one more evaluation of
+`col'` for free.
+
+The count at 0.1.15's parameters: 80 opened points + 80 swept siblings = **160**
+evaluations of a polynomial of degree `T + blindDeg = 104`, which needs **105**.
+Interpolate, evaluate at `g^0`, and row 0 is the witness. Measured against the
+**published 0.1.15 bytes**: `RECOVERED row 0 : 570682118`, `ACTUAL secret : 570682118`.
+
+The blind cannot see this. `blindDeg = 2*nc + 8` is sized against what is opened
+DIRECTLY, and the sibling route doubles that count without opening anything.
+
+**Fix — salt the base-field leaves.** `fri.js` gains `merkleSalted` / `mverifySalted` /
+`randomSalts`: the leaf is `H('ls:' + value + ':' + salt)` with a fresh 128-bit salt per
+leaf, carried in the opening (`sCur`, `sNxt`). The preimage space stops being the field.
+`mverifySalted` refuses a missing or short salt, so a proof stripped of its salts does not
+verify. Extension-field leaves (`merkleExt`, ~124 bits) need no salt and keep theirs.
+The statement tag is versioned `zk3`, so no earlier proof verifies against this verifier.
+
+**`xzk` does not need this, and salting it would break the codeword binding.** Its FRI
+layer 0 IS the curve codeword in the base field, in the clear — `Pt` is fully recoverable
+from any proof and always was (§3.7). Its hiding is the witness family, not leaf secrecy,
+and `xzk.verify` binds `rootP` to `friP.roots[0]` by requiring an identical leaf encoding.
+
+**Why CI passed 0.1.15.** The suite asserted the attack that had been reported, not the
+property that matters. The standing check is now a COUNT that does not depend on guessing
+the next attack: *points an adversary can hold* (`2*nc` opened, plus siblings only if the
+leaves are invertible) must stay strictly below `T + blindDeg + 1`. At the shipped
+parameters that reads `80 + 0 < 105`. A regression that un-salts the leaves makes it
+`160 < 105` and fails.
+
+### 3.9 What the tests establish
 
 The `fri.js` self-tests are outcome checks: FRI **accepts** a random degree-`<32`
 codeword, **rejects** a codeword with a few tampered points, **rejects** a degree-`39`
@@ -250,11 +290,13 @@ freshness and its inability to move the derived value, and that no opened field
 element in a ~950 KB proof equals a secret point's value — and that the recovery attack of
 §3.7 recovers the committed curve but not the witness.
 
-`air.test.mjs` (30 checks) pins the general-purpose path: completeness over three
+`air.test.mjs` (35 checks) pins the general-purpose path: completeness over three
 computations, a trace that breaks its own rule, tampered trace / composition / MASK
 openings, a thinned opening set, statement binding against a same-sized other statement,
 and the §3.7 recovery attack as a standing check — it still collects 200 openings for a
-degree-119 interpolation and returns neither the secret nor any other trace row.
+degree-119 interpolation and returns neither the secret nor any other trace row — plus the
+§3.8 leaf attack: every opening carries a 128-bit salt, no field value hashes to any
+sibling leaf, a salt-stripped proof is rejected, and the point count stays at 80 < 105.
 
 ---
 
@@ -271,6 +313,7 @@ degree-119 interpolation and returns neither the secret nor any other trace row.
 | Z7 | FRI must not gate consensus/ledger/sealing | Enforced by policy (`MAINNET-GATES.md`) — keep until the audit lands |
 | Z8 | The degree bound is the VERIFIER's parameter | **CLOSED — F4, library and contract host** (§3.4) |
 | Z9 | Fiat–Shamir challenges bind the whole statement | **CLOSED for `air`** — `statementTag` absorbs every parameter and boundary cell; **open for `xzk`**, whose transcript covers Merkle roots only (§3.5) |
+| Z12 | Base-field Merkle leaves hide the committed value | **CLOSED — F6** (§3.8): they did not — a 31-bit leaf is a 450-second sweep from its preimage, and every opening exposes its sibling's leaf hash. Salted, 128 bits, verifier-enforced |
 | Z11 | AIR hiding: the FRI transcript reveals nothing about the trace | **CLOSED — F5** (§3.7): unmasked it revealed the trace outright; the composition is now masked by a uniform extension-valued degree-`<K` polynomial and `setup` keeps `K` above everything the transcript reveals |
 | Z10 | The low-degree test and the constraint openings are one codeword | **CLOSED** (§3.6) |
 

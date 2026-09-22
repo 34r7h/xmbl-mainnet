@@ -31,6 +31,11 @@ export {
 // The field and the primitives the AIR is written against, so a caller can express constraints.
 export { p as FIELD_P, mod as fmod, add as fadd, sub as fsub, mul as fmul, inv as finv, pw as fpow, EXT_BITS, GRIND_BITS } from './src/fri.js';
 
+// SALTED base-field commitments. A bare field element is 31 bits, so H(value) is a 450-second sweep
+// from its own preimage — and a Merkle opening always exposes its sibling's leaf hash. Any caller
+// committing base-field values it means to keep secret must use these, not `merkle`.
+export { merkleSalted, mverifySalted, randomSalts } from './src/fri.js';
+
 // THE VERSION OF THE CODE THIS PROCESS LOADED. Read once at import time from this package's own manifest, so a
 // running node can report what it is actually executing — an install that lands on disk after this module was
 // loaded changes the file, not this constant. Consumed by @xmbl/core's control socket (`status`.versions).

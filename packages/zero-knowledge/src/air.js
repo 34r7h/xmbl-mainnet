@@ -19,7 +19,13 @@
 //      the verifier opens the columns DIRECTLY, so those openings leave col' undetermined.
 //   3. Evaluate on a COSET of a larger domain (size N = K·blowup). A coset, so the evaluation
 //      domain is disjoint from the trace domain and no denominator is ever zero.
-//   4. Commit each column. Draw batching challenges from the ~124-bit extension field.
+//   4. Commit each column with SALTED leaves. A base-field value is 31 bits, and every opening hands
+//      over its authentication path whose FIRST element is the level-0 sibling's leaf hash — a 2^31
+//      sweep (~19 minutes, once, forever) inverts it. Unsalted, the 2·nc openings therefore donate
+//      2·nc MORE points of col' for free: 80 opened + 80 swept = 160 evaluations of a degree-104
+//      polynomial that needs 105, and row 0 is the witness. The blind is sized against what is opened
+//      directly and cannot see this. Salts are 128 bits and ride in the opening.
+//      Draw batching challenges from the ~124-bit extension field.
 //   5. Build the COMPOSITION: Σ α_k·(transition_k / Z_T) + Σ β_j·(boundary_j / (x − g^row)), where
 //      Z_T = (x^T − 1)/(x − g^(T−1)) vanishes on every row a transition must hold on. It is a
 //      polynomial exactly when the constraints hold; otherwise the division leaves a high-degree
@@ -44,9 +50,9 @@
 
 import { randomBytes } from 'node:crypto';
 import {
-  p, mod, add, sub, mul, inv, pw, polyEval, domainOfSize, merkle, merkleExt, mpath, mverify,
+  p, mod, add, sub, mul, inv, pw, polyEval, domainOfSize, merkleExt, mpath,
   mverifyExt, H, fsExt, fsIndex, friProve, friVerify, eAdd, eScale, eMul, eFrom, eEq,
-  evalCoset, GRIND_BITS, EXT_BITS,
+  evalCoset, merkleSalted, mverifySalted, randomSalts, GRIND_BITS, EXT_BITS,
 } from './fri.js';
 
 const polyAdd = (a, b) => { const n = Math.max(a.length, b.length); return Array.from({ length: n }, (_, i) => add(a[i] || 0n, b[i] || 0n)); };
@@ -98,7 +104,9 @@ export function setup(o) {
   // the column at two points, so 2*nc values. Above that those points leave col' undetermined.
   // Everything FRI reveals is covered by the mask instead (see the header), not by this blind.
   const blindDeg = o.blindDegree || (2 * nc + 8);
-  const colDeg = 2 * T - 1 + blindDeg;            // deg(col + (x^T - 1)*r)
+  // deg(col + (x^T - 1)*r) = max(T-1, T + blindDeg) = T + blindDeg. Kept at the larger 2T-1+blindDeg
+  // for the K/N sizing below, which only ever over-provisions the domain.
+  const colDeg = 2 * T - 1 + blindDeg;
   const quotientDeg = D * colDeg - (T - 1);
   let K = nextPow2(Math.max(quotientDeg + 1, colDeg + 1));
   // ZERO KNOWLEDGE, not soundness: the mask has K uniform extension coefficients and the transcript
@@ -133,7 +141,10 @@ const zTransition = (ctx, x) => mul(sub(pw(x, BigInt(ctx.T)), 1n), inv(sub(x, pw
  * and the boundary in the transcript, a proof is tied to the statement it was made for.
  */
 function statementTag(ctx, nT, boundary) {
-  return [ctx.T, ctx.W, ctx.D, ctx.K, ctx.N, ctx.blowup, ctx.nq, ctx.nc, ctx.grind, ctx.blindDeg, nT,
+  // 'zk3' — salted trace leaves. Bumped whenever the proof shape changes, so a proof made by an
+  // older prover cannot verify here: 'zk2' (unsalted, masked) leaked the trace through the sibling
+  // leaf hashes and must not be accepted by this verifier.
+  return ['zk3', ctx.T, ctx.W, ctx.D, ctx.K, ctx.N, ctx.blowup, ctx.nq, ctx.nc, ctx.grind, ctx.blindDeg, nT,
     boundary.map((b) => `${b.row}/${b.col}/${b.value.toString()}`).join(';')].join('|');
 }
 function challenges(roots, rootM, ctx, nT, boundary) {
@@ -171,7 +182,8 @@ export function prove(ctx, { trace, transitions, boundary }) {
   const evals = cols.map((c) => evalCoset(c, dom, shift));
   // 4. commit each column, then the MASK: a uniformly random extension-valued polynomial of degree
   //    < K, evaluated on the same coset. It is committed BEFORE any challenge is drawn.
-  const coms = evals.map((e) => merkle(e));
+  const salts = evals.map(() => randomSalts(N));
+  const coms = evals.map((e, j) => merkleSalted(e, salts[j]));
   const roots = coms.map((c) => c.root);
   const mLimbs = Array.from({ length: 4 }, () => Array.from({ length: K }, () => mod(BigInt('0x' + randomBytes(32).toString('hex')))));
   const mEvalLimbs = mLimbs.map((l) => evalCoset(l, dom, shift));
@@ -199,6 +211,7 @@ export function prove(ctx, { trace, transitions, boundary }) {
     return {
       i,
       cur: evals.map((e) => e[i]), nxt: evals.map((e) => e[ni]),
+      sCur: salts.map((s) => s[i]), sNxt: salts.map((s) => s[ni]),
       pCur: coms.map((c) => mpath(c.tree, i)), pNxt: coms.map((c) => mpath(c.tree, ni)),
       Dv: Dw[i], pD: mpath(comD.tree, i),
       Mv: M[i], pM: mpath(comM.tree, i),
@@ -224,9 +237,10 @@ export function verify(ctx, { proof, transitions, boundary }) {
     for (let k = 0; k < ctx.nc; k++) {
       const o = proof.opens[k], i = idxs[k], ni = (i + step) % N;
       if (o.i !== i) return false;
+      if (!Array.isArray(o.sCur) || !Array.isArray(o.sNxt)) return false;   // an unsalted opening is not a proof
       for (let j = 0; j < ctx.W; j++) {
-        if (!mverify(proof.roots[j], o.cur[j], i, o.pCur[j])) return false;
-        if (!mverify(proof.roots[j], o.nxt[j], ni, o.pNxt[j])) return false;
+        if (!mverifySalted(proof.roots[j], o.cur[j], o.sCur[j], i, o.pCur[j])) return false;
+        if (!mverifySalted(proof.roots[j], o.nxt[j], o.sNxt[j], ni, o.pNxt[j])) return false;
       }
       if (!mverifyExt(proof.rootD, o.Dv, i, o.pD)) return false;
       if (!mverifyExt(proof.rootM, o.Mv, i, o.pM)) return false;

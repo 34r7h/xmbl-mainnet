@@ -18,7 +18,7 @@
 //
 // Self-tests at the bottom (run this file directly).
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 export const p = 2013265921n; // 15*2^27+1, FRI-friendly
 export const mod = (a) => ((a % p) + p) % p;
@@ -119,6 +119,35 @@ export function merkle(leaves) {
   const tree = [level];
   while (level.length > 1) { const nx = []; for (let i = 0; i < level.length; i += 2) nx.push(H(level[i] + level[i + 1])); level = nx; tree.push(level); }
   return { root: level[0], tree };
+}
+
+// ── SALTED base-field commitment ─────────────────────────────────────────────────────────────────
+// `merkle` above hashes a bare base-field element, and the field is 31 bits. Every opening hands the
+// verifier its whole authentication path, and the FIRST element of that path is the LEVEL-0 SIBLING'S
+// LEAF HASH — H('l:' + that value). Inverting it is a sweep of 2^31 SHA-256, about 19 minutes once,
+// after which every sibling in every proof forever is free. So an unsalted base-field Merkle
+// commitment does not hide the committed value; it only authenticates it.
+//
+// That is not a theoretical margin. air.js opens each trace column at 2*nc points, and each opening
+// donates one more point through its sibling: 80 opened + 80 swept = 160 evaluations of a degree-104
+// polynomial that needs 105 — the column interpolates and row 0 is the witness. The blind is sized
+// against what is opened DIRECTLY and cannot see this.
+//
+// A 128-bit salt per leaf ends it: the preimage space stops being the field. Salts ride along in the
+// opening and cost nothing but bytes. Extension-field leaves (`merkleExt`) are ~124 bits and need no
+// salt. `randomSalts` is exported so a caller commits and opens with the same salts.
+export const randomSalts = (n) => Array.from({ length: n }, () => randomBytes(16).toString('hex'));
+const saltedLeaf = (v, salt) => H('ls:' + v.toString() + ':' + salt);
+export function merkleSalted(leaves, salts) {
+  if (salts.length !== leaves.length) throw new Error('merkleSalted: one salt per leaf');
+  let level = leaves.map((v, i) => saltedLeaf(v, salts[i]));
+  const tree = [level];
+  while (level.length > 1) { const nx = []; for (let i = 0; i < level.length; i += 2) nx.push(H(level[i] + level[i + 1])); level = nx; tree.push(level); }
+  return { root: level[0], tree };
+}
+export function mverifySalted(root, val, salt, idx, path) {
+  if (typeof salt !== 'string' || salt.length < 32) return false;   // a short or missing salt is not a salt
+  return mverifyTagged(root, saltedLeaf(val, salt), idx, path);
 }
 // Extension-valued commitment. A DISTINCT leaf tag ('e:') so an extension leaf can never be read as
 // a base-field one — domain separation between the two encodings.

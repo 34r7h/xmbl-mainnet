@@ -182,8 +182,18 @@ continue-on-error, and in the release workflow before any publish).
       in the round constant); and an oversized domain is refused rather than silently mis-generated
       against the field's 2-adicity. A trace that breaks its own rule cannot be proved; a tampered opening, a
       tampered composition value and a thinned opening set are all rejected; the witness and every
-      intermediate state are absent from the proof — and the recovery attack above is a PERMANENT
-      check in the suite: it still gathers 200 openings for a degree-119 interpolation and no longer
+      intermediate state are absent from the proof. **A SECOND leak was found against the shipped
+      0.1.15 and closed in 0.1.16 (F6):** base-field Merkle leaves were `H('l:' + value)` over a
+      31-bit field, and every opening hands over its authentication path whose FIRST element is the
+      level-0 SIBLING's leaf hash — a 450-second sweep of the whole field inverts it, once, reusably.
+      That doubled the recoverable points for free: 80 opened + 80 swept = 160 evaluations of a
+      degree-104 polynomial needing 105, and the published bytes returned the exact secret
+      (`570682118`). Leaves now carry a fresh 128-bit salt (`merkleSalted`/`mverifySalted`), a
+      salt-stripped proof is refused, and the statement tag is versioned `zk3`. The standing check is
+      no longer a guess at the next attack but a COUNT: points an adversary can hold must stay below
+      `T + blindDeg + 1` — `80 + 0 < 105`. `xzk` needs no salt: its FRI layer 0 IS the curve codeword
+      in the clear, `Pt` is public by construction, and its hiding is the witness family.
+      The recovery attacks are PERMANENT checks in the suite: it still gathers 200 openings for a degree-119 interpolation and no longer
       returns the secret, nor any other row. The sibling `xzk` path was attacked the same way and
       survives: the committed curve IS fully recoverable from its FRI openings, but `Pt = P + Zr*B`
       with `B` uniform of degree 18 over a witness quotient of degree 1, so the same proof is carried
