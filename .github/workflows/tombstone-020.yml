@@ -35,15 +35,21 @@ jobs:
               "DO NOT USE. 0.2.0 was published by mistake and is not part of this version line; it cannot be unpublished (npm 2FA). It is the highest version number but NOT the newest code. The current release is $latest -- install @xmbl/$p@latest."
             echo "tombstoned @xmbl/$p@0.2.0 -> points at $latest"
           done
+      # The registry serves a cached packument for a minute or two after a deprecate, so a read taken
+      # immediately can still show the previous string — the first run of this job reported 8/12 for
+      # exactly that reason while all twelve writes had in fact succeeded. Poll with cache-busting
+      # until every package reports the new text, rather than sampling once and failing on a race.
       - name: COUNT AFTER — read the message back off the registry
         run: |
-          ok=0
-          for p in cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge; do
-            msg=$(curl -s "https://registry.npmjs.org/@xmbl/$p" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(String(j.versions['0.2.0']?.deprecated||''))})")
-            case "$msg" in
-              "DO NOT USE."*) ok=$((ok+1)); echo "  @xmbl/$p OK";;
-              *) echo "  @xmbl/$p NOT TOMBSTONED :: $msg";;
-            esac
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            ok=0; missing=""
+            for p in cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge; do
+              msg=$(curl -s "https://registry.npmjs.org/@xmbl/$p?cb=$RANDOM$attempt" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(String(j.versions['0.2.0']?.deprecated||''))})")
+              case "$msg" in "DO NOT USE."*) ok=$((ok+1));; *) missing="$missing @xmbl/$p";; esac
+            done
+            echo "attempt $attempt: tombstoned $ok/12${missing:+ — still stale:$missing}"
+            [ "$ok" = 12 ] && break
+            sleep 30
           done
           echo "---- tombstoned $ok/12 ----"
           [ "$ok" = 12 ]
