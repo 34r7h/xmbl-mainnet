@@ -15,9 +15,17 @@
 # crates.io is NOT affected: all eight xmbl-* crates carry only 0.1.15/0.1.16 (checked 2026-09-22).
 #
 # RUN IT:
-#   npm login          # web auth, satisfies 2FA — do NOT paste a token
-#   bash scripts/purge-020.sh
+#   npm login          # web auth
+#   bash scripts/purge-020.sh <6-digit-OTP>
+#
+# The OTP is required. A plain `npm login` session is NOT enough: the registry answers
+#   "Two-factor authentication or granular access token with bypass 2fa enabled is required"
+# and one TOTP code stays valid for its whole 30s window, which comfortably covers all twelve
+# unpublishes (they take ~12s total), so a single code does the job.
 set -uo pipefail
+
+OTP="${1:-}"
+[ -n "$OTP" ] || { echo "usage: bash scripts/purge-020.sh <6-digit-OTP>"; exit 2; }
 
 PKGS="cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge"
 
@@ -38,13 +46,14 @@ echo
 
 gone=0; stuck=0
 for p in $PKGS; do
-  out=$(npm unpublish "@xmbl/$p@0.2.0" 2>&1)
+  out=$(npm unpublish "@xmbl/$p@0.2.0" --otp="$OTP" 2>&1)
   if [ $? -eq 0 ]; then
     echo "REMOVED  @xmbl/$p@0.2.0"; gone=$((gone+1))
   else
     # Record the REASON, not just the code. The CI purge grepped 'npm error code' first and
     # threw away the line that said why, which is how the cause stayed a guess for a day.
-    reason=$(printf '%s\n' "$out" | grep -m1 -iE 'may not perform|two-factor|2FA|granular|cannot be unpublished|forbidden|404|E[0-9]{3}' | head -1)
+    reason=$(printf '%s\n' "$out" | grep -m1 -iE 'may not perform|two-factor|2fa|granular|cannot be unpublished|otp|one-time' | head -1)
+    [ -n "$reason" ] || reason=$(printf '%s\n' "$out" | grep -m1 -E 'npm error (403|404|E[0-9]{3})' | head -1)
     echo "STUCK    @xmbl/$p@0.2.0 :: ${reason:-$(printf '%s' "$out" | head -1)}"
     stuck=$((stuck+1))
   fi
