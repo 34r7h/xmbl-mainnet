@@ -23,13 +23,19 @@
 # Window closes 2026-09-24T03:06:14Z.
 set -uo pipefail
 
-ORDER="consensus storage-compute cubic-ledger identity networking simulator state-machine zero-knowledge"
+# THREE PASSES. The registry's dependents index lags a removal by minutes, so a package whose only
+# blocker was unpublished earlier in the same run can still be refused on that pass and go through
+# on the next. The 2026-09-22 runs were single-pass.
+ORDER="networking simulator state-machine zero-knowledge consensus storage-compute cubic-ledger identity"
+PASSES=3
 
 RUNDIR=$(mktemp -d); trap 'rm -rf "$RUNDIR"' EXIT; cd "$RUNDIR"
 echo "whoami: $(npm whoami 2>&1)"
 echo ">>> A BROWSER TAB OPENS PER PACKAGE. Approve each with Touch ID. <<<"
 echo
 
+for pass in $(seq 1 $PASSES); do
+echo "=== pass $pass/$PASSES ==="
 for p in $ORDER; do
   # Skip anything already gone, so a re-run is safe.
   has=$(curl -s "https://registry.npmjs.org/@xmbl/$p?cb=$RANDOM" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(j.versions&&j.versions['0.2.0']?'1':'0')}catch(e){process.stdout.write('1')}})")
@@ -46,6 +52,9 @@ for p in $ORDER; do
   done
   wait "$job"
   grep -ahoE 'You can no longer unpublish|has dependent packages|E[0-9]{3}' "$RUNDIR/$p.out" | head -2 | sed 's/^/    /'
+done
+# let the dependents index settle before trying the ones that were refused again
+[ "$pass" = "$PASSES" ] || { echo "    settling 120s"; sleep 120; }
 done
 
 # COUNT AFTER — the registry's version list decides this, not exit codes.
