@@ -24,17 +24,27 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      # IDEMPOTENT. Re-deprecating a version with the string it already carries is a no-op write
+      # that npm rejects with 422 Unprocessable Entity, which failed this job on its second run
+      # even though nothing was wrong. This job runs after EVERY release, so it has to be safe to
+      # run when the tombstone is already correct: read the current string first and only write
+      # when the text would actually change.
       - name: rewrite the 0.2.0 deprecation to point at the live latest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          wrote=0; already=0
           for p in cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge; do
             latest=$(npm view "@xmbl/$p" dist-tags.latest)
-            npm deprecate "@xmbl/$p@0.2.0" \
-              "DO NOT USE. 0.2.0 was published by mistake and is not part of this version line; it cannot be unpublished (npm 2FA). It is the highest version number but NOT the newest code. The current release is $latest -- install @xmbl/$p@latest."
-            echo "tombstoned @xmbl/$p@0.2.0 -> points at $latest"
+            want="DO NOT USE. 0.2.0 was published by mistake and is not part of this version line; it cannot be unpublished (npm 2FA). It is the highest version number but NOT the newest code. The current release is $latest -- install @xmbl/$p@latest."
+            have=$(curl -s "https://registry.npmjs.org/@xmbl/$p?cb=$RANDOM" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(String(j.versions['0.2.0']?.deprecated||''))})")
+            if [ "$have" = "$want" ]; then echo "already current  @xmbl/$p (-> $latest)"; already=$((already+1)); continue; fi
+            npm deprecate "@xmbl/$p@0.2.0" "$want"
+            echo "tombstoned       @xmbl/$p@0.2.0 -> points at $latest"
+            wrote=$((wrote+1))
           done
+          echo "---- wrote=$wrote already-current=$already ----"
       # The registry serves a cached packument for a minute or two after a deprecate, so a read taken
       # immediately can still show the previous string — the first run of this job reported 8/12 for
       # exactly that reason while all twelve writes had in fact succeeded. Poll with cache-busting
