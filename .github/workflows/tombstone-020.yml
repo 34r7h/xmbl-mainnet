@@ -1,15 +1,15 @@
 name: Tombstone 0.2.0
 
-# 0.2.0 was published in error. It CANNOT be removed: `npm unpublish` returns E403 on all twelve
-# packages even with the live CI token — "Granular access tokens that bypass two-factor
-# authentication may not perform this action" — and no automation credential can satisfy an
-# interactive 2FA challenge. Measured 2026-09-22: removed=0, stuck=12.
+# 0.2.0 was published in error. On 2026-09-22 it was REMOVED from four packages — cli, contracts,
+# core, lng — from a passkey-authenticated session. The other eight refuse with
+#   405 You can no longer unpublish this package. Failed criteria: has dependent packages
+# because this project's own 0.1.16 line depends on them; two passes in dependency order changed
+# nothing, so the block is real and unpublishing the shipping release is the only way round it.
 #
-# So 0.2.0 stays SEMVER-MAX forever, and anything that reads a version list rather than a dist-tag
-# sees it above the real latest. The only lever left is the deprecation string, which rides in the
-# packument next to the version itself. This job rewrites it to say, in the place a reader is
-# already looking, exactly what the version is and what to use instead — and it re-points at the
-# CURRENT latest rather than the stale 0.1.12 the first pass wrote.
+# On those eight 0.2.0 stays SEMVER-MAX, and anything reading a version list rather than a
+# dist-tag sees it above the real latest. The deprecation string is the only remaining lever: it
+# rides in the packument next to the version itself. This job keeps it pointing at the CURRENT
+# latest rather than a stale version.
 #
 # Re-run this whenever the line moves, so the tombstone never points at an old version.
 on:
@@ -34,17 +34,22 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          wrote=0; already=0
+          wrote=0; already=0; absent=0
+          # Only the packages that still CARRY 0.2.0 can be deprecated; `npm deprecate` on a
+          # version that no longer exists fails the job. Four were successfully unpublished, so
+          # the list is discovered per run rather than hard-coded.
           for p in cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge; do
+            exists=$(curl -s "https://registry.npmjs.org/@xmbl/$p?cb=$RANDOM" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(j.versions&&j.versions['0.2.0']?'1':'0')})")
+            [ "$exists" = "1" ] || { echo "gone, nothing to tombstone  @xmbl/$p"; absent=$((absent+1)); continue; }
             latest=$(npm view "@xmbl/$p" dist-tags.latest)
-            want="DO NOT USE. 0.2.0 was published by mistake and is not part of this version line; it cannot be unpublished (npm 2FA). It is the highest version number but NOT the newest code. The current release is $latest -- install @xmbl/$p@latest."
+            want="DO NOT USE. 0.2.0 was published by mistake and is not part of this version line; npm will not unpublish it because published packages depend on it. It is the highest version number but NOT the newest code. The current release is $latest -- install @xmbl/$p@latest."
             have=$(curl -s "https://registry.npmjs.org/@xmbl/$p?cb=$RANDOM" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(String(j.versions['0.2.0']?.deprecated||''))})")
             if [ "$have" = "$want" ]; then echo "already current  @xmbl/$p (-> $latest)"; already=$((already+1)); continue; fi
             npm deprecate "@xmbl/$p@0.2.0" "$want"
             echo "tombstoned       @xmbl/$p@0.2.0 -> points at $latest"
             wrote=$((wrote+1))
           done
-          echo "---- wrote=$wrote already-current=$already ----"
+          echo "---- wrote=$wrote already-current=$already unpublished=$absent ----"
       # The registry serves a cached packument for a minute or two after a deprecate, so a read taken
       # immediately can still show the previous string — the first run of this job reported 8/12 for
       # exactly that reason while all twelve writes had in fact succeeded. Poll with cache-busting
@@ -52,14 +57,16 @@ jobs:
       - name: COUNT AFTER — read the message back off the registry
         run: |
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            ok=0; missing=""
+            ok=0; live=0; missing=""
             for p in cli consensus contracts core cubic-ledger identity lng networking simulator state-machine storage-compute zero-knowledge; do
-              msg=$(curl -s "https://registry.npmjs.org/@xmbl/$p?cb=$RANDOM$attempt" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(String(j.versions['0.2.0']?.deprecated||''))})")
+              msg=$(curl -s "https://registry.npmjs.org/@xmbl/$p?cb=$RANDOM$attempt" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);const v=j.versions&&j.versions['0.2.0'];process.stdout.write(v?String(v.deprecated||'UNDEPRECATED'):'ABSENT')})")
+              [ "$msg" = ABSENT ] && continue
+              live=$((live+1))
               case "$msg" in "DO NOT USE."*) ok=$((ok+1));; *) missing="$missing @xmbl/$p";; esac
             done
-            echo "attempt $attempt: tombstoned $ok/12${missing:+ — still stale:$missing}"
-            [ "$ok" = 12 ] && break
+            echo "attempt $attempt: tombstoned $ok/$live still carrying 0.2.0${missing:+ — stale:$missing}"
+            [ "$ok" = "$live" ] && break
             sleep 30
           done
-          echo "---- tombstoned $ok/12 ----"
-          [ "$ok" = 12 ]
+          echo "---- tombstoned $ok/$live (the other $((12-live)) no longer carry 0.2.0 at all) ----"
+          [ "$ok" = "$live" ]
