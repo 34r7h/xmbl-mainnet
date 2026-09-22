@@ -1,7 +1,7 @@
 name: Release
 
 # Tag-driven, dual-registry release. Push a semver tag to cut a release:
-#   git tag v0.2.0 && git push origin v0.2.0
+#   git tag v0.1.17 && git push origin v0.1.17
 # Publishes every @xmbl/* package to npm and every xmbl-* crate to crates.io at the
 # tagged version, then attaches cross-platform build artifacts to a GitHub Release.
 on:

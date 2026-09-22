@@ -12,6 +12,41 @@ ok('0.1.11 == v0.1.11', compareVersions('0.1.11', 'v0.1.11') === 0);
 ok('0.2.0 > 0.1.99', compareVersions('0.2.0', '0.1.99') > 0);
 ok('garbage sorts lowest', compareVersions('nope', '0.0.1') < 0 && compareVersions('0.0.1', undefined) > 0);
 
+// THE VERSION LINE IS 0.1.x AND ONLY THE OPERATOR MOVES IT. On 2026-09-21 `npm run version` computed
+// 1.0.0 from the accumulated changesets, that was overridden to 0.2.0 by hand, tagged, and the tag
+// published all twelve packages at 0.2.0 to npm — a minor bump nobody had asked for, announcing a
+// milestone that had not happened. It cannot be unpublished (npm requires interactive 2FA, which no
+// CI token has), so 0.2.0 is on the registry permanently and is the highest version @xmbl/* has.
+//
+// This check is the thing that was missing: every workspace version must be on the 0.1.x line, so a
+// bump past it fails `npm run test:protocol` — which the release workflow runs BEFORE it publishes —
+// instead of being discovered on the registry afterwards. Raising the line is a deliberate edit to
+// LINE_MAJOR/LINE_MINOR here, by the operator, in the same commit that raises the versions.
+{
+  const LINE_MAJOR = 0, LINE_MINOR = 1;
+  const { readFileSync } = await import('node:fs');
+  const { execSync } = await import('node:child_process');
+  const root = new URL('../../', import.meta.url).pathname;
+  const manifests = execSync('git ls-files "**/package.json" package.json', { cwd: root, encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean);
+  const offenders = [];
+  let checked = 0;
+  for (const rel of manifests) {
+    let j; try { j = JSON.parse(readFileSync(root + rel, 'utf8')); } catch { continue; }
+    if (!j.version || j.private) continue;            // private workspaces are not published
+    checked++;
+    const [maj, min] = j.version.split('.').map(Number);
+    if (maj !== LINE_MAJOR || min !== LINE_MINOR) offenders.push(`${j.name}@${j.version}`);
+  }
+  ok(`all ${checked} published workspaces are on the ${LINE_MAJOR}.${LINE_MINOR}.x line`
+    + (offenders.length ? ' — OFF LINE: ' + offenders.join(', ') : ''), offenders.length === 0);
+  // and the crates move with them
+  const cargo = readFileSync(root + 'Cargo.toml', 'utf8');
+  const cv = (cargo.match(/^version = "([^"]+)"/m) || [])[1];
+  const [cmaj, cmin] = String(cv).split('.').map(Number);
+  ok(`Cargo workspace version ${cv} is on the same line`, cmaj === LINE_MAJOR && cmin === LINE_MINOR);
+}
+
 // otaDecision: behind only when a real latest is newer
 ok('behind when latest is newer', otaDecision({ running: '0.1.11', latest: '0.1.12' }).behind === true);
 ok('not behind when equal', otaDecision({ running: '0.1.11', latest: '0.1.11' }).behind === false);
