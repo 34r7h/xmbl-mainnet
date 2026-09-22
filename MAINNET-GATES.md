@@ -649,6 +649,24 @@ continue-on-error, and in the release workflow before any publish).
       loop) and never re-dials an already-connected seed. Mutations removing the cap, the
       deny-by-default throw, or the self-dial guard each fail the suite. — *connection.js; routing.js;
       discovery.js; own-logic.test.mjs*
+- [x] **WAN PEER DISCOVERY EXISTS.** `peerDiscovery: [mdns()]` was the entire discovery config from
+      the first commit to 0.1.16 — LAN multicast, which cannot cross the internet — so every
+      cross-network peer was found through ONE hardcoded seed multiaddr, and `kadDHT` sat imported
+      at `node.js:5` and called zero times. On 2026-09-20 that seed was re-provisioned onto an
+      ephemeral port under a fresh peer id: the whole fleet dialled a port nothing listened on and
+      NOTHING went red — boxes stayed up, kept beaconing, served `current`, and a star topology
+      cannot report its own partition. Closed at 0.1.17: `services.dht = kadDHT({ protocol:
+      '/xmbl/kad/1.0.0', clientMode: false, peerInfoMapper: passthroughMapper })`, which libp2p
+      registers as a peer-discovery source through the peer-discovery symbol; mdns stays for the LAN.
+      A distinct protocol so the routing table is xmbl nodes and not the public IPFS DHT;
+      passthrough addresses because most of this mesh is reachable only at a `/p2p-circuit` address.
+      The gate asserts it on a STARTED node — a source-level check for the import passed every day
+      this was broken — and reads 1/4 against 0.1.16, 4/4 after. — *node.js; wan-discovery.test.mjs*
+- [ ] ⛔ `GossipManager` (`src/gossip.js`, exported from `index.js`) has never been constructed
+      anywhere but its own test: `grep -rn 'new GossipManager' packages | grep -v '\.test\.'` is
+      empty, and `webtorrent` ^2.8.4 is a dependency every node pays for. Either wire it as the
+      second discovery path it looks built for, or remove it and the dependency — removing a public
+      export is a minor bump, not a patch, so it does not belong in 0.1.17.
 - [ ] ⛔ INTEGRATION/AUDIT (refiled from the row above) — discovery under NAT, gossip fan-out
       rounds, and Kademlia routing-table poisoning resistance are behaviour of libp2p / WebTorrent
       reached through thin wrappers here (this package has no peer routing table of its own), so they

@@ -3,7 +3,7 @@
   "data_dir": "/ABSOLUTE/PATH/TO/node-data",
   "listen_addrs": ["/ip4/0.0.0.0/tcp/0"],
   "bootstrap_peers": [
-    "/ip4/173.255.233.69/tcp/4001/p2p/12D3KooWKKZUR5o8BeSGMNu43gWKWgudWsnZHxoJU4ZYuqjC8nRU"
+    "/ip4/173.255.233.69/tcp/4001/p2p/12D3KooWNZQ1moobpYd44FBKLqj23JcDqTQa4Yp2J5U1BtthyEbV"
   ],
   "announce_addrs": [],
   "roles": { "validate": true, "storage": true, "compute": false, "relay": true, "lead": true },

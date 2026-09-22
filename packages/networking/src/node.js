@@ -2,12 +2,13 @@ import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
 import { webSockets } from '@libp2p/websockets';
 import { WebSockets as WsMatcher, WebSocketsSecure as WssMatcher } from '@multiformats/multiaddr-matcher';
-import { kadDHT } from '@libp2p/kad-dht';
+import { kadDHT, passthroughMapper } from '@libp2p/kad-dht';
 import { floodsub } from '@libp2p/floodsub';
 import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { mdns } from '@libp2p/mdns';
 import { identify } from '@libp2p/identify';
+import { ping } from '@libp2p/ping';
 import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { dcutr } from '@libp2p/dcutr';
 import { multiaddr } from '@multiformats/multiaddr';
@@ -16,6 +17,9 @@ import { EventEmitter } from 'events';
 import { PeerDiscovery } from './discovery.js';
 import { PubSubManager } from './pubsub.js';
 import { ConnectionManager } from './connection.js';
+
+// The mesh's OWN Kademlia namespace — see the dht service in start(). Exported so a test can hold it.
+export const XMBL_KAD_PROTOCOL = '/xmbl/kad/1.0.0';
 
 // @libp2p/websockets' built-in dial/listen filter uses `exactMatch`, which REJECTS any wss multiaddr carrying an
 // `/http-path/...` component ("no valid addresses for peer"). That blocks the ONLY way a NAT'd/firewalled node can
@@ -131,8 +135,35 @@ export class XNNode extends EventEmitter {
 
     const services = {
       identify: identify(),
+      // kad-dht declares @libp2p/ping as a required capability — it pings a bucket's least-recently-seen
+      // peer before evicting it, so without this libp2p refuses to construct the node at all.
+      ping: ping(),
       pubsub: floodsub(),
       dcutr: dcutr(),
+      // ⛔ WAN PEER DISCOVERY. `peerDiscovery: [mdns()]` below is LAN multicast and cannot cross the
+      // internet, so until 0.1.17 the ONLY way a box outside the local segment was ever found was the
+      // hardcoded seed in bootstrap_peers — kadDHT was imported at the top of this file and called zero
+      // times. MEASURED 2026-09-20: the single published seed was re-provisioned onto an ephemeral port
+      // under a fresh peer id, every box in the fleet dialled a port nothing listened on, and nothing
+      // went red anywhere — the boxes stayed up, kept beaconing and served `current` while the mesh was
+      // partitioned. A star topology cannot report its own partition. With a DHT one box changing
+      // address is a non-event: peers ask peers and re-find each other.
+      //
+      // A DISTINCT PROTOCOL, not the default. `/ipfs/kad/1.0.0` is the public IPFS DHT: joining it fills
+      // the routing table with strangers and puts xmbl lookups in a keyspace shared with everyone.
+      //
+      // passthroughMapper, not the default address filter. This is a trusted first-party mesh whose
+      // NAT'd members are reachable ONLY at a `/p2p-circuit` address through the elected relay, and on
+      // sandboxes at private ones; dropping those is dropping most of the fleet.
+      //
+      // clientMode false — a client answers no queries, so a mesh of clients is as unfindable as no DHT
+      // at all. libp2p promotes a node to DHT server once it establishes a publicly dialable address,
+      // which is the same evidence the relay self-election above runs on.
+      dht: kadDHT({
+        protocol: XMBL_KAD_PROTOCOL,
+        clientMode: false,
+        peerInfoMapper: passthroughMapper,
+      }),
     };
     // SELF-ELECTING RELAY SERVER (see isPublicMultiaddr above). '1' forces on, '0' forces off, and a box
     // that can already be dialed elects itself — so the mesh has a relay the moment one public node exists,
@@ -160,6 +191,8 @@ export class XNNode extends EventEmitter {
       transportManager: { faultTolerance: FaultTolerance.NO_FATAL },
       connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
+      // mdns() stays: LAN discovery is not the bug, being LAN-ONLY was. The WAN half is services.dht,
+      // which libp2p registers as a discovery source through the peer-discovery symbol it exposes.
       peerDiscovery: [mdns()],
       services,
     };
