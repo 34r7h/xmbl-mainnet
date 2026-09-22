@@ -15,9 +15,21 @@ echo "whoami: $(npm whoami 2>&1)"
 echo ">>> A BROWSER TAB WILL OPEN TWELVE TIMES. Approve each with Touch ID. <<<"
 echo
 
+# npm prints the auth URL to stderr and redacts it from its own debug log, so it must be caught
+# here or it is unrecoverable. Piping straight to tail also buffers it out of sight, which is how
+# the first run ended up waiting on a browser tab that had never opened. Capture, then open it.
 for p in $PKGS; do
   echo "--- @xmbl/$p@0.2.0 ---"
-  script -q /dev/null npm unpublish "@xmbl/$p@0.2.0" 2>&1 | tail -3
+  ( script -q /dev/null npm unpublish "@xmbl/$p@0.2.0" > "$RUNDIR/$p.out" 2>&1 ) &
+  job=$!
+  for _ in $(seq 1 40); do
+    url=$(grep -ahoE 'https://www\.npmjs\.com/auth/cli/[A-Za-z0-9-]+' "$RUNDIR/$p.out" 2>/dev/null | head -1)
+    [ -n "$url" ] && { open "$url"; echo "    browser opened — approve with Touch ID"; break; }
+    kill -0 "$job" 2>/dev/null || break
+    sleep 1
+  done
+  wait "$job"
+  tail -3 "$RUNDIR/$p.out"
 done
 
 # COUNT AFTER — the registry's version list is the only thing that settles this.
