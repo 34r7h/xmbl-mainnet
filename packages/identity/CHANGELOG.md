@@ -1,5 +1,32 @@
 # @xmbl/identity
 
+## 0.1.18
+
+### Patch Changes
+
+- **Chain-agnostic settlement (`settlement.js`)** — the operator's ruling of 2026-09-24: value stays
+  under the control of KEYS, and XMBL enforces who the key releases to. `sealChainKey` mints a fresh
+  account key for `solana`, `evm`, `sui` or `bitcoin` and seals it to a payee's XMBL identity, with
+  the authorizing contract bound into the AAD; `releaseAndSign` opens it and signs a payload in that
+  chain's own format; `verifyRelease` checks it the way that chain would. The secret never leaves
+  `sealChainKey` — a caller gets the ADDRESS to fund and the ENVELOPE to publish, nothing else.
+
+  Chain-specific code is exactly three functions per chain — address derivation, the digest signed,
+  the signature encoding — so nothing about the settling chain reaches XMBL consensus. The address
+  derivations are proven against KNOWN-ANSWER VECTORS from the chains themselves (BIP-173 bech32,
+  BIP-84 P2WPKH, the canonical EVM keypair, base58 leading-zero handling), because a derivation that
+  only agrees with itself will happily send a payout into the void.
+
+  ⛔ **This is a KEY RELEASE, not an escrow the settling chain enforces**, and the distinction is
+  asserted in the suite so it cannot be quietly assumed away: no XMBL signature is verifiable on the
+  EVM (Cubic-SIG uses the secp256k1 field but is not ECDSA; there is no MAYO precompile), so no chain
+  can check an XMBL decision. The residual trust is the sealer — mint per payout and fund with exactly
+  the payout amount. 41 checks in `settlement.test.mjs`.
+
+  Adds `@noble/curves` and `@noble/hashes` as declared dependencies (keccak256, blake2b-256,
+  ripemd160, ed25519 and secp256k1 with recovery — none of which node:crypto provides in the shapes
+  these chains need).
+
 ## 0.1.16
 
 ### Patch Changes

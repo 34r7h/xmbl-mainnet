@@ -1,5 +1,21 @@
 # @xmbl/cubic-ledger
 
+## 0.1.18
+
+### Patch Changes
+
+- **An eviction now survives a canonical rebuild, which it never did.** `this._evicted`'s own comment
+  has claimed since 0.1.9 that the set survives "a restart AND a canonical rebuild" — not clearing the
+  `evicted:` keyspace was only half of that, and `rebuildFromAnchors` never CONSULTED the set, so any
+  feed still carrying an evicted anchor minted the block straight back on the next ~90s convergence
+  tick. All three admission paths refuse it now, the rescue pass included, and the reply carries
+  `evicted_skipped`.
+
+- **An eviction is matched by BOTH of a row's names.** A canonical row carries its `<event>:<hash>`
+  content key AND its mined `xid`, and `evict` accepts either — but the filters built only the content
+  key, so evicting by xid removed the block and let the verkle key return on the next apply.
+  `isEvicted(key)` and `isEvictedRow(row)` are the public predicates every caller now uses.
+
 ## 0.1.16
 
 ### Patch Changes

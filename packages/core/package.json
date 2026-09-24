@@ -1,7 +1,7 @@
 {
   "name": "@xmbl/core",
-  "version": "0.1.17",
-  "description": "XMBL node runtime — orchestrates every protocol module and ships the xmbl-node daemon (control socket, metrics, OTA).",
+  "version": "0.1.18",
+  "description": "XMBL node runtime \u2014 orchestrates every protocol module and ships the xmbl-node daemon (control socket, metrics, OTA).",
   "type": "module",
   "main": "index.js",
   "license": "MIT",

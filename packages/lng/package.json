@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/lng",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -31,7 +31,7 @@
     "url": "https://github.com/34r7h/xmbl-mainnet.git",
     "directory": "packages/lng"
   },
-  "description": "LNG — the XMBL smart-contract language. Interpreter, type checker, determinism gate, and EVM (Solidity) + WASM backends. Zero dependencies; usable standalone.",
+  "description": "LNG \u2014 the XMBL smart-contract language. Interpreter, type checker, determinism gate, and EVM (Solidity) + WASM backends. Zero dependencies; usable standalone.",
   "scripts": {
     "build:browser": "node build-browser.mjs",
     "test": "node ../../scripts/run-node-tests.mjs ."

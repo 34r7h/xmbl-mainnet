@@ -1,7 +1,7 @@
 {
   "name": "@xmbl/storage-compute",
-  "version": "0.1.17",
-  "description": "The XMBL storage and compute market — a hardened WASM runtime for untrusted guests, sharded storage and availability proofs.",
+  "version": "0.1.18",
+  "description": "The XMBL storage and compute market \u2014 a hardened WASM runtime for untrusted guests, sharded storage and availability proofs.",
   "type": "module",
   "main": "index.js",
   "exports": {

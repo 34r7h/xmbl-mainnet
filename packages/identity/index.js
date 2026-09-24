@@ -30,6 +30,10 @@ export {
 } from './src/delegation.js';
 export { DurableNonceRegistry } from './src/durable-nonce-registry.js';
 export { sealSecret, openSecret, sealKeyPair } from './src/seal.js';
+// CHAIN-AGNOSTIC SETTLEMENT (operator, 2026-09-24): value stays under the control of KEYS and XMBL
+// enforces who the key releases to, so one mechanism settles on Solana, EVM, Sui and Bitcoin with no
+// per-chain consensus code and nothing for the settling chain to verify about XMBL.
+export { sealChainKey, releaseAndSign, verifyRelease, chainAddress, CHAINS, SUPPORTED_CHAINS, base58, bech32 } from './src/settlement.js';
 export { MAINNET_N } from './src/cubic-lwe.js';
 
 // Leveled homomorphic encryption (BFV over Z_q[X]/(X^4096+1)) — ciphertexts ADD and MULTIPLY with

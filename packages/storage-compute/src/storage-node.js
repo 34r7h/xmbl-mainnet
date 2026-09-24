@@ -20,6 +20,16 @@ export class StorageNode {
     this.used = 0;
     this.dbPath = options.dbPath || './data/storage';
     this.db = null; // Will be initialized async
+    // DURABILITY IS A THREE-STATE, AND null IS THE POINT. `true`/`false` are only meaningful once _init
+    // has settled; before that the answer is NOT KNOWN, and it must not read as healthy. `this.db` cannot
+    // carry this — `new Level(...)` is assigned SYNCHRONOUSLY and only replaced in the catch AFTER the
+    // await, so a caller that inspected `db` straight after `new` saw a Level handle on a node that was
+    // about to fail. Await ready() (or any async method) before trusting this field.
+    this.durable = null;
+    this.initError = null;
+    // Opt-in to a node that keeps shards in memory only. Nothing implicit sets this: an in-memory node is
+    // something a caller ASKS for, never something it is quietly given (see _init).
+    this.volatile = options.volatile === true;
     this.shards = new Map(); // shardId -> Shard metadata
     this.shardsStored = 0; // cumulative count of shards persisted (metrics: shards_stored)
     this._initPromise = this._init();
@@ -115,6 +125,29 @@ export class StorageNode {
     // Can be used for shard retrieval
   }
 
+  // ⛔ A FAILED OPEN USED TO BE SILENT, AND THAT SILENCE WAS A DATA-LOSS TRAP.
+  //
+  // This catch block used to read, in its entirety: `this.db = new Map()` under the comment "If LevelDB
+  // fails, use in-memory storage". No throw, no flag, no log. The node then behaved EXACTLY like a healthy
+  // one — storeShard returned a shard id, getShard read the bytes back, getUsed() counted them — and every
+  // byte died at the next restart with nothing having said so. A caller could not detect it either: a
+  // write-then-read canary PASSES in this state, because the Map serves the read it just took.
+  //
+  // It is reached by an ordinary operational accident, not an exotic one. LevelDB takes an EXCLUSIVE LOCK
+  // on its directory, so a second node on the same dbPath — two processes from one working directory, or a
+  // deploy whose restart overlaps the outgoing process — degrades one of them to RAM. Both production
+  // callers (packages/core/index.js, packages/desktop-app) pass `config.storage?.dbPath`, which is
+  // routinely undefined and collapses to the shared default './data/storage'.
+  //
+  // AND IT MADE THE NODE LIE TO THE AVAILABILITY PROTOCOL. respondToProbe answers `held: true` with a
+  // valid fresh-nonce proof for bytes that exist only in this process's memory. The proof is sound — the
+  // bytes are there right now — so the mesh correctly concludes the shard is held, and is wrong about the
+  // only thing it asked, which is whether the shard is STORED. A storage market cannot price custody it
+  // cannot distinguish from a cache.
+  //
+  // So: the in-memory path still exists, because a volatile node is a legitimate thing to want, but it is
+  // now something a caller ASKS FOR (`{ volatile: true }`) rather than something it is handed after a
+  // failure it was never told about. Undeclared, a non-durable node refuses to store (see storeShard).
   async _init() {
     try {
       this.db = new Level(this.dbPath, { valueEncoding: 'buffer' });
@@ -130,9 +163,14 @@ export class StorageNode {
           // Skip unreadable metadata rather than fail the whole store.
         }
       }
+      this.durable = true;
     } catch (error) {
-      // If LevelDB fails, use in-memory storage
-      this.db = new Map();
+      this.durable = false;
+      this.initError = error;
+      this.db = new Map();   // the node still FUNCTIONS; what it must never do is pass for durable
+      const why = `${this.dbPath}: ${error?.message || error}`;
+      if (this.volatile) console.warn(`[xsc] storage is in-memory by request (volatile) — ${why}`);
+      else console.error(`[xsc] STORAGE IS NOT DURABLE — ${why}. Shards will NOT survive a restart and storeShard will refuse. A second node on the same dbPath is the usual cause (LevelDB holds an exclusive lock). Pass { volatile: true } to accept in-memory storage deliberately.`);
     }
   }
 
@@ -140,8 +178,33 @@ export class StorageNode {
     await this._initPromise;
   }
 
+  /**
+   * Await initialisation and report what this node actually is. The ONE call a caller needs before it
+   * trusts the rung: `durable` is authoritative here and nowhere earlier, because _init settles async.
+   * Returns { durable, volatile, dbPath, error, used, capacity, shards }.
+   */
+  async ready() {
+    await this._ensureInit();
+    return {
+      durable: this.durable === true,
+      volatile: this.volatile,
+      dbPath: this.dbPath,
+      error: this.initError ? (this.initError.message || String(this.initError)) : null,
+      used: this.used,
+      capacity: this.capacity,
+      shards: this.shards.size,
+    };
+  }
+
   async storeShard(shard, paymentTx = null) {
     await this._ensureInit();
+
+    // "Stored" has to mean stored. Accepting bytes into a store that cannot keep them — and returning a
+    // shard id that says it did — is the failure this guard exists to make impossible; a caller that
+    // genuinely wants a memory-only node declares it and is let through.
+    if (this.durable !== true && !this.volatile) {
+      throw new Error(`Storage not durable (${this.dbPath}${this.initError ? `: ${this.initError.message || this.initError}` : ''}) — refusing to store bytes that will not survive a restart. Pass { volatile: true } to accept in-memory storage deliberately.`);
+    }
     
     // Integration: Verify payment if xpc available
     if (this.xpc && paymentTx) {

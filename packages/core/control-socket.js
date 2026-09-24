@@ -2,7 +2,7 @@ import net from 'net';
 import fs from 'fs';
 import { createHash } from 'crypto';
 import { collectEarnings } from './earnings.js';
-import { sign, VERSION as IDENTITY_VERSION } from '@xmbl/identity';   // the ONE signature seam — a chain claim the broker can verify is signed HERE or nowhere
+import { sign, sealChainKey, SUPPORTED_CHAINS, VERSION as IDENTITY_VERSION } from '@xmbl/identity';   // the ONE signature seam — a chain claim the broker can verify is signed HERE or nowhere
 import { VERSION as NETWORKING_VERSION } from '@xmbl/networking';
 import { VERSION as CUBIC_LEDGER_VERSION, validateXid, micromineTx } from '@xmbl/cubic-ledger';
 import { VERSION as STATE_MACHINE_VERSION } from '@xmbl/state-machine';
@@ -77,8 +77,8 @@ const suspendedReply = (core) => ({ ok: false, suspended: core.suspended, error:
  *
  * Ops: status, peers, wallet, submit_tx, submit_batch, compute_job, roles, detach, leaders, earnings,
  * validations, zk, state_tree, apply_backfill, apply_canonical, rebuild_ledger, evict,
- * ledger_capabilities, identity_status, contract_deploy, contract_call, contracts, addrs, connect,
- * xsc, store_shard, list_cube_keys, chain, publish, subscribe.
+ * ledger_capabilities, identity_status, contract_deploy, contract_call, contracts, settlement_seal,
+ * settlement_chains, addrs, connect, xsc, store_shard, list_cube_keys, chain, publish, subscribe.
  * Every op EXCEPT `subscribe` is a single request/reply (no waiter-hold pattern). `subscribe`
  * holds the connection open and STREAMS one JSON line per received pubsub message (the handoff
  * message-relay transport — see handoff src/xmbl-relay.ts). Every handler is wrapped so a throw
@@ -779,6 +779,60 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
           },
           state_root: (() => { try { return core.xvsm.getStateRoot(); } catch { return null; } })(),
         };
+      }
+      case 'settlement_seal': {
+        // MINT AND SEAL A SETTLEMENT KEY — but only for a payout THIS CHAIN ACTUALLY AUTHORIZED.
+        //
+        // Operator's ruling (2026-09-24): value stays under the control of keys and XMBL enforces who the
+        // key releases to. The RELEASE half is cryptographic and needs no node — only the payee's XMBL
+        // secret key opens the envelope. This op is the MINT half, and it is where the enforcement has to
+        // live: an envelope minted for a decision the chain never made is an ungated key release wearing
+        // an authorization's name. So the authorizing contract must be one this node HOLDS, and when a
+        // state key is named it must be PRESENT in this node's own tree — read here, not taken on trust.
+        //
+        // The secret never exists outside @xmbl/identity's sealChainKey: this op returns the ADDRESS to
+        // fund and the ENVELOPE to publish, so there is no plaintext on this socket to leak or mislay.
+        if (!core.contractHost) return { ok: false, error: 'contracts role not enabled (roles.contracts, which also requires roles.compute)' };
+        if (core.suspended) return suspendedReply(core);
+        const chain = String(req.chain || '');
+        if (!SUPPORTED_CHAINS.includes(chain)) return { ok: false, error: `settlement_seal requires a supported chain (${SUPPORTED_CHAINS.join(', ')})`, chains: SUPPORTED_CHAINS };
+        const contract = req.contract_id || req.contract;
+        if (!contract) return { ok: false, error: 'settlement_seal requires contract_id — the authorization this envelope is bound to' };
+        if (!core.contractHost.contracts.has(contract)) {
+          return { ok: false, error: `settlement_seal: this node does not hold contract ${contract} — it cannot vouch for an authorization it never executed` };
+        }
+        if (!req.receiver || !req.receiver_pk) return { ok: false, error: 'settlement_seal requires receiver (XMBL address) and receiver_pk (the payee Cubic-LWE public key)' };
+        // THE AUTHORIZATION, READ OUT OF THIS NODE'S TREE. `state_key` names the key the contract writes
+        // when it approves. Absent means the contract never approved, and an absent approval must mint
+        // nothing — a seal is not the place to be optimistic.
+        if (req.state_key) {
+          if (!core.xvsm || !core.xvsm.stateTree) return { ok: false, error: 'state machine not initialized — the authorization cannot be read' };
+          if (!core.xvsm.stateTree.state.has(String(req.state_key))) {
+            return { ok: false, error: `settlement_seal: ${req.state_key} is not committed on this node — nothing authorized this payout`, authorized: false };
+          }
+        }
+        const authorization = {
+          contract, method: req.method ?? null, payout_id: req.payout_id ?? null,
+          amount: req.amount != null ? String(req.amount) : null, asset: req.asset ?? null,
+          state_key: req.state_key ?? null,
+        };
+        let minted;
+        try { minted = sealChainKey(chain, reviveBigInts(req.receiver_pk), String(req.receiver), authorization); }
+        catch (e) { return { ok: false, error: `settlement_seal failed: ${e.message}` }; }
+        // Anchor the MINT, never the key: the chain records that a settlement account was created for this
+        // payout and which address it is, so a payout can be audited without anyone holding the secret.
+        const anchored = await anchorContractTx(core, {
+          type: 'state_diff', function: 'settlement_seal',
+          args: { chain, address: minted.address, authorization },
+          contractAddress: contract, caller: String(req.receiver),
+        });
+        return { ok: true, chain, address: minted.address, public_key: minted.publicKey, envelope: minted.envelope, authorization, ...anchored };
+      }
+      case 'settlement_chains': {
+        // WHICH CHAINS THIS NODE CAN SETTLE ON — answered from the running code, so a caller never has to
+        // infer support from a version. One mechanism, four chains; the list is the whole API surface.
+        return { ok: true, chains: SUPPORTED_CHAINS, enforced_by: 'xmbl-seal', escrow_on_chain: false,
+          note: 'key release gated by an XMBL authorization — the settling chain verifies nothing about XMBL' };
       }
       case 'compute_job': {
         if (!core.computeNode) {

@@ -1,12 +1,12 @@
 {
   "name": "@xmbl/zero-knowledge",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "type": "module",
   "main": "index.js",
   "exports": {
     ".": "./index.js"
   },
-  "description": "XZK — experimental, UNAUDITED ZK cube-curve state-commitment (post-quantum, hash-based; composes with MAYO, not CurveSource)",
+  "description": "XZK \u2014 experimental, UNAUDITED ZK cube-curve state-commitment (post-quantum, hash-based; composes with MAYO, not CurveSource)",
   "scripts": {
     "test": "node ../../scripts/run-node-tests.mjs .",
     "selftest": "node src/xzk.js && node src/fri.js"

@@ -215,6 +215,59 @@ await check('⛔ HE/FHE let a contract COMPUTE on sealed values; neither exposes
   assert.ok(!all.some((k) => /decrypt|open/i.test(k)), `no decrypt import may exist on the contract ABI, found ${all.join(', ')}`);
 });
 
+// ── 4. CHAIN-AGNOSTIC MINT, GATED BY THE CHAIN'S OWN AUTHORIZATION ────────────────────────────────
+// The operator's ruling: value stays under the control of keys, XMBL enforces who the key releases to.
+// The RELEASE half is cryptographic (identity/settlement.test.mjs proves it for all four chains). This
+// is the MINT half, where the enforcement has to live — an envelope minted for a decision the chain
+// never made would be an ungated key release wearing an authorization's name.
+const { releaseAndSign, verifyRelease, sealKeyPair: freshPayee } = await import('@xmbl/identity');
+
+await check('settlement_chains names the four chains and states the enforcement honestly', async () => {
+  const r = await call(sockPath, { op: 'settlement_chains' });
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.chains.slice().sort(), ['bitcoin', 'evm', 'solana', 'sui']);
+  assert.strictEqual(r.escrow_on_chain, false, 'this is a key release, and the op must not pretend otherwise');
+});
+
+await check('settlement_seal REFUSES to mint for a contract this node never executed', async () => {
+  const p = freshPayee();
+  const r = await call(sockPath, { op: 'settlement_seal', chain: 'evm', contract_id: 'deadbeefdeadbeef', receiver: 'xmbPAYEE', receiver_pk: p.pk, amount: '250000' });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /does not hold contract/);
+});
+
+await check('settlement_seal REFUSES when the authorizing state key is not committed on this node', async () => {
+  const p = freshPayee();
+  const r = await call(sockPath, { op: 'settlement_seal', chain: 'solana', contract_id: globalThis.__authId,
+    receiver: 'xmbPAYEE', receiver_pk: p.pk, state_key: 'xcl:nope:999', amount: '250000' });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.authorized, false, 'an absent approval must mint nothing');
+});
+
+for (const chain of ['solana', 'evm', 'sui', 'bitcoin']) {
+  await check(`${chain}: an AUTHORIZED payout mints a fundable address and a sealed envelope, and the payee settles with it`, async () => {
+    const p = freshPayee();
+    // The key the ZK-gated contract actually wrote when it authorized, read back out of this node's tree.
+    const stateKey = [...core.xvsm.stateTree.state.keys()].find((k) => k.includes(globalThis.__authId));
+    assert.ok(stateKey, 'the authorization must be committed before anything is minted');
+    const r = await call(sockPath, { op: 'settlement_seal', chain, contract_id: globalThis.__authId,
+      method: 'authorize', payout_id: `p-${chain}`, amount: '250000', asset: 'USDC',
+      receiver: 'xmbPAYEE', receiver_pk: p.pk, state_key: stateKey });
+    assert.strictEqual(r.ok, true, r.error || 'mint failed');
+    assert.ok(r.address && r.envelope, 'an address to fund and an envelope to publish');
+    assert.ok(!JSON.stringify(r).includes('privateKey'), 'no secret may cross this socket');
+    assert.strictEqual(r.anchored, true, 'the mint is on the chain, so a payout is auditable without the key');
+
+    // OUTCOME: the payee — and only the payee — turns that envelope into a valid transaction on `chain`.
+    const payload = JSON.stringify({ chain, to: 'PAYEE', amount: '250000', payout: `p-${chain}` });
+    const stranger = freshPayee();
+    assert.throws(() => releaseAndSign(chain, stranger.sk, r.envelope, payload), /.*/, 'a stranger cannot open it');
+    const released = releaseAndSign(chain, p.sk, r.envelope, payload);
+    assert.strictEqual(released.address, r.address, 'the release settles to the address that was funded');
+    assert.strictEqual(verifyRelease(chain, payload, released.signature, released.publicKey), true, `the signature verifies the way ${chain} checks it`);
+  });
+}
+
 server.close();
 await core.stop?.();
 rmSync(dir, { recursive: true, force: true });

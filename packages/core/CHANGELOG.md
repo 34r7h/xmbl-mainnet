@@ -1,5 +1,42 @@
 # @xmbl/core
 
+## 0.1.18
+
+### Patch Changes
+
+- **Contracts execute on a node.** `ComputeNode` has taken a `contractHost` option since it was
+  written and `runContract()` uses it — `XMBLCore` never passed one, so every deployed node answered
+  "contract execution is not enabled" while @xmbl/contracts' own suite passed throughout (it wires
+  the host itself). XMBLCore now composes a `ContractHost` from the compute role's sandboxed
+  `ComputeRuntime` and the state machine's REAL `VerkleStateTree`, under a new `roles.contracts`.
+  `contracts: true` without `compute: true` now REFUSES to start rather than booting half-on.
+
+  New ops: `contract_deploy` (LNG compiled in the daemon, so the bytes anchored are the bytes
+  executed), `contract_call` (a revert is a result with the root unchanged, not a crash), read-only
+  `contracts` (which carries the capability gate and names each host's reachability), plus
+  `settlement_seal` and `settlement_chains`. Deploys anchor as type-4 `contract` blocks carrying the
+  bytecode; calls anchor as type-5 `state_diff` receipts; a restart replays both from the block store.
+
+- **`evict`** — `ledger_capabilities.evicts_invalid_for_good` had advertised `xclt.evict()` since
+  0.1.9 with nothing on the socket able to call it, so the only way to drop a named anchor was
+  `rebuild_ledger`, which wipes the block store — the one operation a node answering
+  `rescues_non_anchor_blocks:false` must never be given. `evict {keys:[…]}` removes named anchors
+  from the ledger, the verkle tree and the durable `diff:` row, reporting `was_present` read BEFORE
+  the delete. Gated by `ledger_capabilities.capabilities.evict_op`.
+
+- **Fixed: a replayed contract read back zero for every field.** A deploy entry's `slots`/`byteKeys`
+  ARE the state footprint the host stages a read-set from, and they start empty — measured, a counter
+  committed at 7 answered `bump(1)` with 1 after a restart while its values sat correct in the tree.
+  `replayContracts` now re-registers the footprint from the `state_diff` receipts.
+
+- **Fixed: a zk/he/fhe contract was not drivable over the control socket at all.** The staged material
+  is full of 256-bit BigInts and the protocol is one JSON line, which `JSON.stringify` throws on.
+  Tagged `{"__bigint__":"123"}` is revived on every staged surface, reusing Block.serialize's convention.
+
+- **Refused: `lng_source` with `zk_host`/`he_host`/`fhe_host`/`air_host`.** XCL binds those imports,
+  but the LNG backend takes only hostState/compose/crypto/utxo and has no such builtin — a `~contract`
+  cannot call them. Deploying the flag anyway would declare a capability the bytes never use.
+
 ## 0.1.16
 
 ### Patch Changes

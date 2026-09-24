@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/desktop-app",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "main": "main/main.js",
   "description": "XMBL Desktop Application",
   "scripts": {

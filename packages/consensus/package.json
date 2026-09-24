@@ -1,7 +1,7 @@
 {
   "name": "@xmbl/consensus",
-  "version": "0.1.17",
-  "description": "XMBL consensus — user-as-validator: staged validation, mempool ingress guard, lead election and seal rounds.",
+  "version": "0.1.18",
+  "description": "XMBL consensus \u2014 user-as-validator: staged validation, mempool ingress guard, lead election and seal rounds.",
   "type": "module",
   "main": "index.js",
   "exports": {

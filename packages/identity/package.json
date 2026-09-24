@@ -1,7 +1,7 @@
 {
   "name": "@xmbl/identity",
-  "version": "0.1.17",
-  "description": "XMBL identity and signatures — MAYO post-quantum signing plus the experimental cube-curve crypto seam.",
+  "version": "0.1.18",
+  "description": "XMBL identity and signatures \u2014 MAYO post-quantum signing plus the experimental cube-curve crypto seam.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -19,7 +19,10 @@
     "url": "https://github.com/34r7h/xmbl-mainnet.git",
     "directory": "packages/identity"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0"
+  },
   "scripts": {
     "test": "node ../../scripts/run-node-tests.mjs ."
   }

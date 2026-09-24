@@ -1,7 +1,7 @@
 {
   "name": "@xmbl/cubic-ledger",
-  "version": "0.1.17",
-  "description": "The XMBL ledger — 9 blocks seal a face, 3 faces seal a cube; deterministic placement, micromine and cube sync.",
+  "version": "0.1.18",
+  "description": "The XMBL ledger \u2014 9 blocks seal a face, 3 faces seal a cube; deterministic placement, micromine and cube sync.",
   "type": "module",
   "main": "index.js",
   "exports": {
