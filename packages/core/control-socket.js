@@ -564,11 +564,11 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
             rescues_non_anchor_blocks: rescues,
             reports_wiped_count: rescues,                                   // same release
             evicts_invalid_for_good: typeof core.xclt.evict === 'function', // 0.1.9+: an invalid tx is refused across restarts
-            // 0.1.17+: the `evict` OP exists on this socket, so a caller can actually reach that method.
+            // 0.1.18+: the `evict` OP exists on this socket, so a caller can actually reach that method.
             // Until this release `evicts_invalid_for_good` advertised a capability nothing could invoke —
             // the coordinator gates XMBL_XOPS on this flag, so it must answer for the OP, not the method.
             evict_op: true,
-            // 0.1.17+: an evicted key is refused by rebuildFromAnchors too, so a canonical feed that still
+            // 0.1.18+: an evicted key is refused by rebuildFromAnchors too, so a canonical feed that still
             // carries the anchor cannot mint it back on the next convergence tick.
             eviction_survives_rebuild: true,
             content_addressed_block_ids: semverGte(v, '0.1.9'),
