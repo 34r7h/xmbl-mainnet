@@ -467,13 +467,14 @@ export class Ledger extends EventEmitter {
     // the whole point of the primitive.
     const held = this.blocks.size + (Array.isArray(this._membershipPool) ? this._membershipPool.length : 0);
     if (held > 0) {
-      let wouldRebuild = 0, dryUntyped = 0, dryRejected = 0;
+      let wouldRebuild = 0, dryUntyped = 0, dryRejected = 0, dryEvicted = 0;
       const dryKeys = new Set();
       for (const a of list) {
         if (!a || !a.event || !a.hash) continue;
         const k = `${a.event}:${a.hash}`;
         if (dryKeys.has(k)) continue;
         dryKeys.add(k);
+        if (this._evicted.has(k)) { dryEvicted++; continue; }   // an evicted anchor is not a block this rebuild would produce
         if (typeof a.xid !== 'string' || !a.xid) { dryUntyped++; continue; }
         const probe = { type: 'anchor', event: a.event, hash: a.hash, ts: a.ts ?? 0, xid: a.xid, nonce: a.nonce, prior: typeof a.prior === 'string' ? a.prior : undefined };
         if (probe.prior === undefined) delete probe.prior;
@@ -482,7 +483,7 @@ export class Ledger extends EventEmitter {
       if (wouldRebuild === 0) {
         const reason = `refusing to rebuild: the ${list.length} anchor(s) offered rebuild to 0 blocks (${dryUntyped} untyped, ${dryRejected} rejected) while this ledger holds ${held} — that is a wipe, not a rebuild. This node requires anchors typed by their xid; ask the broker for the epoch-scoped feed (?from_epoch=1) or check ledger_capabilities.requires_typed_anchors first.`;
         console.warn(`[XCLT] ${reason}`);
-        return { refused: 'would-empty-the-chain', reason, requested: list.length, would_rebuild: 0, untyped: dryUntyped, rejected: dryRejected, blocks_held: held, anchors: [], faces_sealed: 0, wiped: 0, cubes: this.cubes.size };
+        return { refused: 'would-empty-the-chain', reason, requested: list.length, would_rebuild: 0, untyped: dryUntyped, rejected: dryRejected, evicted_skipped: dryEvicted, blocks_held: held, anchors: [], faces_sealed: 0, wiped: 0, cubes: this.cubes.size };
       }
     }
 
@@ -503,12 +504,17 @@ export class Ledger extends EventEmitter {
     // set and the same local txs still rebuild to the same chain.
     const preserved = [];
     let wipedBlocks = 0;
+    let evictedSkipped = 0;   // anchors AND rescued txs refused by the durable `evicted:` set, counted once for the reply
     if (this._dbOpen) {
       try {
         for await (const [, value] of this.db.iterator({ gte: 'block:', lt: 'block;' })) {
           wipedBlocks++;
           let raw; try { raw = JSON.parse(value.toString()); } catch { continue; }
           if (!raw || !raw.tx || raw.tx.type === 'anchor') continue;
+          // An evicted tx is not rescued — the rescue exists to save state the canonical set cannot describe,
+          // not to carry a row this node has already ruled out back across the wipe.
+          const rk = contentKey(raw.tx);
+          if (rk && this._evicted.has(rk)) { evictedSkipped++; continue; }
           let b; try { b = Block.deserialize(value.toString()); } catch { continue; /* unreadable row, leave it */ }
           // RESTORE THE BLOCK'S OWN TIME, NEVER THIS NODE'S CLOCK. Rows written before Block.serialize()
           // carried `timestamp` have no timestamp field at all, and Block's constructor defaults an absent
@@ -567,6 +573,12 @@ export class Ledger extends EventEmitter {
       const k = `${a.event}:${a.hash}`;
       if (seen.has(k)) continue;
       seen.add(k);
+      // ⛔ AN EVICTION THAT A REBUILD UNDOES IS NOT AN EVICTION. The `evicted:` keyspace is deliberately not
+      // cleared by the wipe below — the comment on `this._evicted` has always claimed the set survives a
+      // canonical rebuild — but this loop never CONSULTED it, so a feed that still carried the anchor minted
+      // the block straight back on the next ~90s convergence tick. Every one of the three admission paths
+      // (addTransaction, addSealedBatch, and this) must refuse an evicted key, or the other two are theatre.
+      if (this._evicted.has(k)) { evictedSkipped++; continue; }
       uniq.push(a);
     }
     uniq.sort((x, y) => (x.hash < y.hash ? -1 : x.hash > y.hash ? 1 : (x.event < y.event ? -1 : x.event > y.event ? 1 : 0)));
@@ -616,11 +628,12 @@ export class Ledger extends EventEmitter {
     // with no prune, rebuild, compact or delete entry in node.log or coordinator.log. A box can lose most of
     // its ledger invisibly. This is the only place that knows both numbers, so it is the place to print them.
     console.log(`[XCLT] canonical rebuild: wiped ${wipedBlocks} block row(s), rebuilt ${rebuilt} of ${uniq.length} anchor(s) `
-      + `(${untyped} untyped, ${rejected} rejected), preserved ${preserved.length} non-anchor block(s), sealed ${faces} face(s), ${this.cubes.size} cube(s)`);
+      + `(${untyped} untyped, ${rejected} rejected, ${evictedSkipped} evicted), preserved ${preserved.length} non-anchor block(s), sealed ${faces} face(s), ${this.cubes.size} cube(s)`);
     return {
       anchors: rebuilt,
       untyped,
       rejected,
+      evicted_skipped: evictedSkipped,
       blocks: this.blocks.size,
       wiped: wipedBlocks,
       preserved: preserved.length,
@@ -628,6 +641,21 @@ export class Ledger extends EventEmitter {
       cubes: this.cubes.size,
       pooled: this._membershipPool.length,
     };
+  }
+
+  /**
+   * IS THIS CONTENT KEY EVICTED? The public predicate over the durable `evicted:` set, so a caller that is
+   * about to apply anchors SOMEWHERE ELSE — the verkle tree, most of all — can refuse the same rows this
+   * ledger refuses. Without it the two stores disagree by construction: `rebuild_ledger` declines to mint an
+   * evicted anchor as a block and then hands the SAME unfiltered list to xvsm.rebuildFromCanonical, which
+   * knows nothing about eviction and writes the key straight back. MEASURED before this existed: the key was
+   * absent from the ledger and present in the tree after one convergence tick.
+   * Accepts `<event>:<hash>`, `anchor:<event>:<hash>`, or `xid:<xid>`.
+   */
+  isEvicted(key) {
+    if (typeof key !== 'string' || !key) return false;
+    if (this._evicted.has(key)) return true;
+    return key.startsWith('anchor:') && this._evicted.has(key.slice('anchor:'.length));
   }
 
   // ---- CONSENSUS-V2 (2b) seal hooks. STATE lives here; the SealRoundManager (in core, with the gossip) injects

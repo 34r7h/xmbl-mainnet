@@ -76,8 +76,9 @@ const suspendedReply = (core) => ({ ok: false, suspended: core.suspended, error:
  * Bad JSON on a line is ignored (matches the coordinator).
  *
  * Ops: status, peers, wallet, submit_tx, submit_batch, compute_job, roles, detach, leaders, earnings,
- * validations, zk, state_tree, apply_backfill, apply_canonical, rebuild_ledger, ledger_capabilities,
- * identity_status, addrs, connect, xsc, store_shard, list_cube_keys, chain, publish, subscribe.
+ * validations, zk, state_tree, apply_backfill, apply_canonical, rebuild_ledger, evict,
+ * ledger_capabilities, identity_status, addrs, connect, xsc, store_shard, list_cube_keys, chain,
+ * publish, subscribe.
  * Every op EXCEPT `subscribe` is a single request/reply (no waiter-hold pattern). `subscribe`
  * holds the connection open and STREAMS one JSON line per received pubsub message (the handoff
  * message-relay transport — see handoff src/xmbl-relay.ts). Every handler is wrapped so a throw
@@ -86,6 +87,9 @@ const suspendedReply = (core) => ({ ok: false, suspended: core.suspended, error:
 
 const SUBMIT_TIMEOUT_MS = 5000;
 const SUBMIT_BATCH_MAX = 500;   // one control request must stay bounded; a drainer pages beyond this
+// Same bound for `evict`: each key costs a full `block:` keyspace scan in xclt.evict, so a caller with
+// 1,158 keys to remove pages them rather than holding the daemon in one request.
+const EVICT_MAX = 500;
 
 // The one reply for "the node admitted nothing" — used by submit_tx and per-entry by submit_batch.
 const rejectedAtIngress = () => ({
@@ -100,6 +104,23 @@ function semverGte(a, b) {
   const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0); }
   return true;
+}
+
+// DROP THE EVICTED ROWS BEFORE THEY REACH THE TREE. The verkle state machine has no eviction set — eviction
+// is a LEDGER fact — so a canonical set handed straight to xvsm.rebuildFromCanonical re-inserts every key this
+// node has already ruled out. MEASURED (evict-op.test.mjs, before this existed): after one rebuild from a
+// stale feed the evicted anchors were absent from the ledger and PRESENT in the tree, i.e. the two stores
+// disagreed and the state root committed the disagreement. Both ops that apply a canonical set filter here.
+function dropEvicted(core, anchors) {
+  const xclt = core && core.xclt;
+  if (!xclt || typeof xclt.isEvicted !== 'function') return { kept: anchors, dropped: 0 };
+  const kept = [];
+  let dropped = 0;
+  for (const a of anchors) {
+    if (a && a.event && a.hash && xclt.isEvicted(`${a.event}:${a.hash}`)) { dropped++; continue; }
+    kept.push(a);
+  }
+  return { kept, dropped };
 }
 
 function withTimeout(promise, ms, label) {
@@ -275,8 +296,11 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         const anchors = Array.isArray(req.anchors) ? req.anchors : [];
         if (!anchors.length) return { ok: false, error: 'apply_canonical requires anchors[]' };
         const before = (() => { try { return core.xvsm.getStateRoot(); } catch { return null; } })();
-        const r = await core.xvsm.rebuildFromCanonical(anchors);
-        return { ok: r.started !== false, state_root_before: before, ...r };
+        // An evicted anchor is not adopted just because the broker's set still names it — and THIS is the op
+        // a node that cannot survive a wipe is driven by, so it is the one that most needs the filter.
+        const { kept, dropped } = dropEvicted(core, anchors);
+        const r = await core.xvsm.rebuildFromCanonical(kept);
+        return { ok: r.started !== false, state_root_before: before, evicted_skipped: dropped, ...r };
       }
       case 'rebuild_ledger': {
         // Rebuild BOTH the cube ledger (xclt) AND the verkle state (xvsm) as pure functions of the broker's
@@ -297,7 +321,10 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         if (ledger && ledger.refused) return { ok: false, error: ledger.reason, ...ledger };
         let state_root = null;
         if (core.xvsm && typeof core.xvsm.rebuildFromCanonical === 'function') {
-          try { const s = await core.xvsm.rebuildFromCanonical(anchors); state_root = s && s.state_root; } catch { /* state parity is best-effort */ }
+          // The SAME filter the ledger just applied. Handing the unfiltered list here is what put an evicted
+          // anchor back in the tree while the ledger correctly refused it.
+          const { kept } = dropEvicted(core, anchors);
+          try { const s = await core.xvsm.rebuildFromCanonical(kept); state_root = s && s.state_root; } catch { /* state parity is best-effort */ }
         }
         // `faces_sealed_since_boot` (the UI's FACES SEALED tile) reads core.leadBatchesSealed — the seal-round
         // counter. A deterministic rebuild seals faces outside that path, so set the counter to the rebuilt
@@ -306,6 +333,66 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         try { core.leadBatchesSealed = ledger.faces_sealed; } catch { /* counter is advisory */ }
         core._chainCounts = null;   // force `chain` to re-scan the freshly-sealed ledger
         return { ok: true, ...ledger, state_root };
+      }
+      case 'evict': {
+        // REMOVE NAMED ANCHORS AND NOTHING ELSE. `rebuild_ledger` is the only other way to drop an anchor a
+        // node holds, and it gets there by wiping the whole block store — which is precisely the operation a
+        // node answering `rescues_non_anchor_blocks: false` must never be given. So the nodes that most need
+        // a specific row removed were the nodes with no way to remove it, and `ledger_capabilities` has been
+        // advertising `evicts_invalid_for_good: true` for a method nothing on this socket could call.
+        //
+        // The removal is in THREE places because a row left in any one of them comes back:
+        //   1. the ledger — block row, membership pool, anchor-dedup set, and the durable `evicted:` key that
+        //      makes every later admission path refuse it (a resubmission, a sealed batch, AND a canonical
+        //      rebuild whose feed still carries the anchor);
+        //   2. the verkle tree — the `anchor:<event>:<hash>` key itself, or the state root does not move;
+        //   3. the `diff:` row behind that key, or the next boot replays it into an empty tree.
+        // Takes `keys: [...]` in either spelling — `anchor:<event>:<hash>` (what the state tree calls it) or
+        // the bare `<event>:<hash>` content key (what the ledger calls it) — because a caller holding one
+        // should not have to know the other. Reports what it ACTUALLY removed per key, never a claim: a key
+        // this node never held comes back `was_present: false`, which is a legitimate and different answer
+        // from a failure.
+        if (!core.xclt) return { ok: false, error: 'ledger not initialized' };
+        if (typeof core.xclt.evict !== 'function') {
+          return { ok: false, error: 'this node predates evict — reinstall the node bundle' };
+        }
+        const raw = Array.isArray(req.keys) ? req.keys : (req.key ? [req.key] : null);
+        if (!raw || !raw.length) return { ok: false, error: 'evict requires keys[] (anchor:<event>:<hash> or <event>:<hash>)' };
+        if (raw.length > EVICT_MAX) return { ok: false, error: `evict capped at ${EVICT_MAX} keys per call (got ${raw.length})` };
+        const before = (() => { try { return core.xvsm ? core.xvsm.getStateRoot() : null; } catch { return null; } })();
+        const results = [];
+        let evicted = 0, blocksDeleted = 0, wasPresent = 0;
+        for (const k of raw) {
+          if (typeof k !== 'string' || !k) { results.push({ key: k, evicted: false, block_deleted: 0, was_present: null, error: 'not a key' }); continue; }
+          // ONE key, TWO spellings. `anchor:` is the state-tree prefix; the ledger's content key is what
+          // follows it. Normalise both ways so each store is addressed the way it names things.
+          const contentKey = k.startsWith('anchor:') ? k.slice('anchor:'.length) : k;
+          const stateKey = k.startsWith('anchor:') ? k : (k.startsWith('xid:') ? null : `anchor:${k}`);
+          const entry = { key: k, content_key: contentKey, state_key: stateKey };
+          try {
+            const r = await withTimeout(core.xclt.evict(contentKey, req.reason || 'operator eviction'), SUBMIT_TIMEOUT_MS, 'evict');
+            entry.evicted = !!(r && r.evicted);
+            entry.block_deleted = (r && r.rows_deleted) || 0;
+            if (entry.evicted) evicted++;
+            blocksDeleted += entry.block_deleted;
+          } catch (e) { entry.evicted = false; entry.block_deleted = 0; entry.error = String(e?.message || e); }
+          // The tree half. A node whose state machine never started still evicts from the ledger — say so
+          // with was_present: null rather than reporting a removal that did not happen.
+          if (stateKey && core.xvsm && typeof core.xvsm.forget === 'function') {
+            try {
+              const f = await core.xvsm.forget([stateKey]);
+              entry.was_present = f.keys[0] ? f.keys[0].was_present : null;
+              if (entry.was_present) wasPresent++;
+            } catch (e) { entry.was_present = null; entry.state_error = String(e?.message || e); }
+          } else entry.was_present = null;
+          results.push(entry);
+        }
+        core._chainCounts = null;   // force `chain` to re-scan
+        const after = (() => { try { return core.xvsm ? core.xvsm.getStateRoot() : null; } catch { return null; } })();
+        return {
+          ok: true, requested: raw.length, evicted, blocks_deleted: blocksDeleted, state_keys_present: wasPresent,
+          state_root_before: before, state_root: after, root_moved: before !== after, keys: results,
+        };
       }
       case 'submit_tx': {
         const tx = (req.params && req.params.tx) || req.tx;   // the coordinator spells it params.tx; the CLI, tx
@@ -373,6 +460,13 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
             rescues_non_anchor_blocks: rescues,
             reports_wiped_count: rescues,                                   // same release
             evicts_invalid_for_good: typeof core.xclt.evict === 'function', // 0.1.9+: an invalid tx is refused across restarts
+            // 0.1.17+: the `evict` OP exists on this socket, so a caller can actually reach that method.
+            // Until this release `evicts_invalid_for_good` advertised a capability nothing could invoke —
+            // the coordinator gates XMBL_XOPS on this flag, so it must answer for the OP, not the method.
+            evict_op: true,
+            // 0.1.17+: an evicted key is refused by rebuildFromAnchors too, so a canonical feed that still
+            // carries the anchor cannot mint it back on the next convergence tick.
+            eviction_survives_rebuild: true,
             content_addressed_block_ids: semverGte(v, '0.1.9'),
             rekeys_legacy_rows_on_boot: semverGte(v, '0.1.11'),
             // ⚠ A SECOND VETO, and the one that decides WHICH FEED may be handed to this node. true = this
@@ -487,11 +581,22 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
           // this endpoint exists to make impossible.
           const got = await withTimeout(stor.getShard(shardId), SUBMIT_TIMEOUT_MS, 'get_shard');
           const roundTripped = !!got && Buffer.from(got.data).equals(bytes);
+          // ⛔ THE ROUND TRIP IS NOT A DURABILITY CHECK, AND ON ITS OWN IT IS THE FALSE GREEN THIS OP EXISTS
+          // TO PREVENT. A node whose LevelDB failed to open serves the read it just took out of memory, so
+          // `round_tripped: true` is returned identically by a node that stored the bytes and one that will
+          // lose them at the next restart. storeShard now refuses the undeclared case outright, but a node
+          // running deliberately volatile still passes the round trip — so the answer states which it is.
+          // (packages/storage-compute/src/storage-node.js and its durability.test.mjs.)
+          const dur = typeof stor.ready === 'function' ? await stor.ready() : null;
           return {
             ok: true,
             shard_id: shardId,
             bytes: bytes.length,
             round_tripped: roundTripped,
+            durable: dur ? dur.durable : null,
+            volatile: dur ? dur.volatile : null,
+            storage_path: dur ? dur.dbPath : null,
+            storage_error: dur ? dur.error : null,
             shards_stored_before: before,
             shards_stored_after: stor.shardsStored ?? 0,
             used_bytes_before: usedBefore ?? null,

@@ -357,6 +357,44 @@ export class StateMachine extends EventEmitter {
     return out;
   }
 
+  // FORGET SPECIFIC KEYS — the surgical counterpart to rebuildFromCanonical's wholesale replace. A canonical
+  // rebuild can only drop a key by rebuilding the WHOLE tree from a set that omits it, which is exactly the
+  // operation a node holding un-rescuable blocks is forbidden to run. This removes named keys and nothing
+  // else: the `state:` row (via stateTree.delete), the in-memory diff, and the durable `diff:` row that
+  // _loadDiffs would otherwise replay back into an empty tree on the next boot. Leaving that row behind is
+  // what makes a deletion last until the next restart and no further.
+  //
+  // Returns what it ACTUALLY removed per key, never a claim: `was_present` is read from the tree BEFORE the
+  // delete, so a caller can tell "this node never held it" from "this node held it and now does not".
+  async forget(keys) {
+    const list = Array.isArray(keys) ? keys : [keys];
+    const out = { requested: list.length, removed: 0, absent: 0, keys: [], state_root: null };
+    for (const key of list) {
+      if (typeof key !== 'string' || !key) { out.keys.push({ key, was_present: null, removed: false, error: 'not a key' }); continue; }
+      const was = this.stateTree.state.has(key);
+      try {
+        await this.stateTree.delete(key);
+        // The diff for a single-key change is keyed by the key itself (StateDiff.identity()), so the durable
+        // row is `diff:<key>` — delete it by that name rather than hunting the array for a txId.
+        const at = this._diffIndex.get(key);
+        if (at !== undefined) {
+          this.diffs.splice(at, 1);
+          // Splicing shifts every later index, so the whole index is rebuilt — a stale index is how a later
+          // _recordDiff would overwrite the wrong row.
+          this._diffIndex.clear();
+          this.diffs.forEach((d, i) => this._diffIndex.set(d.identity(), i));
+        }
+        if (this._dbOpen) { try { await this.db.del(`diff:${key}`); } catch { /* already gone */ } }
+        if (was) out.removed++; else out.absent++;
+        out.keys.push({ key, was_present: was, removed: true });
+      } catch (e) {
+        out.keys.push({ key, was_present: was, removed: false, error: String(e?.message || e) });
+      }
+    }
+    out.state_root = this.stateTree.getRoot();
+    return out;
+  }
+
   // COMMIT the state root INTO the cube. Previously this only console.logged it, so a cube carried no state
   // commitment at all and the Verkle root was unverifiable from the chain structure. The root is a pure
   // function of the applied diffs, so two nodes that applied the same finalized set produce the same value —
