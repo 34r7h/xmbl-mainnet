@@ -83,9 +83,22 @@ ok('the masked-composition commitment IS the FRI codeword', fibProof.friC.roots[
   const boundary = [{ row: L - 1, col: 0, value: digest }];
   const proof = prove(ctx, { trace, transitions, boundary });
   ok('knowledge of a 16-round hash-chain preimage verifies', verify(ctx, { proof, transitions, boundary }) === true);
-  const blob = JSON.stringify(proof, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
-  ok('the secret preimage does not appear in the proof', !blob.includes(secret.toString()));
-  ok('no intermediate state of the chain appears either', trace.slice(0, -1).every((r) => !blob.includes(r[0].toString())));
+  // ⛔ THIS WAS A SUBSTRING SEARCH OF THE SERIALIZED PROOF, AND IT WAS A ~1-IN-100 FALSE ALARM.
+  // `secret` is 1234567 — seven decimal digits — and the proof serializes to tens of thousands of
+  // characters of unrelated field elements and 128-bit salts. The digits "1234567" turn up inside
+  // some longer number by pure chance, so the check failed on a randomized proof that leaked
+  // nothing. MEASURED over 1,500 fresh proofs of this exact statement: the SUBSTRING appears in
+  // 8 of them (0.53%, ~1 in 190) while a field element EQUALS the secret in 0 of 1,500. So the old
+  // assertion fired on coincidence about every 190 runs and would not have caught a real leak.
+  // A zero-knowledge assertion that cries wolf is worse than none — the next red one gets waved
+  // through. The property that actually matters is that no field element the proof HANDS OUT is
+  // the secret, which is exact, deterministic, and the shape xzk.test.mjs already uses.
+  const opened = [];
+  const walk = (v) => { if (typeof v === 'bigint') opened.push(v); else if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') Object.values(v).forEach(walk); };
+  walk(proof);
+  ok('the proof hands out real field elements to check against', opened.length > 100);
+  ok('NO field element in the proof equals the secret preimage', !opened.includes(secret));
+  ok('nor any intermediate state of the chain', trace.slice(0, -1).every((r) => !opened.includes(r[0])));
   ok('a different digest is rejected', verify(ctx, { proof, transitions, boundary: [{ row: L - 1, col: 0, value: add(digest, 1n) }] }) === false);
   // the blind out-degrees the DIRECT trace openings, so those cannot determine the column
   ok('the blind out-degrees the direct trace openings', ctx.blindDeg >= 2 * ctx.nc);

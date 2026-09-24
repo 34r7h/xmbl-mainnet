@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/consensus",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "XMBL consensus \u2014 user-as-validator: staged validation, mempool ingress guard, lead election and seal rounds.",
   "type": "module",
   "main": "index.js",
@@ -20,8 +20,8 @@
     "directory": "packages/consensus"
   },
   "dependencies": {
-    "@xmbl/cubic-ledger": "^0.1.12",
-    "@xmbl/identity": "^0.1.12",
+    "@xmbl/cubic-ledger": "^0.1.19",
+    "@xmbl/identity": "^0.1.19",
     "level": "^10.0.0",
     "webtorrent": "^2.8.4"
   },

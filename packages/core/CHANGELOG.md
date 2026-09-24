@@ -1,5 +1,24 @@
 # @xmbl/core
 
+## 0.1.19
+
+### Patch Changes
+
+- **⛔ Fixed a broken resolve that 0.1.18 shipped: a node could install a pair that cannot boot.**
+  `@xmbl/core@0.1.18` imports `sealChainKey` and `SUPPORTED_CHAINS` from `@xmbl/identity` — symbols
+  that exist only from 0.1.18 — while declaring `"@xmbl/identity": "^0.1.12"`. MEASURED against the
+  published packages: `npm i @xmbl/core@0.1.18 @xmbl/identity@0.1.17` then importing
+  `@xmbl/core/control-socket.js` fails with *"does not provide an export named 'SUPPORTED_CHAINS'"*,
+  and the control socket is what the daemon binds at startup — so that resolve is a node that does
+  not start. It did not bite only because npm happened to pick the newest satisfying version; a
+  lockfile, a stale cache, an offline mirror or a deliberate pin all produce the failing pair from
+  the range as written, and the node bundle pins `@xmbl/core` exactly while its transitive ranges float.
+
+  Every `@xmbl/*` range across the workspace now floors at the line version. These packages are ONE
+  version line released in lockstep — no package ever depends on an older sibling's behaviour — so
+  the floor must BE the line. `packages/core/workspace-ranges.test.mjs` fails the hard gate if any
+  workspace dependency floor ever drops below it again.
+
 ## 0.1.18
 
 ### Patch Changes

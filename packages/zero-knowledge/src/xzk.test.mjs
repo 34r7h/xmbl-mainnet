@@ -37,9 +37,9 @@ const derivedX = 99n;
   const wide = [0, 1, 2].map((i) => ({ x: BigInt(21 + i), y: BigInt('0x' + randomBytes(8).toString('hex')) % 2013265921n }));
   const { Pt, derivedY } = blindedCurve(ctx, { publicPoints, secretPoints: wide, derivedX });
   const proof = prove(ctx, { Pt, publicPoints, derivedX, derivedY });
-  const blob = JSON.stringify(proof, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
-  ok('proof does not contain the secret point values (zero-knowledge shape)', wide.every((q) => !blob.includes(q.y.toString())));
-  // exact-value check: no opened field element anywhere in the proof IS a secret y
+  // NO SUBSTRING SEARCH HERE EITHER. A decimal substring of a long serialized proof collides by
+  // chance (see air.test.mjs — measured as a ~1-in-100 false alarm on a proof that leaked nothing);
+  // the exact-value walk below is the property, and it is the only one asserted.
   const opened = [];
   const walk = (v) => { if (typeof v === 'bigint') opened.push(v); else if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') Object.values(v).forEach(walk); };
   walk(proof);

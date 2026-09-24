@@ -1,5 +1,21 @@
 # @xmbl/zero-knowledge
 
+## 0.1.19
+
+### Patch Changes
+
+- **A zero-knowledge leak assertion was a ~1-in-190 false alarm, and it is now exact.** `air.test.mjs`
+  checked that the secret preimage does not leak by searching the SERIALIZED proof for the decimal
+  substring `1234567` — seven digits, against tens of thousands of characters of unrelated field
+  elements and 128-bit salts. MEASURED over 1,500 fresh proofs of the same statement: the substring
+  appears in **8** of them (0.53%) while a field element EQUALS the secret in **0** of 1,500. So it
+  fired on coincidence and could not have caught a real leak. It failed the 0.1.19 gate run and passed
+  standalone on the same commit minutes later, which is exactly how a red result gets waved through.
+
+  Both suites now walk the proof and compare field elements by VALUE — exact, deterministic, and the
+  property that actually matters. The same substring check is removed from `xzk.test.mjs`, which
+  already carried the correct element-wise assertion beside it.
+
 ## 0.1.16
 
 ### Patch Changes
