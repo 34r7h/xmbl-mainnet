@@ -6,6 +6,6 @@
     "/ip4/173.255.233.69/tcp/4001/p2p/12D3KooWNZQ1moobpYd44FBKLqj23JcDqTQa4Yp2J5U1BtthyEbV"
   ],
   "announce_addrs": [],
-  "roles": { "validate": true, "storage": true, "compute": false, "relay": true, "lead": true },
+  "roles": { "validate": true, "storage": true, "compute": false, "relay": true, "lead": true, "contracts": false },
   "resource_caps": { "disk_mb": 1024, "compute_cpu_ms": 10000, "compute_mem_mb": 512 }
 }

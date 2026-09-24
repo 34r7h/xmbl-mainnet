@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@xmbl/consensus": "^0.1.12",
+    "@xmbl/contracts": "^0.1.12",
     "@xmbl/cubic-ledger": "^0.1.12",
     "@xmbl/identity": "^0.1.12",
     "@xmbl/networking": "^0.1.12",

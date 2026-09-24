@@ -77,8 +77,8 @@ const suspendedReply = (core) => ({ ok: false, suspended: core.suspended, error:
  *
  * Ops: status, peers, wallet, submit_tx, submit_batch, compute_job, roles, detach, leaders, earnings,
  * validations, zk, state_tree, apply_backfill, apply_canonical, rebuild_ledger, evict,
- * ledger_capabilities, identity_status, addrs, connect, xsc, store_shard, list_cube_keys, chain,
- * publish, subscribe.
+ * ledger_capabilities, identity_status, contract_deploy, contract_call, contracts, addrs, connect,
+ * xsc, store_shard, list_cube_keys, chain, publish, subscribe.
  * Every op EXCEPT `subscribe` is a single request/reply (no waiter-hold pattern). `subscribe`
  * holds the connection open and STREAMS one JSON line per received pubsub message (the handoff
  * message-relay transport — see handoff src/xmbl-relay.ts). Every handler is wrapped so a throw
@@ -90,6 +90,13 @@ const SUBMIT_BATCH_MAX = 500;   // one control request must stay bounded; a drai
 // Same bound for `evict`: each key costs a full `block:` keyspace scan in xclt.evict, so a caller with
 // 1,158 keys to remove pages them rather than holding the daemon in one request.
 const EVICT_MAX = 500;
+// A contract call runs guest WASM under the compute runtime's own caps, but the CONTROL request must still
+// be bounded — a cascade across frames can legitimately outlast the 5s a submit gets.
+const CONTRACT_CALL_TIMEOUT_MS = 30000;
+// The deploy block CARRIES the module to every node, so the module has to be small enough to be a block.
+// 256 KiB is far above any LNG output (the counter is a few hundred bytes) and far below anything that
+// would make the canonical feed unwieldy.
+const CONTRACT_WASM_MAX = 256 * 1024;
 
 // The one reply for "the node admitted nothing" — used by submit_tx and per-entry by submit_batch.
 const rejectedAtIngress = () => ({
@@ -104,6 +111,75 @@ function semverGte(a, b) {
   const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0); }
   return true;
+}
+
+// ANCHOR A CONTRACT FACT AS A BLOCK. A deploy or a call that lives only in this process is not on the
+// chain: the next restart forgets the contract, and no other node ever learns of it. Mining the xid types
+// the tx (every transaction is typed by its xid, operator 2026-09-16) and admitting it through the ledger's
+// normal door puts it in the same block store the canonical primitives replicate and rebuild.
+//
+// Returns what it ACTUALLY recorded — `anchored:false` plus the reason when the ledger refused — never a
+// claim. A refused anchor does NOT fail the deploy or the call: the state transition already happened in
+// this node's tree, and reporting it as a failure would be a second lie on top of the first.
+async function anchorContractTx(core, tx) {
+  const out = { anchored: false, tx_id: null };
+  if (!core.xclt || typeof core.xclt.addTransaction !== 'function') { out.anchor_error = 'ledger not initialized'; return out; }
+  try {
+    const typed = micromineTx({ ...tx, ts: Date.now() });
+    const r = await withTimeout(core.xclt.addTransaction(typed), SUBMIT_TIMEOUT_MS, 'anchor contract tx');
+    if (r && r.evicted) { out.anchor_error = 'evicted'; return out; }
+    out.anchored = true;
+    out.tx_id = typed.xid;
+    out.duplicate = !!(r && r.duplicate);
+  } catch (e) { out.anchor_error = String(e?.message || e); }
+  return out;
+}
+
+// RE-DEPLOY EVERY CONTRACT THIS CHAIN ALREADY RECORDS. ContractHost keeps its registry in memory, so
+// without this a restart silently forgets every contract and a node that never received the deploy CALL
+// could not execute the contract at all — the chain would hold the deployment and the node would answer
+// "unknown contract". Reads the ledger's own `block:` rows (the same source apply_backfill uses), so it
+// needs no doorbell and no quorum, and it is idempotent: a re-deploy of identical bytes is the same
+// content-addressed id, so replaying twice holds one contract, not two.
+export async function replayContracts(core) {
+  const out = { scanned: 0, deployed: 0, failed: 0, receipts: 0, keys_restored: 0 };
+  if (!core.contractHost || !core.xclt || !core.xclt.db) { out.started = false; return out; }
+  const receipts = [];
+  try {
+    for await (const [, value] of core.xclt.db.iterator({ gte: 'block:', lt: 'block;' })) {
+      let raw; try { raw = JSON.parse(value.toString()); } catch { continue; }
+      const tx = raw && raw.tx;
+      if (!tx) continue;
+      if (tx.type === 'state_diff' && tx.contractAddress && tx.args && Array.isArray(tx.args.writes)) { receipts.push(tx); continue; }
+      if (tx.type !== 'contract' || !tx.bytecode) continue;
+      out.scanned++;
+      try {
+        const bytes = new Uint8Array(Buffer.from(tx.bytecode, 'base64'));
+        const abi = tx.abi && typeof tx.abi === 'object' ? tx.abi : {};
+        core.contractHost.deploy(bytes, Array.isArray(abi.slots) ? abi.slots : [], abi.opts || {});
+        out.deployed++;
+      } catch { out.failed++; }
+    }
+  } catch { /* no blocks yet */ }
+  // ⛔ RESTORING THE CODE IS NOT RESTORING THE CONTRACT. A deploy entry's `slots`/`byteKeys` are the
+  // contract's STATE FOOTPRINT, and the host stages a call's read-set from them — they start EMPTY and
+  // grow only as writes are observed. So a replayed contract read back ZERO for every field while its
+  // committed values sat, untouched and correct, in the Verkle tree: MEASURED, a counter at 7 answered
+  // `bump(1)` with 1 after a restart. The `state_diff` receipts record exactly which keys each call
+  // wrote, so replaying them re-registers the footprint without re-executing anything.
+  out.receipts = receipts.length;
+  for (const r of receipts) {
+    const entry = core.contractHost.contracts.get(r.contractAddress);
+    if (!entry) continue;
+    for (const w of r.args.writes) {
+      if (!w) continue;
+      const target = core.contractHost.contracts.get(w.contract || r.contractAddress);
+      if (!target) continue;
+      if (w.kind === 'bytes' && w.key !== undefined) { target.byteKeys.add(w.key); out.keys_restored++; }
+      else if (w.kind === 'slot' && w.slot !== undefined) { target.slots.add(w.slot | 0); out.keys_restored++; }
+    }
+  }
+  return out;
 }
 
 // DROP THE EVICTED ROWS BEFORE THEY REACH THE TREE. The verkle state machine has no eviction set — eviction
@@ -172,6 +248,16 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
     throw new Error(`control socket ${sockPath} is already owned by a LIVE daemon — refusing to unlink and rebind (that would orphan the running node's socket)`);
   }
   try { fs.rmSync(sockPath, { force: true }); } catch { /* nothing to remove */ }
+
+  // RE-DEPLOY WHAT THE CHAIN ALREADY RECORDS, BEFORE THE FIRST REQUEST IS ANSWERED. Otherwise the very
+  // first `contract_call` after a restart answers "unknown contract" for a contract this node's own block
+  // store holds. Bounded (one scan of `block:`), idempotent (content-addressed ids), and it reports a real
+  // count rather than claiming success — a node with the contracts role off skips it entirely.
+  if (core && core.contractHost) {
+    const replayed = await replayContracts(core);
+    if (replayed.scanned) console.log(`[XCL] replayed ${replayed.deployed} of ${replayed.scanned} contract deployment(s) from the block store`
+      + `, ${replayed.keys_restored} state key(s) re-registered from ${replayed.receipts} receipt(s)${replayed.failed ? `, ${replayed.failed} unreadable` : ''}`);
+  }
 
   async function handleOp(req) {
     switch (req.op) {
@@ -504,6 +590,155 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         }
         const r = await withTimeout(core.xid.verifySigning(), SUBMIT_TIMEOUT_MS, 'identity_status');
         return { ok: true, ...r, source: 'identity.verifySigning()' };
+      }
+      case 'contract_deploy': {
+        // PLACE A CONTRACT ON THIS CHAIN, and record the placement as a block so every node holds it.
+        //
+        // Deployment is content-addressed: id = contractId(wasm bytes), coordinates = a pure function of
+        // the id, so two nodes handed the same bytes place the contract identically with no agreement
+        // step. But ContractHost keeps its registry in MEMORY — a restart forgets every contract, and a
+        // node that never saw the deploy call cannot execute the contract at all. So the deploy is
+        // ANCHORED as a type-4 `contract` tx carrying the bytecode, which makes it part of the chain the
+        // canonical primitives already replicate and re-derive. `replayContracts` re-deploys from those
+        // blocks on boot; a node that never ran this op still ends up holding the contract.
+        //
+        // Takes EITHER `wasm` (base64 of the compiled module) or `lng_source`. LNG is compiled HERE, in
+        // the daemon, so the bytes anchored are the bytes this node executes — compiling on the caller's
+        // side and trusting the upload would make the source and the deployed code two different things.
+        if (!core.contractHost) return { ok: false, error: 'contracts role not enabled (roles.contracts, which also requires roles.compute)' };
+        if (core.suspended) return suspendedReply(core);
+        let bytes, source = null;
+        if (typeof req.wasm === 'string' && req.wasm) {
+          try { bytes = new Uint8Array(Buffer.from(req.wasm, 'base64')); }
+          catch (e) { return { ok: false, error: `wasm is not valid base64: ${e.message}` }; }
+        } else if (typeof req.lng_source === 'string' && req.lng_source) {
+          source = req.lng_source;
+          // ⛔ REFUSE WHAT LNG CANNOT EMIT, rather than compiling a module without the import and
+          // deploying it with the flag ON. The LNG backend's `compile` takes exactly four opt-ins —
+          // hostState, compose, crypto, utxo — and its surface has builtins for only those
+          // (xmbl.cubic.verify, xmbl.mayo.verify, xmbl.coord.read/send, xmbl.utxo.*). There is NO
+          // zk / he / fhe / air builtin, so a `~contract` cannot call xmbl_zk_verify, xmbl_he_add,
+          // xmbl_fhe_* or xmbl_air_verify at all. Those host functions are real and bound by XCL, but
+          // today they are reachable only from hand-encoded WASM — pass `wasm` for those. Accepting
+          // the flag here would produce a contract that declares a capability its bytes never use,
+          // which is the false-green this whole op exists to avoid.
+          const unreachable = ['zk_host', 'he_host', 'fhe_host', 'air_host'].filter((k) => req[k]);
+          if (unreachable.length) {
+            return { ok: false, error: `lng_source cannot reach ${unreachable.join(', ')} — the LNG backend emits only hostState/compose/crypto/utxo imports and has no zk/he/fhe/air builtin; deploy hand-encoded \`wasm\` for those`, lng_backends: ['hostState', 'compose', 'crypto', 'utxo'] };
+          }
+          try {
+            const { compile } = await import('@xmbl/lng');
+            // The backends are OPT-IN at compile time and the deploy flags below must AGREE with them:
+            // a contract compiled without `hostState` has no Verkle imports to bind, and one compiled
+            // with them but deployed without `byteState` runs against staging that is never applied.
+            // One options object drives both, so the two cannot drift.
+            bytes = compile(source, {
+              hostState: req.byte_state !== false, crypto: !!req.crypto_host,
+              utxo: !!req.utxo_host, compose: !!req.compose_host,
+            });
+            if (!(bytes instanceof Uint8Array)) bytes = Uint8Array.from(bytes);
+          } catch (e) { return { ok: false, error: `lng compile failed: ${e.message}` }; }
+        } else {
+          return { ok: false, error: 'contract_deploy requires wasm (base64) or lng_source' };
+        }
+        if (bytes.length > CONTRACT_WASM_MAX) {
+          return { ok: false, error: `contract module capped at ${CONTRACT_WASM_MAX} bytes (got ${bytes.length}) — a block carries these bytes to every node` };
+        }
+        const slots = Array.isArray(req.slots) ? req.slots.map((n) => n | 0) : [];
+        const deployOpts = {
+          gated: !!req.gated, byteState: req.byte_state !== false, wordAbi: req.word_abi !== false,
+          cryptoHost: !!req.crypto_host, zkHost: !!req.zk_host, heHost: !!req.he_host,
+          fheHost: !!req.fhe_host, airHost: !!req.air_host, utxoHost: !!req.utxo_host,
+          composeHost: !!req.compose_host, fields: Array.isArray(req.fields) ? req.fields : undefined,
+        };
+        let placed;
+        try { placed = core.contractHost.deploy(bytes, slots, deployOpts); }
+        catch (e) { return { ok: false, error: `deploy failed: ${e.message}` }; }
+        // ANCHOR IT. A deploy that only lives in this process is not a deployment — it is a local
+        // side effect that the next restart erases.
+        const anchored = await anchorContractTx(core, {
+          type: 'contract',
+          contractHash: placed.id,
+          abi: { slots, opts: deployOpts, fields: deployOpts.fields ?? null },
+          bytecode: Buffer.from(bytes).toString('base64'),
+          deployer: core.xid?.address ?? null,
+        });
+        return {
+          ok: true, contract_id: placed.id, coordinates: placed.coordinates,
+          bytes: bytes.length, compiled_from_lng: source !== null,
+          state_root: (() => { try { return core.xvsm.getStateRoot(); } catch { return null; } })(),
+          ...anchored,
+        };
+      }
+      case 'contract_call': {
+        // EXECUTE a deployed contract against this node's real Verkle tree, and anchor the RECEIPT.
+        //
+        // The writes land in `core.xvsm.stateTree` because that is the store the host was constructed
+        // with — so a call moves the same state root the canonical rebuild computes, and two nodes
+        // running the same call converge (contract-host.test.mjs proves the convergence; this op is
+        // what puts it on the chain). The receipt is anchored as a type-5 `state_diff` tx naming the
+        // contract, the method and the applied write set, so a node replaying the chain applies the
+        // same keys without re-executing.
+        if (!core.contractHost) return { ok: false, error: 'contracts role not enabled (roles.contracts, which also requires roles.compute)' };
+        if (core.suspended) return suspendedReply(core);
+        const contractId = req.contract_id || req.contractId;
+        const method = req.method || req.function_name;
+        if (!contractId || !method) return { ok: false, error: 'contract_call requires contract_id and method' };
+        const params = Array.isArray(req.params) ? req.params : (Array.isArray(req.args) ? req.args : []);
+        // The chain-staged material each opt-in host reads. It is passed through UNINTERPRETED: it must
+        // be identical on every node for the verdict to be deterministic, which makes it the caller's
+        // (chain's) value to supply, not this socket's to invent.
+        const opts = { caller: req.caller ?? 0 };
+        for (const k of ['auth', 'crypto', 'zk', 'he', 'fhe', 'air', 'inputs']) if (req[k] !== undefined) opts[k] = req[k];
+        const rootBefore = (() => { try { return core.xvsm.getStateRoot(); } catch { return null; } })();
+        let out;
+        try { out = await withTimeout(core.contractHost.call(contractId, method, params, opts), CONTRACT_CALL_TIMEOUT_MS, 'contract_call'); }
+        catch (e) {
+          // A REVERT IS A RESULT, NOT A CRASH — and it applied nothing, which is the part a caller must
+          // be able to see. ContractHost unwinds the whole cascade on a throw, so state is unchanged.
+          return {
+            ok: false, error: String(e?.message || e), reverted: true, contract_id: contractId, method,
+            state_root: (() => { try { return core.xvsm.getStateRoot(); } catch { return null; } })(),
+            state_root_before: rootBefore,
+          };
+        }
+        const writeSet = (out.allWrites || out.writes || []).map((w) => (
+          w && w.kind === 'bytes' ? { kind: 'bytes', contract: w.id, key: w.hk } : { kind: 'slot', contract: w.id, slot: w.slot }
+        ));
+        const anchored = await anchorContractTx(core, {
+          type: 'state_diff',
+          function: method,
+          args: { params: params.map((p) => (typeof p === 'bigint' ? p.toString() : p)), writes: writeSet },
+          contractAddress: contractId,
+          caller: String(opts.caller ?? 0),
+        });
+        return {
+          ok: true, contract_id: contractId, method,
+          // BigInt is not JSON — the word ABI decodes a `~u256` return to one, and this reply is a
+          // single JSON line on a socket. Stringify it rather than throwing on serialize.
+          result: typeof out.result === 'bigint' ? out.result.toString() : out.result,
+          write_set: writeSet, writes: writeSet.length, frames: out.frames ?? 1,
+          coordinates: out.coordinates ?? null, utxo: out.utxo ?? null,
+          state_root_before: rootBefore, state_root: out.stateRoot,
+          root_moved: rootBefore !== out.stateRoot,
+          ...anchored,
+        };
+      }
+      case 'contracts': {
+        // WHAT THIS NODE ACTUALLY HOLDS. Read-only: the ids, their coordinates and which opt-in hosts
+        // each was deployed with — so a caller can tell a node that replayed the deploy from one that
+        // never saw it, without guessing from a version.
+        if (!core.contractHost) return { ok: false, error: 'contracts role not enabled (roles.contracts, which also requires roles.compute)' };
+        const rows = [];
+        for (const [id, e] of core.contractHost.contracts) {
+          rows.push({
+            contract_id: id, coordinates: e.coordinates, bytes: e.wasm.length, gated: !!e.gated,
+            slots: [...e.slots], byte_keys: e.byteKeys.size,
+            hosts: { byteState: !!e.byteState, wordAbi: !!e.wordAbi, crypto: !!e.cryptoHost, zk: !!e.zkHost,
+                     he: !!e.heHost, fhe: !!e.fheHost, air: !!e.airHost, utxo: !!e.utxoHost, compose: !!e.composeHost },
+          });
+        }
+        return { ok: true, count: rows.length, contracts: rows, state_root: (() => { try { return core.xvsm.getStateRoot(); } catch { return null; } })() };
       }
       case 'compute_job': {
         if (!core.computeNode) {

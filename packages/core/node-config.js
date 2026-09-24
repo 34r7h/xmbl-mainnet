@@ -54,6 +54,12 @@ export const NODE_CONFIG_SCHEMA = {
       compute: { type: 'boolean', default: false }, // run compute tasks
       relay: { type: 'boolean', default: false }, // relay traffic for other peers
       lead: { type: 'boolean', default: false }, // act as a lead/coordinator node
+      // Execute XMBL contracts (XCL). SEPARATE from `compute` on purpose: the compute role runs
+      // untrusted market jobs in a sandbox and touches no chain state, while a contract call WRITES
+      // to this node's Verkle tree. Those are different trust decisions, so they are different
+      // opt-ins — a node that sells compute does not thereby agree to execute contracts against its
+      // own state. Requires `compute` (the ComputeRuntime is the sandbox contracts execute in).
+      contracts: { type: 'boolean', default: false },
     },
   },
 

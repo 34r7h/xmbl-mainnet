@@ -4,6 +4,7 @@ import { Ledger, micromineTx } from '@xmbl/cubic-ledger';
 import { StateMachine } from '@xmbl/state-machine';
 import { ConsensusWorkflow, ConsensusGossip, ValidationWorker, runValidationRetryTick, SealRoundManager, sealSetHash } from '@xmbl/consensus';
 import { StorageNode, MarketPricing, ComputeNode } from '@xmbl/storage-compute';
+import { ContractHost } from '@xmbl/contracts';
 import { LeadWorker } from './lead-worker.js';
 
 // SINGLE SOURCE OF TRUTH for mainnet-readiness. While true, an XMBL_PROFILE=mainnet boot
@@ -130,6 +131,15 @@ export class XMBLCore {
     // reason — its xn-topic subscription only takes effect if xn.started is
     // already true. Opt-in via roles.compute (see start()).
     this.computeNode = null;
+    // E4 (contracts role): the XCL host that binds a compiled contract to THIS node's chain state.
+    // ⛔ THE SEAM EXISTED AND WAS NEVER PLUGGED IN. ComputeNode has taken a `contractHost` option
+    // since it was written, and `runContract()` uses it — but nothing ever passed one, so on every
+    // real node `contractHost` was null and every contract call answered "contract execution is not
+    // enabled". A tested seam that production never wires is the kadDHT pattern: present, exercised
+    // by its own suite, and dead in the deployment. Constructed in start(), after xvsm exists,
+    // because the host writes through the node's REAL VerkleStateTree — that is what makes a call's
+    // writes part of the state root every other node converges on.
+    this.contractHost = null;
 
     // Initialize storage and compute
     this.pricing = new MarketPricing();
@@ -191,6 +201,25 @@ export class XMBLCore {
         maxTime: this.config.compute?.cpuMs,
         maxMemory: (this.config.compute?.memMb ?? 512) * 1024 * 1024,
       });
+      // E4: opt-in (roles.contracts) contract execution. The host is composed from the pieces this
+      // node ALREADY has — the compute role's sandboxed ComputeRuntime and the state machine's real
+      // VerkleStateTree — so a contract's writes land in the same tree the canonical convergence
+      // primitives rebuild, and two nodes executing the same call converge on one root. Nothing is
+      // re-implemented here; XCL owns only placement, the slot↔key mapping and write-set staging.
+      // Requires the compute role because the runtime IS the sandbox: without it there is nowhere
+      // safe to execute guest WASM, so the role is refused rather than run unsandboxed.
+      if (this.config.roles?.contracts) {
+        this.contractHost = new ContractHost({
+          runtime: this.computeNode.runtime,
+          state: this.xvsm?.stateTree,
+        });
+        this.computeNode.contractHost = this.contractHost;
+      }
+    } else if (this.config.roles?.contracts) {
+      // FAIL LOUDLY, NEVER SILENTLY HALF-ON. A config asking for contracts without compute is a
+      // mistake the operator must see: answering `contracts: true` on `roles` while every call
+      // returns "not enabled" is exactly the unplugged-seam failure this feature exists to end.
+      throw new Error('roles.contracts requires roles.compute — the ComputeRuntime is the sandbox contracts execute in');
     }
 
     // Create default identity if needed
