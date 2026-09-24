@@ -754,7 +754,31 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
                      he: !!e.heHost, fhe: !!e.fheHost, air: !!e.airHost, utxo: !!e.utxoHost, compose: !!e.composeHost },
           });
         }
-        return { ok: true, count: rows.length, contracts: rows, state_root: (() => { try { return core.xvsm.getStateRoot(); } catch { return null; } })() };
+        return {
+          ok: true, count: rows.length, contracts: rows,
+          // THE CAPABILITY GATE, ANSWERED BY THE RUNNING CODE. A coordinator needs ONE read to decide
+          // whether it may issue contract_deploy/contract_call to this node, and a version string cannot
+          // answer it safely (the on-disk probe has inverted polarity mid-OTA — the same reason
+          // requires_typed_anchors is feature-detected). `ok:true` on this op IS the gate: a node
+          // without the role answers ok:false naming the role. The rest says what a caller may ask for.
+          capabilities: {
+            contract_ops: true,                       // contract_deploy / contract_call / contracts exist
+            anchors_receipts: true,                   // a deploy and every call are recorded as blocks
+            replays_from_blocks: true,                // a restart re-deploys from the block store
+            staged_bigints_tagged: true,              // {"__bigint__":"123"} is revived in auth/crypto/zk/he/fhe/air/inputs
+            wasm_max_bytes: CONTRACT_WASM_MAX,
+            call_timeout_ms: CONTRACT_CALL_TIMEOUT_MS,
+            // Which opt-in hosts a contract may declare, and how each is reachable TODAY. `lng` means a
+            // `~contract` can emit the import; `wasm` means hand-encoded only. Stated per backend so a
+            // caller never deploys a module declaring a capability its bytes cannot use.
+            hosts: {
+              byteState: 'lng', wordAbi: 'lng', compose: 'lng', crypto: 'lng', utxo: 'lng',
+              zk: 'wasm', he: 'wasm', fhe: 'wasm', air: 'wasm',
+            },
+            lng_backends: ['hostState', 'compose', 'crypto', 'utxo'],
+          },
+          state_root: (() => { try { return core.xvsm.getStateRoot(); } catch { return null; } })(),
+        };
       }
       case 'compute_job': {
         if (!core.computeNode) {

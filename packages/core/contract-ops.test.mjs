@@ -138,6 +138,14 @@ const listed = await call(sockPath, { op: 'contracts' });
 ok('the contracts op lists the deployment with its host flags',
   listed.ok === true && listed.count === 1 && listed.contracts[0].contract_id === dep.contract_id
   && listed.contracts[0].hosts.byteState === true);
+// The capability gate a coordinator reads before issuing either op — answered by the running code, not
+// by a version string, and it must state which backends are LNG-reachable so nobody deploys a module
+// declaring a capability its bytes cannot use.
+ok('the contracts op carries the capability gate and names each host\'s reachability',
+  listed.capabilities.contract_ops === true && listed.capabilities.anchors_receipts === true
+  && listed.capabilities.replays_from_blocks === true && listed.capabilities.staged_bigints_tagged === true
+  && listed.capabilities.hosts.crypto === 'lng' && listed.capabilities.hosts.zk === 'wasm'
+  && listed.capabilities.hosts.fhe === 'wasm');
 
 // ── 3. RAW WASM DEPLOY ─────────────────────────────────────────────────────────────────────────────
 const rawBytes = compile(COUNTER_SRC, { hostState: true });
