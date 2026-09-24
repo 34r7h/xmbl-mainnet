@@ -33,8 +33,6 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { loadConfig } from '../node-config.js';
 import { fetchLatestVersion, otaDecision, installRootOf, updateCommand, OTA_EXIT_CODE, DEFAULT_RELEASE_URL } from '../release.js';
-import { createControlServer } from '../control-socket.js';
-import { createMetricsServer } from '../metrics-server.js';
 import { ensureIdentityAtPath, loadIdentityAtPath } from '@xmbl/identity';
 import { loadOrCreatePeerKey } from '@xmbl/networking';
 import { installTimestampedLogging, installExitMarkers } from '../lifecycle-log.js';   // B5: every line stamped, every exit marked
@@ -112,6 +110,75 @@ function startOta({ core, flags, shutdown }) {
   const first = setTimeout(() => { check().catch((e) => { core.ota.last_error = e.message; }); }, 5000);
   first.unref?.();
   return { timer, check };
+}
+
+// ─── THE UPDATER MUST NOT LIVE BEHIND THE THING THAT BREAKS ─────────────────────────────────────────────────
+//
+// ⛔ A NODE THAT CANNOT BOOT COULD NOT UPDATE ITSELF OUT OF IT, AND THAT IS HOW BOXES DIE PERMANENTLY.
+//
+// startOta above is the whole update mechanism, and it is called at the END of cmdStart — after the config is
+// read, after XMBLCore.start(), after the control socket is bound. Everything it rescues a node from, it can
+// only rescue AFTER the node has successfully started. So the one failure it cannot cover is the one that
+// matters most: a bad install that stops the node from starting at all. There the updater never runs, the
+// supervisor crash-loops a few times and gives up, and the box is stranded on the broken version forever with
+// no path back. Nothing on the box is wrong except the code, and the code is exactly what cannot be replaced.
+//
+// THIS IS NOT HYPOTHETICAL — it is what 0.1.18 shipped. @xmbl/core@0.1.18 declared "@xmbl/identity":"^0.1.12"
+// while control-socket.js imported sealChainKey and SUPPORTED_CHAINS, which exist only from identity 0.1.18:
+//
+//   npm i @xmbl/core@0.1.18 @xmbl/identity@0.1.17
+//   -> SyntaxError: does not provide an export named 'SUPPORTED_CHAINS'
+//
+// and control-socket.js was a STATIC import at the top of this file, so that error fired while this module was
+// being LINKED. Not one statement of this daemon ran. No try/catch here could have caught it, because there
+// was no execution to catch it in — which is why both servers are now imported lazily inside cmdStart, where a
+// link error is an ordinary rejected promise. 0.1.19 fixed the ranges, but a fixed range is not a fix for the
+// class: the next unbootable install would strand a box exactly the same way.
+//
+// So a boot failure now ASKS THE RELEASE SOURCE whether a newer version exists, and if one does, installs it
+// and restarts onto it. The bet is narrow and correct: the most likely reason a node that worked yesterday
+// will not boot today is the code it was last handed, and the fix for that is the next version. When there is
+// no newer version the boot failure is real and is re-thrown unchanged — this never hides a genuine crash.
+async function selfHealFromBadInstall(err, flags = {}) {
+  if (process.env.XMBL_OTA === '0') return false;
+  const url = process.env.XMBL_RELEASE_URL || DEFAULT_RELEASE_URL;
+  const installRoot = process.env.XMBL_INSTALL_DIR || installRootOf(CORE_DIR);
+  console.error(`xmbl-node: BOOT FAILED on @xmbl/core@${CORE_VERSION} — ${err?.message || err}`);
+  if (!installRoot) {
+    console.error('xmbl-node: source checkout (no install root) — cannot self-update; fix it with git');
+    return false;
+  }
+  let latest = null;
+  try { latest = await fetchLatestVersion(url); }
+  catch (e) { console.error(`xmbl-node: cannot reach the release source (${e.message}) — not self-healing`); return false; }
+  const d = otaDecision({ running: CORE_VERSION, latest });
+  if (!d.behind) {
+    // The LATEST version is the one that will not boot. Updating would reinstall the same broken code, so say
+    // what is actually wrong and let the failure stand — a crash-loop that reinstalls itself is worse than one
+    // that stops and reports.
+    console.error(`xmbl-node: already on the latest published version (${latest}) — this is a real boot failure, not a stale install`);
+    return false;
+  }
+  const { cmd, args } = updateCommand(latest);
+  console.error(`xmbl-node: a newer version exists (${CORE_VERSION} -> ${latest}) — self-healing: ${cmd} ${args.join(' ')} (in ${installRoot})`);
+  const r = await new Promise((resolve) => {
+    const p = spawn(cmd, args, { cwd: installRoot, stdio: 'inherit' });
+    p.on('error', (e) => resolve({ error: e.message }));
+    p.on('exit', (code, signal) => resolve({ code, signal }));
+  });
+  if (r.error || r.code !== 0) {
+    console.error(`xmbl-node: self-heal install FAILED — ${r.error || `exit ${r.code ?? r.signal}`}`);
+    return false;
+  }
+  // Nothing was constructed, so there is nothing to release: no pidfile, no socket, no machine lock, no open
+  // store. A plain exit is the clean handoff back to the supervisor.
+  const supervised = !!flags.ppid || process.env.XMBL_SUPERVISED === '1';
+  console.error(`xmbl-node: installed @xmbl/core@${latest} — restarting onto it (${supervised ? `exit ${OTA_EXIT_CODE}` : 'respawn'})`);
+  if (supervised) process.exit(OTA_EXIT_CODE);
+  const child = spawn(process.execPath, process.argv.slice(1), { detached: true, stdio: 'inherit', env: process.env });
+  child.unref();
+  console.error(`xmbl-node: respawned as pid ${child.pid} on the updated code`);
+  process.exit(0);
 }
 
 function parseArgs(argv) {
@@ -273,6 +340,11 @@ async function cmdStart(cfgPath, flags = {}) {
   // Health + metrics endpoint (A5d): loopback-only HTTP, OS-assigned port. The
   // port is published in node.status.json + the control-socket status so the
   // coordinator can discover it without a fixed port or a config change.
+  // LAZY, like XMBLCore above and for a HARDER reason than banner noise: a STATIC import of these two is
+  // resolved when this file is linked, so a broken export in either one kills the daemon before its first
+  // statement runs — including the self-heal in main(). See the note on selfHealFromBadInstall.
+  const { createMetricsServer } = await import('../metrics-server.js');
+  const { createControlServer } = await import('../control-socket.js');
   const metrics = await createMetricsServer({ core, port: 0, startTime });
   const metricsUrl = `http://127.0.0.1:${metrics.port}/`;
 
@@ -464,7 +536,16 @@ async function main() {
   const cfgPath = flags.config || './config.node.json';
   switch (command) {
     case 'start':
-      await cmdStart(cfgPath, flags);
+      // The boot is the only path with a self-heal, because it is the only one whose failure strands the box:
+      // `stop` and `status` are filesystem reads that a supervisor repeats harmlessly. selfHealFromBadInstall
+      // either exits the process onto a newer version or returns false, in which case the original error is
+      // re-thrown untouched and main()'s handler reports it exactly as before.
+      try {
+        await cmdStart(cfgPath, flags);
+      } catch (e) {
+        await selfHealFromBadInstall(e, flags);
+        throw e;
+      }
       break;
     case 'stop':
       await cmdStop(cfgPath);
