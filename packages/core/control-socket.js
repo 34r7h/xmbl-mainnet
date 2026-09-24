@@ -113,6 +113,21 @@ function semverGte(a, b) {
   return true;
 }
 
+// REVIVE THE BIGINTS A JSON SOCKET CANNOT CARRY. The chain-staged material a zk / he / fhe / air
+// contract reads is full of 256-bit values — curve coordinates, proof scalars, LWE ciphertext limbs —
+// and this protocol is one JSON line. `JSON.stringify` THROWS on a BigInt, so a zk-gated contract was
+// simply not drivable over this socket: the op existed and the one kind of call it was built for could
+// not be expressed. Tagged `{"__bigint__":"123"}` is the convention the ledger's own Block.serialize
+// already uses for exactly this, so a caller has one spelling to learn, not two.
+function reviveBigInts(v) {
+  if (v === null || typeof v !== 'object') return v;
+  if (typeof v.__bigint__ === 'string') return BigInt(v.__bigint__);
+  if (Array.isArray(v)) return v.map(reviveBigInts);
+  const out = {};
+  for (const k of Object.keys(v)) out[k] = reviveBigInts(v[k]);
+  return out;
+}
+
 // ANCHOR A CONTRACT FACT AS A BLOCK. A deploy or a call that lives only in this process is not on the
 // chain: the next restart forgets the contract, and no other node ever learns of it. Mining the xid types
 // the tx (every transaction is typed by its xid, operator 2026-09-16) and admitting it through the ledger's
@@ -685,11 +700,12 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         const method = req.method || req.function_name;
         if (!contractId || !method) return { ok: false, error: 'contract_call requires contract_id and method' };
         const params = Array.isArray(req.params) ? req.params : (Array.isArray(req.args) ? req.args : []);
-        // The chain-staged material each opt-in host reads. It is passed through UNINTERPRETED: it must
-        // be identical on every node for the verdict to be deterministic, which makes it the caller's
-        // (chain's) value to supply, not this socket's to invent.
         const opts = { caller: req.caller ?? 0 };
-        for (const k of ['auth', 'crypto', 'zk', 'he', 'fhe', 'air', 'inputs']) if (req[k] !== undefined) opts[k] = req[k];
+        // Tagged BigInts are revived here, once, for every staged surface — see reviveBigInts. The
+        // material is otherwise passed through UNINTERPRETED: it must be identical on every node for
+        // the verdict to be deterministic, which makes it the chain's value to supply, not this
+        // socket's to invent.
+        for (const k of ['auth', 'crypto', 'zk', 'he', 'fhe', 'air', 'inputs']) if (req[k] !== undefined) opts[k] = reviveBigInts(req[k]);
         const rootBefore = (() => { try { return core.xvsm.getStateRoot(); } catch { return null; } })();
         let out;
         try { out = await withTimeout(core.contractHost.call(contractId, method, params, opts), CONTRACT_CALL_TIMEOUT_MS, 'contract_call'); }
