@@ -89,6 +89,22 @@ ok('apply_canonical from the STALE feed drops the evicted rows and says how many
 ok('OUTCOME: still absent from the tree after apply_canonical', (await present(doomedB)) === false && (await present(doomedC)) === false);
 ok('OUTCOME: the live anchor survived apply_canonical', (await present(keep)) === true);
 
+// THE OTHER SPELLING. `evict` accepts `xid:<xid>`, and a canonical row carries BOTH names — so a row evicted
+// by its xid must be refused by the same filters as one evicted by its content key, or the block stays gone
+// while the verkle key comes straight back on the next apply. Same defect, other door.
+const byXid = mk('soc.posted', 'xid-spelling');
+const feed2 = [row(keep), row(byXid)];
+await call({ op: 'rebuild_ledger', anchors: feed2 });
+ok('setup: the xid-spelling anchor is in the tree', (await present(byXid)) === true);
+const evx = await call({ op: 'evict', keys: [`xid:${byXid.xid}`] });
+ok('evict accepts the xid: spelling', evx.ok === true && evx.evicted === 1);
+const rb2 = await call({ op: 'rebuild_ledger', anchors: feed2 });
+ok('rebuild_ledger refuses a row evicted by XID', rb2.evicted_skipped === 1 && rb2.anchors === 1);
+ok('OUTCOME: evicted-by-xid is absent from the tree after rebuild_ledger', (await present(byXid)) === false);
+const ac2 = await call({ op: 'apply_canonical', anchors: feed2 });
+ok('apply_canonical refuses a row evicted by XID', ac2.evicted_skipped === 1 && ac2.applied === 1);
+ok('OUTCOME: evicted-by-xid is absent from the tree after apply_canonical', (await present(byXid)) === false);
+
 // A key this node never held is a legitimate answer, not a failure — that is how a caller sweeping the fleet
 // tells "never had it" from "had it, removed it".
 const never = await call({ op: 'evict', keys: ['anchor:task.created:' + digest('never-seen-here')] });

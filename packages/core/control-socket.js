@@ -113,11 +113,14 @@ function semverGte(a, b) {
 // disagreed and the state root committed the disagreement. Both ops that apply a canonical set filter here.
 function dropEvicted(core, anchors) {
   const xclt = core && core.xclt;
-  if (!xclt || typeof xclt.isEvicted !== 'function') return { kept: anchors, dropped: 0 };
+  // isEvictedRow tests BOTH of a canonical row's names — its `<event>:<hash>` content key and its mined
+  // `xid:<xid>` — because `evict` accepts either spelling. Testing only the content key let a row evicted by
+  // xid keep its verkle key on the next apply, which is the very defect this filter exists to close.
+  if (!xclt || typeof xclt.isEvictedRow !== 'function') return { kept: anchors, dropped: 0 };
   const kept = [];
   let dropped = 0;
   for (const a of anchors) {
-    if (a && a.event && a.hash && xclt.isEvicted(`${a.event}:${a.hash}`)) { dropped++; continue; }
+    if (xclt.isEvictedRow(a)) { dropped++; continue; }
     kept.push(a);
   }
   return { kept, dropped };

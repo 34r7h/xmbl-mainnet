@@ -474,7 +474,7 @@ export class Ledger extends EventEmitter {
         const k = `${a.event}:${a.hash}`;
         if (dryKeys.has(k)) continue;
         dryKeys.add(k);
-        if (this._evicted.has(k)) { dryEvicted++; continue; }   // an evicted anchor is not a block this rebuild would produce
+        if (this.isEvictedRow(a)) { dryEvicted++; continue; }   // an evicted anchor is not a block this rebuild would produce, by EITHER name
         if (typeof a.xid !== 'string' || !a.xid) { dryUntyped++; continue; }
         const probe = { type: 'anchor', event: a.event, hash: a.hash, ts: a.ts ?? 0, xid: a.xid, nonce: a.nonce, prior: typeof a.prior === 'string' ? a.prior : undefined };
         if (probe.prior === undefined) delete probe.prior;
@@ -578,7 +578,7 @@ export class Ledger extends EventEmitter {
       // canonical rebuild — but this loop never CONSULTED it, so a feed that still carried the anchor minted
       // the block straight back on the next ~90s convergence tick. Every one of the three admission paths
       // (addTransaction, addSealedBatch, and this) must refuse an evicted key, or the other two are theatre.
-      if (this._evicted.has(k)) { evictedSkipped++; continue; }
+      if (this.isEvictedRow(a)) { evictedSkipped++; continue; }
       uniq.push(a);
     }
     uniq.sort((x, y) => (x.hash < y.hash ? -1 : x.hash > y.hash ? 1 : (x.event < y.event ? -1 : x.event > y.event ? 1 : 0)));
@@ -656,6 +656,19 @@ export class Ledger extends EventEmitter {
     if (typeof key !== 'string' || !key) return false;
     if (this._evicted.has(key)) return true;
     return key.startsWith('anchor:') && this._evicted.has(key.slice('anchor:'.length));
+  }
+
+  /**
+   * IS THIS CANONICAL ROW EVICTED, BY EITHER OF ITS TWO NAMES? A feed row carries BOTH identities — its
+   * anchor content key `<event>:<hash>` AND the mined `xid` — and `evict` accepts either spelling, so a row
+   * evicted by xid is invisible to a check that only builds the content key. That is the same defect as the
+   * one the eviction filter exists to fix, entering through the other door: the block stays gone and the
+   * verkle key comes back on the next apply. Both names, every time.
+   */
+  isEvictedRow(a) {
+    if (!a) return false;
+    if (a.event && a.hash && this.isEvicted(`${a.event}:${a.hash}`)) return true;
+    return typeof a.xid === 'string' && !!a.xid && this._evicted.has(`xid:${a.xid}`);
   }
 
   // ---- CONSENSUS-V2 (2b) seal hooks. STATE lives here; the SealRoundManager (in core, with the gossip) injects
