@@ -55,6 +55,13 @@ jobs:
       - run: npm publish --workspaces --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # A green publish is the publisher's account of itself. v0.1.20 printed `+ @xmbl/networking@0.1.20`
+      # at 09:11:45; the registry listed that version at 09:18:12 and still answered 404 for its tarball
+      # after that. Meanwhile the tombstone ran at 09:12, read `latest` as 0.1.19 and pointed the 0.2.0
+      # deprecation at it, and @xmbl/core@0.1.20 (which needs networking ^0.1.20) could not install. So the
+      # job ends by COUNTING the registry, and nothing that reads or rewrites it runs before that count.
+      - name: COUNT AFTER — every public package and its tarball, read back off the registry
+        run: bash scripts/npm-count-after.sh "${GITHUB_REF_NAME#v}"
 
   cargo:
     name: Publish xmbl-* to crates.io
