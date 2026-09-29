@@ -14,7 +14,7 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import {
   sealChainKey, releaseAndSign, verifyRelease, chainAddress,
-  CHAINS, SUPPORTED_CHAINS, base58, bech32, sealKeyPair,
+  CHAINS, SUPPORTED_CHAINS, base58, bech32, sealKeyPair, openSecret,
 } from '../index.js';
 
 let pass = 0, fail = 0;
@@ -54,6 +54,9 @@ check('EVM address derivation matches the canonical keypair vector', () => {
   const sk = Buffer.from('4646464646464646464646464646464646464646464646464646464646464646', 'hex');
   const pub = secp256k1.getPublicKey(new Uint8Array(sk), false);   // uncompressed, as EVM derives from
   assert.strictEqual(chainAddress('evm', Buffer.from(pub)), '0x9d8a62f656a8d1615c1294fd71e9cfb3e4855a4f');
+  // The SAME key in its 33-byte compressed form is the same account. Hashing the compressed bytes is what
+  // 0.1.18/0.1.19 minted with, and it names an address nobody holds the key to.
+  assert.strictEqual(chainAddress('evm', Buffer.from(secp256k1.getPublicKey(new Uint8Array(sk), true))), '0x9d8a62f656a8d1615c1294fd71e9cfb3e4855a4f');
 });
 
 check('Bitcoin P2WPKH address derivation matches the BIP-84 vector', () => {
@@ -102,6 +105,23 @@ for (const chain of ['solana', 'evm', 'sui', 'bitcoin']) {
   const released = releaseAndSign(chain, payee.sk, minted.envelope, payload);
   ok(`${chain}: the payee releases the key and it settles to the SAME address that was funded`,
     released.address === minted.address);
+
+  // THE ADDRESS THE SEALED KEY ACTUALLY CONTROLS — derived from the opened SECRET, never from the public
+  // key the module reported. The two checks above are the module agreeing with itself, and they passed
+  // all through 0.1.18/0.1.19 while every EVM mint reported keccak of the COMPRESSED key: an address no
+  // key controls, so a funded payout could never be swept.
+  const sk = new Uint8Array(openSecret(payee.sk, minted.envelope));
+  const ownPub = { evm: () => secp256k1.getPublicKey(sk, false), bitcoin: () => secp256k1.getPublicKey(sk, true),
+    solana: () => ed25519.getPublicKey(sk), sui: () => ed25519.getPublicKey(sk) }[chain]();
+  ok(`${chain}: the funded address is the one the sealed SECRET controls`, chainAddress(chain, ownPub) === minted.address);
+  if (chain === 'evm') {
+    // What the EVM itself does with the release: ecrecover the signer from (digest, v, r, s) and hash it.
+    const { r, s, v } = released.signature;
+    const rec = Uint8Array.from([v - 27, ...Buffer.from(r, 'hex'), ...Buffer.from(s, 'hex')]);
+    const signer = secp256k1.recoverPublicKey(rec, keccak_256(Buffer.from(payload)), { prehash: false });
+    const recovered = '0x' + Buffer.from(keccak_256(secp256k1.Point.fromBytes(signer).toBytes(false).slice(1)).slice(-20)).toString('hex');
+    ok('evm: ecrecover of the release signature returns the funded address', recovered === minted.address);
+  }
   ok(`${chain}: the signature verifies the way ${chain} would check it`,
     verifyRelease(chain, payload, released.signature, released.publicKey) === true);
 

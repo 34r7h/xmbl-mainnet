@@ -92,10 +92,16 @@ export function bech32(hrp, witnessVersion, program) {
 // release the same way the settling chain would, rather than trusting that it signed something.
 export const CHAINS = Object.freeze({
   // secp256k1 over keccak256(payload); address = last 20 bytes of keccak256(uncompressed pubkey).
+  //
+  // ⛔ UNCOMPRESSED, AND ENFORCED BY THE DERIVATION RATHER THAN BY THE CALLER. 0.1.18/0.1.19 minted with
+  // the compressed key (`compressed` was unset, so `!== false` chose it) and hashed its 32-byte x: every
+  // EVM settlement address was one NO key controls, and a funded payout could never be swept. `address`
+  // now decompresses whatever it is handed, so the old 33-byte `public_key` still yields the true account.
   evm: Object.freeze({
     curve: 'secp256k1',
+    compressed: false,
     digest: (msg) => keccak_256(u8(msg)),
-    address(pub) { return '0x' + hex(keccak_256(u8(pub).slice(1)).slice(-20)); },
+    address(pub) { return '0x' + hex(keccak_256(secp256k1.Point.fromBytes(u8(pub)).toBytes(false).slice(1)).slice(-20)); },
     sign(msg, sk) {
       // `recovered` is 65 bytes — the recovery id FIRST, then r||s. ecrecover needs that id, so the
       // recoverable form is taken here rather than reconstructing it from a 64-byte signature.

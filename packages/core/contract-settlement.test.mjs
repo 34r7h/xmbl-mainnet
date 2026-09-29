@@ -18,7 +18,7 @@
 //      capability without asserting its boundary is how "settled on XMBL" becomes a false claim.
 import assert from 'node:assert';
 import net from 'node:net';
-import { createHash, createPrivateKey, createPublicKey, sign as nodeSign, verify as nodeVerify, generateKeyPairSync } from 'node:crypto';
+import { createECDH, createHash, createPrivateKey, createPublicKey, sign as nodeSign, verify as nodeVerify, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -220,7 +220,11 @@ await check('⛔ HE/FHE let a contract COMPUTE on sealed values; neither exposes
 // The RELEASE half is cryptographic (identity/settlement.test.mjs proves it for all four chains). This
 // is the MINT half, where the enforcement has to live — an envelope minted for a decision the chain
 // never made would be an ungated key release wearing an authorization's name.
-const { releaseAndSign, verifyRelease, sealKeyPair: freshPayee } = await import('@xmbl/identity');
+const { releaseAndSign, verifyRelease, chainAddress, sealKeyPair: freshPayee } = await import('@xmbl/identity');
+// The public key a secret controls, computed by node:crypto — a second implementation, not the module's own.
+const secpPub = (sk, form) => { const e = createECDH('secp256k1'); e.setPrivateKey(Buffer.from(sk)); return e.getPublicKey(null, form); };
+const edPub = (sk) => createPublicKey(createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(sk)]), format: 'der', type: 'pkcs8' }))
+  .export({ format: 'der', type: 'spki' }).subarray(-32);
 
 await check('settlement_chains names the four chains and states the enforcement honestly', async () => {
   const r = await call(sockPath, { op: 'settlement_chains' });
@@ -265,6 +269,13 @@ for (const chain of ['solana', 'evm', 'sui', 'bitcoin']) {
     const released = releaseAndSign(chain, p.sk, r.envelope, payload);
     assert.strictEqual(released.address, r.address, 'the release settles to the address that was funded');
     assert.strictEqual(verifyRelease(chain, payload, released.signature, released.publicKey), true, `the signature verifies the way ${chain} checks it`);
+    // ...and that address is the one the sealed SECRET controls, derived from the opened key rather than
+    // from the public key this op reported — the self-agreeing checks above passed while EVM mints named
+    // an address no key controls (0.1.18/0.1.19).
+    const sk = new Uint8Array(openSecret(p.sk, r.envelope));
+    const ownPub = { evm: () => secpPub(sk, 'uncompressed'), bitcoin: () => secpPub(sk, 'compressed'),
+      solana: () => edPub(sk), sui: () => edPub(sk) }[chain]();
+    assert.strictEqual(chainAddress(chain, ownPub), r.address, 'the funded address is the one the sealed secret controls');
   });
 }
 
