@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/state-machine",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "XMBL state \u2014 a Verkle state tree, app-centric diffs, sharding and assembly into current state.",
   "type": "module",
   "main": "index.js",

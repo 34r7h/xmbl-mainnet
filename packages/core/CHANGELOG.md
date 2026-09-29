@@ -1,5 +1,20 @@
 # @xmbl/core
 
+## 0.1.20
+
+### Patch Changes
+
+- **A node that cannot boot now updates itself out of it.** The OTA loop (`startOta`) ran at the END
+  of `cmdStart`, after config, `XMBLCore.start()` and the control-socket bind — so the one failure it
+  could not cover was a bad install that stops the node from starting: the supervisor crash-looped
+  and the box stayed on the broken version forever. `control-socket.js` and `metrics-server.js` are
+  now imported lazily inside `cmdStart`, so a link error is an ordinary rejected promise, and a boot
+  failure asks the release source for a newer version, installs it and restarts onto it. With no
+  newer version the failure is real and is re-thrown unchanged — a genuine crash is never hidden
+  and never reinstalls itself in a loop.
+- `settlement_seal` with `chain: "evm"` now returns an address its key controls — the fix is in
+  `@xmbl/identity` 0.1.20, and the line floor makes core resolve it.
+
 ## 0.1.19
 
 ### Patch Changes

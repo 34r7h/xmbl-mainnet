@@ -1,5 +1,22 @@
 # @xmbl/identity
 
+## 0.1.20
+
+### Patch Changes
+
+- **⛔ Every EVM settlement address since 0.1.18 was one no key controls.** `CHAINS.evm` carried no
+  `compressed` flag, so `sealChainKey('evm')` minted with the 33-byte COMPRESSED public key and
+  `address()` hashed its x coordinate — an account nobody holds the key to, so USDC funded to it
+  could never be swept. MEASURED on published 0.1.19: opening the envelope and deriving the address
+  from the secret differed from the reported address 5/5. `CHAINS.evm` is now `compressed: false`
+  and `address()` decompresses whatever it is handed, so the 33-byte `public_key` a 0.1.18/0.1.19
+  mint returned now yields the true account too.
+
+  Every check passed while broken because each compared the module to itself. The suites now derive
+  the address from the OPENED SECRET and `ecrecover` the release signature the way the EVM does;
+  against the unfixed code they fail on EVM only (identity 3, core 1). Cross-checked against
+  `@ethereumjs/util`: minted == ecrecover(EIP-712 signature) == privateToAddress(opened key), 5/5.
+
 ## 0.1.18
 
 ### Patch Changes
