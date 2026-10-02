@@ -5,6 +5,7 @@ export { MessageRouter } from './src/routing.js';
 export { PubSubManager } from './src/pubsub.js';
 export { ConnectionManager } from './src/connection.js';
 export { loadOrCreatePeerKey } from './src/peer-identity.js';
+export { PeerCache } from './src/peer-cache.js';
 
 // THE VERSION OF THE CODE THIS PROCESS LOADED. Read once at import time from this package's own manifest, so a
 // running node can report what it is actually executing — an install that lands on disk after this module was

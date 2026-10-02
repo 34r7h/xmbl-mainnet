@@ -110,7 +110,10 @@ export class PeerDiscovery {
       // seed that comes back later. Say it once, then fall back to a slow watch so recovery is still possible.
       if (tries === MAX_TRIES) {
         const still = targets.filter((a) => !connected(a));
-        if (still.length) console.error(`[xn] bootstrap: ${still.length}/${targets.length} seed(s) have not answered in ${tries} attempts: ${still.join(', ')}. This node is isolated (mdns can still find LAN peers); still watching.`);
+        // ISOLATED MEANS NO PEERS, NOT "A SEED IS DOWN". With learned peers and the DHT a node can hold a full
+        // mesh while every configured seed is dead; calling that isolation is a false partition report.
+        const holding = (() => { try { return this.node.node.getPeers().length; } catch { return 0; } })();
+        if (still.length) console.error(`[xn] bootstrap: ${still.length}/${targets.length} seed(s) have not answered in ${tries} attempts: ${still.join(', ')}. ${holding ? `Not isolated: this node holds ${holding} peer(s) through other paths` : 'This node holds NO peers and is isolated (mdns can still find LAN peers)'}; still watching.`);
       }
     };
 

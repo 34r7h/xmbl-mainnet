@@ -224,7 +224,10 @@ function isAlive(pid) {
 // Map the node config (A5a shape) onto the XMBLCore/app config shape.
 function toCoreConfig(cfg, dataDir) {
   return {
-    network: { addresses: cfg.listen_addrs, bootstrap: cfg.bootstrap_peers, announce: cfg.announce_addrs || [] },
+    // peerCache: the peers this node has connected to, kept in its own data_dir and dialled on boot before any
+    // seed (@xmbl/networking peer-cache.js) — so after its first join no single seed, and no broker, is
+    // load-bearing for this node again.
+    network: { addresses: cfg.listen_addrs, bootstrap: cfg.bootstrap_peers, announce: cfg.announce_addrs || [], peerCache: path.join(dataDir, 'known-peers.json') },
     ledger: { dbPath: path.join(dataDir, 'ledger') },
     stateMachine: { dbPath: path.join(dataDir, 'xvsm'), totalShards: 4 },
     consensus: { dbPath: path.join(dataDir, 'xpc') },

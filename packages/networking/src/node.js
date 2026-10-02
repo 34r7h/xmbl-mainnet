@@ -17,6 +17,9 @@ import { EventEmitter } from 'events';
 import { PeerDiscovery } from './discovery.js';
 import { PubSubManager } from './pubsub.js';
 import { ConnectionManager } from './connection.js';
+import { isPublicMultiaddr } from './addr.js';
+import { PeerCache } from './peer-cache.js';
+import { plugRandomWalkLeak } from './random-walk-leak.js';
 
 // The mesh's OWN Kademlia namespace — see the dht service in start(). Exported so a test can hold it.
 export const XMBL_KAD_PROTOCOL = '/xmbl/kad/1.0.0';
@@ -41,36 +44,7 @@ function wssHttpPathWebSockets(init) {
   };
 }
 
-// IS THIS BOX THE ONE THE MESH CAN DIAL? Measured on prod 2026-09-15: 0 of 73 coordinators announced a
-// single /p2p-circuit address, because the relay SERVER below was gated solely on XMBL_RELAY_SERVER=1 /
-// a ~/.handoff/xmbl-relay-server marker and NOBODY HAD EVER SET EITHER. Every node therefore ran the relay
-// CLIENT with no relay in existence to reserve on, so 44 of 45 announced only 127.0.0.1 and a 172.17.x
-// docker bridge and nothing could be dialed back. A control whose default is "off everywhere" is not a
-// control, it is an outage waiting for someone to remember a marker file.
-//
-// A box that announces or listens on a PUBLIC address already is the dialable box — that is not a policy
-// choice an operator has to ratify, it is a fact about its addresses. So elect it automatically and leave
-// the env var as the two overrides that actually mean something: '1' forces the server on a box whose
-// public address this code cannot see (behind a load balancer, a dns4 name resolved elsewhere), '0' forces
-// it off. Private, loopback, link-local and CGNAT ranges never elect — they are exactly the boxes that need
-// a relay rather than provide one.
-const PRIVATE_V4 = [
-  /^10\./, /^127\./, /^169\.254\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./,
-  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,   // CGNAT 100.64.0.0/10
-  /^0\./, /^22[4-9]\./, /^2[34]\d\./,           // unspecified + multicast/reserved
-];
-export function isPublicMultiaddr(ma) {
-  if (typeof ma !== 'string' || !ma) return false;
-  const v4 = ma.match(/^\/ip4\/([0-9.]+)/);
-  if (v4) return !PRIVATE_V4.some((re) => re.test(v4[1]));
-  const v6 = ma.match(/^\/ip6\/([0-9a-fA-F:]+)/);
-  if (v6) {
-    const a = v6[1].toLowerCase();
-    return !(a === '::1' || a === '::' || a.startsWith('fe80') || a.startsWith('fc') || a.startsWith('fd'));
-  }
-  // A dns name is only in a config because someone resolved it to a reachable host.
-  return /^\/dns(4|6|addr)?\//.test(ma);
-}
+export { isPublicMultiaddr } from './addr.js';
 
 export class XNNode extends EventEmitter {
   constructor(options = {}) {
@@ -167,7 +141,7 @@ export class XNNode extends EventEmitter {
         peerInfoMapper: passthroughMapper,
       }),
     };
-    // SELF-ELECTING RELAY SERVER (see isPublicMultiaddr above). '1' forces on, '0' forces off, and a box
+    // SELF-ELECTING RELAY SERVER (see isPublicMultiaddr in addr.js). '1' forces on, '0' forces off, and a box
     // that can already be dialed elects itself — so the mesh has a relay the moment one public node exists,
     // instead of the moment somebody remembers to touch a marker file.
     const relayServer = process.env.XMBL_RELAY_SERVER === '1'
@@ -195,14 +169,24 @@ export class XNNode extends EventEmitter {
       streamMuxers: [yamux()],
       // mdns() stays: LAN discovery is not the bug, being LAN-ONLY was. The WAN half is services.dht,
       // which libp2p registers as a discovery source through the peer-discovery symbol it exposes.
-      peerDiscovery: [mdns()],
+      // `mdns: false` exists for tests that must prove a peer was reached over the WAN paths and not the LAN.
+      peerDiscovery: this.options.mdns === false ? [] : [mdns()],
       services,
     };
     // A5f: use the persisted node key when provided so peer_id is STABLE across
     // restarts; absent → libp2p mints a fresh key (unchanged default behavior, so
     // existing XNNode callers that pass no privateKey are unaffected).
     if (this.options.privateKey) libp2pOptions.privateKey = this.options.privateKey;
-    this.node = await createLibp2p(libp2pOptions);
+    // start: false, then start() below — so the random-walk leak fix (random-walk-leak.js) is in place BEFORE the
+    // circuit-relay transport begins its relay discovery walk. createLibp2p() otherwise starts the node itself,
+    // and a walk already running keeps the leaking generator for its whole life.
+    this.node = await createLibp2p({ ...libp2pOptions, start: false });
+    if (!plugRandomWalkLeak(this.node)) console.warn('[xn] random-walk leak fix NOT applied: libp2p RandomWalk changed shape — heap growth on relay discovery is unguarded');
+    // `peerCache` is a file path (the daemon passes <data_dir>/known-peers.json). Absent → no memory, exactly the
+    // pre-0.1.21 behaviour, so existing XNNode callers are unaffected.
+    this.peerCache = this.options.peerCache
+      ? new PeerCache(this.options.peerCache, { allowPrivate: !!this.options.peerCacheAllowPrivate })
+      : null;
 
     // Initialize managers
     this.discovery = new PeerDiscovery(this);
@@ -235,6 +219,20 @@ export class XNNode extends EventEmitter {
       this.emit('peer:connected', evt.detail);
     });
 
+    // REMEMBER WHO WE MET (peer-cache.js). Two sources of an address, both only for a peer we actually hold a
+    // connection to: the address WE dialed and reached (proven dialable), and the listen addresses the peer
+    // reports through identify (self-reported; public-only unless the cache allows private).
+    if (this.peerCache) {
+      this.node.addEventListener('connection:open', (evt) => {
+        const c = evt.detail;
+        if (c?.direction === 'outbound' && c.remotePeer) this.peerCache.record(c.remotePeer.toString(), [c.remoteAddr?.toString()]);
+      });
+      this.node.addEventListener('peer:identify', (evt) => {
+        const d = evt.detail;
+        if (d?.peerId) this.peerCache.record(d.peerId.toString(), (d.listenAddrs || []).map(String));
+      });
+    }
+
     this.node.addEventListener('peer:disconnect', (evt) => {
       const peerId = evt.detail.toString();
       this.connectionManager.removeConnection(peerId);
@@ -244,6 +242,10 @@ export class XNNode extends EventEmitter {
     await this.node.start();
     this.started = true;
 
+    // Learned peers are dialled FIRST and without waiting on the seeds: a node that has met the mesh before must
+    // not need any particular seed — or the broker — to meet it again.
+    if (this.peerCache) this._rejoin();
+
     if (this.options.bootstrap && this.options.bootstrap.length > 0) {
       await this.discovery.bootstrap(this.options.bootstrap);
     }
@@ -251,10 +253,42 @@ export class XNNode extends EventEmitter {
     this.emit('started');
   }
 
+  // REJOIN FROM MEMORY. Dial the learned peers, most recently connected first, until this node holds
+  // REJOIN_TARGET connections; repeat on the bootstrap cadence while it holds fewer. A peer that does not answer
+  // is charged a failure (repeated failures evict it). One summary line per round that had work, never one per peer.
+  _rejoin() {
+    const TARGET = Math.max(1, Number(process.env.XN_REJOIN_TARGET) || 4);
+    const RETRY_MS = Math.max(1000, Number(process.env.XN_REJOIN_RETRY_MS) || Number(process.env.XN_BOOTSTRAP_RETRY_MS) || 15000);
+    const self = this.node.peerId.toString();
+    let announced = false;
+    const round = async () => {
+      if (!this.started) return;
+      const have = this.node.getPeers().length;
+      if (have >= TARGET) return;
+      const held = new Set(this.node.getPeers().map(String));
+      const todo = this.peerCache.targets(self).filter((t) => !held.has(t.id)).slice(0, TARGET * 2);
+      if (!todo.length) return;
+      let reached = 0;
+      await Promise.all(todo.map(async (t) => {
+        try { await this.node.dial(t.addrs.map((a) => multiaddr(a))); reached++; }
+        catch { this.peerCache.failed(t.id); }
+      }));
+      if (reached || !announced) {
+        announced = true;
+        console.log(`[xn] rejoin: ${reached} of ${todo.length} learned peer(s) answered (now holding ${this.node.getPeers().length})`);
+      }
+    };
+    round().catch(() => { /* never throw out of the rejoin */ });
+    this._rejoinTimer = setInterval(() => { round().catch(() => {}); }, RETRY_MS);
+    if (this._rejoinTimer.unref) this._rejoinTimer.unref();
+  }
+
   async stop() {
     if (!this.started) return;
     // The bootstrap retry loop outlives a single dial by design; it must not outlive the node.
     this.discovery?.stop?.();
+    if (this._rejoinTimer) { clearInterval(this._rejoinTimer); this._rejoinTimer = null; }
+    this.peerCache?.save();
     await this.node.stop();
     this.started = false;
     this.emit('stopped');
