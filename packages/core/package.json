@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/core",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "description": "XMBL node runtime \u2014 orchestrates every protocol module and ships the xmbl-node daemon (control socket, metrics, OTA).",
   "type": "module",
   "main": "index.js",
@@ -25,14 +25,14 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@xmbl/consensus": "^0.1.21",
-    "@xmbl/contracts": "^0.1.21",
-    "@xmbl/cubic-ledger": "^0.1.21",
-    "@xmbl/identity": "^0.1.21",
-    "@xmbl/networking": "^0.1.21",
-    "@xmbl/state-machine": "^0.1.21",
-    "@xmbl/storage-compute": "^0.1.21",
-    "@xmbl/zero-knowledge": "^0.1.21",
+    "@xmbl/consensus": "^0.1.22",
+    "@xmbl/contracts": "^0.1.22",
+    "@xmbl/cubic-ledger": "^0.1.22",
+    "@xmbl/identity": "^0.1.22",
+    "@xmbl/networking": "^0.1.22",
+    "@xmbl/state-machine": "^0.1.22",
+    "@xmbl/storage-compute": "^0.1.22",
+    "@xmbl/zero-knowledge": "^0.1.22",
     "pino": "^10.1.0"
   },
   "scripts": {

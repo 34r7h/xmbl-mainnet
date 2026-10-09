@@ -1,5 +1,19 @@
 # @xmbl/networking
 
+## 0.1.22
+
+### Patch Changes
+
+- **No peer is the way in; the seed role is deleted.** The addresses in `bootstrap_peers` were the only ones
+  dialed at boot, the only ones kept connected, and the only source of a NAT'd node's relay. Now a node keeps
+  one list of candidates (the peers it met before, from `known-peers.json`, plus the addresses it was given)
+  and dials all of them while it holds fewer than 4 peers; any one that answers is enough. A NAT'd node takes
+  its relay from any connected peer that runs a relay server.
+- **A stale peer id no longer isolates a node.** When an address answers under a different key (the box was
+  re-keyed), the node dials the same address without the id and uses the id that answered. Measured
+  2026-10-09: every config written before 173.255.233.69 was re-keyed on 09-20 named its old id, and every
+  NAT'd node holding one sat at 0 peers.
+
 ## 0.1.21
 
 ### Patch Changes

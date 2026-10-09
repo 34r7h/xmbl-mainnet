@@ -1,5 +1,19 @@
 # @xmbl/core
 
+## 0.1.22
+
+### Patch Changes
+
+- **An update never leaves a node dead.** A node decided at boot whether a supervisor owned it and never
+  looked again, so a node whose launcher had detached it and gone exited 75 after its own update and nothing
+  restarted it (831cfb42, 2026-10-09 05:59Z). The node now asks at the moment of the restart: with `--ppid`,
+  it exits 75 only while it is not detached and that launcher is still its parent; otherwise it restarts
+  itself, without `--ppid` or `XMBL_SUPERVISED`. ota-restart.test.mjs: 20/20; 3 fail without the change.
+- **One ledger write at a time on the control socket.** `rebuild_ledger`, `apply_canonical`, `apply_backfill`
+  and `evict` no longer run on top of each other; a repeat of the running call joins it, any other write is
+  answered `busy` at once, and a repeat of the last applied set with nothing changed is not rebuilt again.
+  ledger-op-lock.test.mjs: 21/21; 14 fail without the change.
+
 ## 0.1.21
 
 ### Patch Changes
