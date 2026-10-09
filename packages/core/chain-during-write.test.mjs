@@ -14,6 +14,8 @@
 // Now a `chain` read while a ledger write runs answers with the last reading taken with no write in flight,
 // signature and all (its own ts, so the broker's freshness window still bounds it), marked `during_write`. A
 // node that has no such reading yet answers UNSIGNED. A reading a write started under is not signed either.
+// Every write takes that reading as its last step, so two writes back to back cannot leave a beacon signing the
+// chain from before both.
 import assert from 'node:assert';
 import net from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -82,6 +84,24 @@ const s2 = await signed(after);
 ok(`after the write the reading is fresh, signed, and the grown chain (${s2?.height} = ${h1})`, !!s2 && s2.height === h1 && s2.ts > s0.ts && !after.during_write);
 ok('OUTCOME: the signed heights in beacon order never go down — the broker refuses none of them',
   [s0, sa, sb, s2].filter(Boolean).every((s, i, xs) => i === 0 || s.height >= xs[i - 1].height));
+
+// ---- back to back: two writes with no read between them ----
+// A box that rebuilds back to back leaves a beacon almost no idle moment to land in. The reading the next write
+// answers with must be the chain the last write left — taken when it ended — not one from before it began, which
+// on such a box ages until the broker refuses it as stale (its freshness window is 120 s).
+const grown2 = [...grown, ...Array.from({ length: 27 }, (_, i) => row(mk('task.created', `cw-b2b-${i}`)))];
+const grown3 = [...grown2, ...Array.from({ length: 27 }, (_, i) => row(mk('task.verified', `cw-b2b-more-${i}`)))];
+const began2 = new Date().toISOString();
+const r2 = await call({ op: 'rebuild_ledger', anchors: grown2 });
+const h2 = await rows();                                                 // the rows on disk, not a `chain` read
+const midNext = readInside(core.xclt, '_sealReadyFaces');
+const r3 = await call({ op: 'rebuild_ledger', anchors: grown3 });
+const c = await midNext;
+const sc = await signed(c);
+ok(`setup: both writes ran (${h1} → ${h2} rows, then ${await rows()})`, r2.ok === true && r3.ok === true && h2 > h1);
+ok(`OUTCOME: a reading inside the second write signs the chain the first one left (signed ${sc ? sc.height : 'nothing'}, left ${h2})`,
+  !!sc && sc.height === h2 && c.during_write?.op === 'rebuild_ledger');
+ok(`OUTCOME: ...read after the first write began, not before it (signed at ${sc?.ts}, began ${began2})`, !!sc && sc.ts > began2);
 
 // ---- a node with no settled reading yet signs nothing during a write ----
 {

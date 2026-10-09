@@ -1218,7 +1218,15 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
     }
     lastApplied = null;
     writes++;
-    const promise = Promise.resolve().then(() => handleOp(req));
+    // The write ends with the reading of what it left, taken while it still holds the lock — so no other write
+    // can start under that reading, and the reading the next write answers with is never older than the gap
+    // between the two writes. Without it the settled reading only moved when a beacon happened to land between
+    // writes, and a box that rebuilds back to back would sign one reading until the broker refused it as stale.
+    const settle = async () => {
+      try { const c = await handleOp({ op: 'chain' }); if (c && c.ok && c.stmt) settledChain = c; } catch { /* the next idle read takes it */ }
+    };
+    const promise = Promise.resolve().then(() => handleOp(req))
+      .then(async (r) => { await settle(); return r; }, async (e) => { await settle(); throw e; });
     writing = { key, op: req.op, since: Date.now(), promise };
     const done = () => { if (writing && writing.promise === promise) writing = null; };
     promise.then((r) => {
@@ -1236,9 +1244,11 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
   // on a 297-row chain) beside a state root from a tree still being rebuilt — and the coordinator starts one every
   // ~90s. While a write runs, `chain` answers with the last reading taken with no write in flight, signature and
   // own ts unchanged (so the broker's freshness window still bounds it), marked `during_write`; with no such
-  // reading yet it answers unsigned. A reading that a write started under is not kept and not signed.
+  // reading yet it answers unsigned. A reading that a write started under is not kept and not signed. Every
+  // write takes a fresh reading as its last step (runLedgerWrite), so the one it hands out is never older than
+  // the gap between two writes plus the running one.
   let writes = 0;          // ledger writes started — a read that spans one is not a settled reading
-  let settledChain = null; // the last `chain` reply read with no ledger write in flight
+  let settledChain = null; // the last `chain` reply read with no ledger write in flight, or as a write's last step
   const unsigned = (r) => { const { stmt, sig, pk, ...rest } = r || {}; return rest; };
   function readChain(req) {
     const duringWrite = () => ({ op: writing.op, running_for_s: Math.round((Date.now() - writing.since) / 1000) });
