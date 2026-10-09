@@ -1174,6 +1174,59 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
     sock.on('error', cleanup);
   }
 
+  // ⛔ ONE LEDGER WRITE AT A TIME. Every op here used to run the moment its line arrived, so two wipe-and-reseal
+  // rebuilds could interleave on one ledger. The coordinator's convergence tick fires every 90s with no in-flight
+  // guard and gives rebuild_ledger 180s; a call that outlasts that is never pinned, and the next tick starts a
+  // second wipe on top of the first (so does the immediate re-converge a node respawn kicks). MEASURED on
+  // 356a2a7a18 (0.1.21, 2-CPU, load ~4, 2026-10-09): blocks_persisted 12268 against ~8.2k canonical anchors,
+  // height/applied jumping 12268/4688 → 5584/8126 → 10435/5971 between beacons — an overlap, inferred from those
+  // readings; that box's single-rebuild time was never measured (an 11-CPU Mac at load ~7.5 wipes and reseals
+  // the 7848-anchor set in 14.0s). MEASURED in ledger-op-lock.test.mjs before this
+  // existed: two overlapping rebuilds of one 600-anchor set left 52 cubes where one rebuild seals 26, and the
+  // second failed "placement refused — face 0 is not 9 blocks".
+  //   - the SAME call again (same op, same kept anchor set) joins the one running and gets its answer, so the
+  //     coordinator's next tick receives the result its timed-out predecessor never did;
+  //   - any OTHER write is told `busy` at once — never queued, because a queue of rebuilds that each outlast the
+  //     tick only grows. The message must not match the coordinator's /unknown op|predates/ fallback, or a busy
+  //     node would be handed apply_canonical — a second write — by the very path this closes;
+  //   - a repeat of the set this node LAST applied, with the ledger and root unchanged since, returns that result
+  //     marked `unchanged` instead of wiping again. Without it a box whose rebuild outlasts 180s is re-wiped every
+  //     tick forever. Process-local, so a restart forgets it and the respawn re-converge still runs for real.
+  // Reads (status, chain, state_tree, ledger_capabilities) stay outside the lock: the coordinator's capability
+  // probe and drift check must answer while a rebuild runs.
+  const LEDGER_WRITES = new Set(['rebuild_ledger', 'apply_canonical', 'apply_backfill', 'evict']);
+  let writing = null;      // { key, op, since, promise } — the ledger write running now
+  let lastApplied = null;  // { key, held, root, result } — the last completed rebuild_ledger / apply_canonical
+  const heldNow = () => { const x = core.xclt; return x ? x.blocks.size + (Array.isArray(x._membershipPool) ? x._membershipPool.length : 0) : 0; };
+  const rootNow = () => { try { return core.xvsm ? core.xvsm.getStateRoot() : null; } catch { return null; } };
+  function writeKey(req) {
+    if (req.op === 'apply_backfill') return req.op;
+    // The KEPT set, not the offered one: an evict between two calls changes what a rebuild would produce.
+    const body = req.op === 'evict' ? (Array.isArray(req.keys) ? req.keys : [req.key])
+      : dropEvicted(core, Array.isArray(req.anchors) ? req.anchors : []).kept;
+    return `${req.op}:${createHash('sha256').update(JSON.stringify(body)).digest('hex')}`;
+  }
+  function runLedgerWrite(req) {
+    const key = writeKey(req);
+    if (writing) {
+      if (writing.key === key) return writing.promise;
+      return { ok: false, busy: true, op: req.op, running: writing.op, running_for_s: Math.round((Date.now() - writing.since) / 1000),
+        error: `busy: ${writing.op} is already running on this node — one ledger write at a time; retry when it returns` };
+    }
+    if (lastApplied && lastApplied.key === key && lastApplied.held === heldNow() && lastApplied.root === rootNow()) {
+      return { ...lastApplied.result, unchanged: true };
+    }
+    lastApplied = null;
+    const promise = Promise.resolve().then(() => handleOp(req));
+    writing = { key, op: req.op, since: Date.now(), promise };
+    const done = () => { if (writing && writing.promise === promise) writing = null; };
+    promise.then((r) => {
+      done();
+      if (r && r.ok && (req.op === 'rebuild_ledger' || req.op === 'apply_canonical')) lastApplied = { key, held: heldNow(), root: rootNow(), result: r };
+    }, done);
+    return promise;
+  }
+
   function handleLine(sock, line) {
     let req;
     try { req = JSON.parse(line); } catch { return; } // ignore malformed lines
@@ -1182,7 +1235,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
     if (req.op === 'subscribe') { void handleSubscribe(sock, req).catch((e) => reply({ ok: false, error: String(e?.message || e) })); return; }
     // Any throw/rejection in an op becomes a JSON error — never an unhandled crash.
     Promise.resolve()
-      .then(() => handleOp(req))
+      .then(() => (LEDGER_WRITES.has(req.op) ? runLedgerWrite(req) : handleOp(req)))
       .then(reply)
       .catch((e) => reply({ ok: false, error: String(e?.message || e) }));
   }
