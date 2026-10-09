@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.21
+
+### Patch Changes
+
+- **The simulator's state_diffs are type-0 xmbl datums under their micromined keys** (`datumWrite` from
+  @xmbl/cubic-ledger), because a state_diff with random keys is now refused.
+
 ## 0.1.16
 
 ### Patch Changes

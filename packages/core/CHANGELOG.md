@@ -1,5 +1,13 @@
 # @xmbl/core
 
+## 0.1.21
+
+### Patch Changes
+
+- **The node daemon passes `<data_dir>/known-peers.json` to @xmbl/networking**, so a node dials the peers
+  it has met before any seed on boot. `deploy/xmbl-node-bundle/config.example.json` lists both public
+  nodes instead of one.
+
 ## 0.1.20
 
 ### Patch Changes

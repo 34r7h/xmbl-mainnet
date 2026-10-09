@@ -1,5 +1,22 @@
 # @xmbl/networking
 
+## 0.1.21
+
+### Patch Changes
+
+- **No seed is load-bearing after a node's first join.** A node remembered no peer across a restart, so its
+  seed list was its only way back in. It now records the peers it actually connected to in
+  `<data_dir>/known-peers.json` (`peer-cache.js`; write-then-rename with the last good file kept as `.prev`,
+  capped at 64, relay and private addrs never kept) and dials them on boot before any seed.
+  peer-cache.test.mjs: the only seed dies, the node restarts and reaches a peer from memory (1 peer); the
+  same restart without the cache reaches 0.
+- **The random walk no longer leaks every peer it meets.** libp2p 3.3.11's `RandomWalk.walk()` waits with
+  p-event, which adds an abort listener to a long-lived signal and never removes it; circuit-relay discovery
+  walks forever on a public node, so every walked peer stayed on the heap (2,838 of each object between
+  two snapshots 7.5 min apart; the seed node ran out of heap 12 times on 2026-09-29). `random-walk-leak.js`
+  replaces `walk()` with the same loop on listeners it removes. random-walk-leak.test.mjs: 2,999 of 3,000
+  walked peers freed with the fix, 0 of 3,000 without.
+
 ## 0.1.16
 
 ### Patch Changes

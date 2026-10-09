@@ -1,5 +1,24 @@
 # @xmbl/state-machine
 
+## 0.1.21
+
+### Patch Changes
+
+- **A state_diff can no longer write any key it names.** The state machine applied a state_diff's args as the
+  changes, keys and all. Measured against the published 0.1.20 packages: a state_diff signed by a fresh identity
+  with args `{'utxo:forged0000': {to: <itself>, amount: '1000000000'}}` passed `validateForConsensus`, went
+  through `Ledger.addTransaction` into the Verkle tree, and a deployed TRANSFER contract spent it. (The path from
+  a live node's submit endpoint to its ledger was not reproduced.) `_stateChangesFor` now asks @xmbl/cubic-ledger's
+  `stateDiffWrites` — the rule `validateShape` asks at the door — so a state_diff writes only xmbl datums, each
+  under its micromined key `<xid>_<nonce>` as `{oid, nonce, data}`, or a contract's own receipt. With this code
+  the same forgery is refused at the door and `utxo:forged0000` is absent from the tree.
+  state-diff-confinement.test.mjs: 35 checks; 26 of them fail with the rule unhooked.
+- **What is already in a tree stays.** A tree reloads from its own store on restart, so keys an earlier
+  state_diff wrote survive the upgrade: a 0.1.20 store holding `k:1` reopened with this code still holds it and
+  its root is unchanged. A node that derives its tree from blocks instead (`backfillFromLedger`, a fresh sync)
+  does not write them, so its root differs from a node that kept them — measured: same blocks, fresh store, no
+  `k:1`, different root.
+
 ## 0.1.16
 
 ### Patch Changes
