@@ -1,0 +1,86 @@
+{
+  "source": "34r7h/xmbl public/defaults/config.json — the working copy over 1e7077c that carries the 2026-07-26 type-6 bump (sha256 6a6435ad7cb94d85dafcf72eea8eb18dea4f420c2831b5bbc2c7b974ddf702c5); lexicon and types copied verbatim, key order kept: a type's key order IS its canonical body order",
+  "lexicon": [
+    "datum",
+    "app",
+    "component",
+    "update",
+    "action",
+    "event",
+    "tx",
+    "pointer",
+    "trait",
+    "type"
+  ],
+  "types": {
+    "0": {
+      "xid": "string",
+      "oid": "string",
+      "type": "number",
+      "nonce": "number",
+      "hooks": {
+        "before": "array",
+        "watch": "array",
+        "after": "array"
+      },
+      "time": "number",
+      "data": "object"
+    },
+    "1": {
+      "datums": "array",
+      "deploy": "array",
+      "index": "object",
+      "config": "object",
+      "scopes": "object",
+      "stack": "array",
+      "accounts": "object",
+      "token": "string"
+    },
+    "2": {
+      "type": "string",
+      "props": "object"
+    },
+    "3": {
+      "target": "string",
+      "diffops": "array",
+      "elements": "object"
+    },
+    "4": {
+      "name": "string",
+      "inputs": "object",
+      "commands": "array",
+      "tests": "array",
+      "outputs": "object"
+    },
+    "5": {
+      "schedule": "object",
+      "name": "string",
+      "actions": "array",
+      "data": "object"
+    },
+    "6": {
+      "chain": "string",
+      "from": "array",
+      "to": "array",
+      "asset": "string",
+      "amount": "string",
+      "seq": "number",
+      "prev": "string",
+      "unspent": "string"
+    },
+    "7": {
+      "from": "array",
+      "to": "array",
+      "how": "string"
+    },
+    "8": {
+      "type": "string",
+      "updates": "array"
+    },
+    "9": {
+      "name": "string",
+      "model": "object",
+      "prefix": "string"
+    }
+  }
+}

@@ -6,7 +6,7 @@ export { SuperCube } from './src/super-cube.js';
 export { calculateDigitalRoot } from './src/digital-root.js';
 export { getBlockPosition, getFaceIndex } from './src/placement.js';
 export { validateTransaction, validateShape, validateXid, getTransactionType, micromineTx, micromineBody, typeCodeOf, typeOfXid,
-  authorityOf, contentAddressedTypes, XID_RE } from './src/transaction-validator.js';
+  authorityOf, contentAddressedTypes, XID_RE, stateDiffWrites, datumWrite, appTypeOf, APP_LEXICON } from './src/transaction-validator.js';
 export { verifyPlacement } from './src/deterministic-placement.js';
 export {
   positionToLocalCoords,

@@ -133,7 +133,94 @@ export function validateShape(tx) {
     throw new Error(`anchor hash is not a sha-256 digest: ${JSON.stringify(tx.hash)}`);
   }
 
+  if (tx.type === 'state_diff') {
+    const w = stateDiffWrites(tx);
+    if (!w.ok) throw new Error(w.reason);
+  }
+
   return true;
+}
+
+// ═══ A STATE_DIFF WRITES XMBL DATUMS, EACH UNDER ITS MICROMINED KEY ═══
+//
+// The state machine applied a state_diff's args AS the changes, keys and all, and nothing checked which keys.
+// MEASURED 2026-10-09 against the published 0.1.20 bytes: a state_diff signed by a fresh identity with args
+// {'utxo:forged0000': {to: <itself>, amount: '1000000000'}} passed validateForConsensus, went through
+// Ledger.addTransaction into the Verkle tree, and a deployed TRANSFER contract spent it.
+//
+// A state_diff now writes only xmbl datums, under the key the micromining protocol gives each one: `${xid}_${nonce}`,
+// the key micromine() returns and the app's set() stores db.data under. The datum's type is its xid's prefix
+// ('0' + code, app-types.json: datum 0 … type 9), and the key must be the one micromine(data, type) yields — the
+// LOWEST nonce — so one content of one type has exactly one key and a second write of it writes the same bytes.
+// Typed data (1-9) carries exactly its type's fields with the app's runtime types, in any order — what the app's set()
+// admits (it sorts both key lists before comparing). The key is mined from the data's own bytes, so the same bytes are
+// the same key; the same fields in another order are other bytes and another key, as they are in the app. No chain-native
+// key (identity:, utxo:, spend:, tx:, token:, contract:, anchor:, xcl/…) has this shape, so no state_diff reaches one.
+// Value and its spending are not written this way: a type-6 unit enters as chain type `tx`, and a type-7 pointer may
+// not say how 'spend' or 'anchor', the two pointer meanings the chain mints itself. A contract's own receipts
+// (contract_call, settlement_seal — control-socket.js) keep their exact arg shapes and nothing else.
+const APP_TYPES = JSON.parse(readFileSync(join(__dirname, '..', 'app-types.json'), 'utf-8'));
+export const APP_LEXICON = Object.freeze([...APP_TYPES.lexicon]);
+const DATUM_KEY_RE = /^0([0-9])[0-9a-f]{62}_(0|[1-9][0-9]*)$/;
+const NOT_BY_STATE_DIFF = { 6: 'a value unit enters as chain type tx, not by state_diff' };
+const CHAIN_POINTER_HOWS = ['spend', 'anchor'];
+const RECEIPT_ARGS = { settlement_seal: ['chain', 'address', 'authorization'], call: ['params', 'writes'] };
+
+/** The app's runtime type of a value (xmbl src/stores/api.js utils type()): 'array', 'object' (null included), else typeof. */
+export function appTypeOf(v) {
+  return typeof v == 'object' && !Array.isArray(v) ? 'object' : Array.isArray(v) ? 'array' : typeof v;
+}
+
+/** Why `data` is not a datum of xmbl type `code`, or null. Type 0 is any datum the app's set() takes. */
+function datumShapeError(data, code) {
+  if (!data) return 'a datum carries its data';
+  if (code === 0) return null;
+  const schema = APP_TYPES.types[String(code)];
+  if (appTypeOf(data) !== 'object' || data === null) return `a ${APP_LEXICON[code]} (type ${code}) is an object`;
+  const want = Object.keys(schema).sort(), got = Object.keys(data).sort();
+  if (got.join(',') !== want.join(',')) return `a ${APP_LEXICON[code]} (type ${code}) carries exactly ${want.join(',')}, not ${got.join(',').slice(0, 120)}`;
+  const bad = want.find((f) => appTypeOf(data[f]) !== schema[f]);
+  if (bad !== undefined) return `a ${APP_LEXICON[code]} (type ${code}) has ${bad} as ${schema[bad]}, not ${appTypeOf(data[bad])}`;
+  return null;
+}
+
+/** The state_diff write for one datum of xmbl type `code`: { [`${xid}_${nonce}`]: { oid, nonce, data } }. */
+export function datumWrite(data, code) {
+  const { oid, nonce, key } = micromine(data, code);
+  return { [key]: { oid, nonce, data } };
+}
+
+/** The writes a state_diff may make: { ok: true, changes } or { ok: false, reason }. The validator and the state
+ *  machine both ask this, so what the door admits and what the tree applies cannot drift apart. */
+export function stateDiffWrites(tx) {
+  const args = tx && tx.args;
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return { ok: false, reason: 'state_diff args must be an object of writes' };
+  const keys = Object.keys(args);
+  if (!keys.length) return { ok: false, reason: 'state_diff writes nothing' };
+  if (tx.contractAddress) {
+    const allowed = RECEIPT_ARGS[tx.function === 'settlement_seal' ? 'settlement_seal' : 'call'];
+    const bad = keys.find((k) => !allowed.includes(k));
+    if (bad !== undefined) return { ok: false, reason: `a contract receipt state_diff may not write ${JSON.stringify(bad.slice(0, 80))}` };
+    return { ok: true, changes: { ...args } };
+  }
+  const changes = {};
+  for (const k of keys) {
+    const m = DATUM_KEY_RE.exec(k);
+    if (!m) return { ok: false, reason: `a state_diff writes only xmbl datums under their micromined key <xid>_<nonce>, not ${JSON.stringify(k.slice(0, 80))}` };
+    const code = Number(m[1]);
+    if (NOT_BY_STATE_DIFF[code]) return { ok: false, reason: `${k}: ${NOT_BY_STATE_DIFF[code]}` };
+    const v = args[k];
+    if (!v || appTypeOf(v) !== 'object' || Object.keys(v).sort().join(',') !== 'data,nonce,oid') return { ok: false, reason: `${k}: the value is the datum {oid, nonce, data} and nothing else` };
+    const shape = datumShapeError(v.data, code);
+    if (shape) return { ok: false, reason: `${k}: ${shape}` };
+    if (code === 7 && CHAIN_POINTER_HOWS.includes(v.data.how)) return { ok: false, reason: `${k}: a pointer saying how '${v.data.how}' is minted by the chain, not by state_diff` };
+    let mined;
+    try { mined = micromine(v.data, code); } catch (e) { return { ok: false, reason: `${k}: ${e.message}` }; }
+    if (mined.key !== k) return { ok: false, reason: `${k}: this data mines to ${mined.key} as a ${APP_LEXICON[code]} (type ${code}) — a datum has one key, at its lowest nonce` };
+    if (v.oid !== mined.oid || v.nonce !== mined.nonce) return { ok: false, reason: `${k}: oid and nonce must be the ones its data mines to (${mined.oid.slice(0, 12)}…, ${mined.nonce})` };
+    changes[k] = { oid: mined.oid, nonce: mined.nonce, data: v.data };
+  }
+  return { ok: true, changes };
 }
 
 /** STAGE 2 — is the xid correct: present, well-formed, carrying this type's prefix, and micromining the type's

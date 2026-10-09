@@ -3,6 +3,7 @@ import { StateDiff } from './state-diff.js';
 import { StateShard } from './sharding.js';
 import { StateAssembler } from './state-assembly.js';
 import { Level } from 'level';
+import { stateDiffWrites } from '@xmbl/cubic-ledger';
 import { EventEmitter } from 'events';
 
 // ⛔ StateMachine WAS a plain class, and _handleCubeComplete called `this.emit?.('state:committed', ...)`.
@@ -203,9 +204,13 @@ export class StateMachine extends EventEmitter {
     const tx = block?.tx;
     if (!tx || typeof tx !== 'object') return null;
     switch (tx.type) {
-      case 'state_diff':
-        // Explicit diffs keep their existing contract: args ARE the changes.
-        return tx.args && typeof tx.args === 'object' ? { ...tx.args } : null;
+      case 'state_diff': {
+        // A state_diff writes xmbl datums under their micromined keys, or a contract's own receipt — the same rule
+        // the door (validateShape) asks, so a block that reached this tree some other way (sync, rebuild) still
+        // cannot write identity:, utxo:, spend:, tx:, token:, contract:, anchor: or xcl/ keys.
+        const w = stateDiffWrites(tx);
+        return w.ok ? w.changes : null;
+      }
       case 'anchor':
         // An anchor asserts "this event hash existed at this time". The assertion is the state.
         if (!tx.event || !tx.hash) return null;

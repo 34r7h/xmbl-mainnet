@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { faker } from '@faker-js/faker';
 import Chance from 'chance';
 import { StructuredLogger } from './logger.js';
+import { datumWrite } from '../../cubic-ledger/index.js';
 
 // Initialize faker with seed for deterministic mode if needed
 if (process.env.FAKER_SEED) {
@@ -427,7 +428,7 @@ export class SystemSimulator extends EventEmitter {
       tx.abi = JSON.stringify([{ type: 'function', name: 'test' }]);
     } else if (txType === 'state_diff') {
       tx.function = faker.hacker.verb() + '_' + faker.hacker.noun();
-      tx.args = { key: faker.string.alphanumeric({ length: 20 }) };
+      tx.args = datumWrite({ text: faker.lorem.sentence(), at: tx.timestamp }, 0);
     }
 
     // Sign transaction if we have identity module
@@ -497,9 +498,10 @@ export class SystemSimulator extends EventEmitter {
     if (this.identities.length === 0) return;
 
     const from = chance.pickone(this.identities);
+    // A state_diff writes xmbl datums under their micromined keys (cubic-ledger stateDiffWrites); two type-0 datums.
     const changes = {
-      [faker.string.alphanumeric({ length: 20 })]: faker.string.alphanumeric({ length: 50 }),
-      [faker.string.alphanumeric({ length: 20 })]: faker.string.alphanumeric({ length: 50 })
+      ...datumWrite({ text: faker.lorem.sentence(), n: chance.natural() }, 0),
+      ...datumWrite({ text: faker.lorem.sentence(), n: chance.natural() }, 0)
     };
 
     // Create a state_diff type transaction

@@ -3,6 +3,7 @@
 // Test 0 is the negative control: the OLD state_diff-only rule must leave the root empty for real traffic.
 import assert from 'assert';
 import { StateMachine } from './state-machine.js';
+import { datumWrite } from '@xmbl/cubic-ledger';
 import { rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -30,7 +31,7 @@ const REAL_TRAFFIC = [
   blk('b5', { type: 'identity', publicKey: 'pk-1', from: 'xmbC' }),
   blk('b6', { type: 'token_creation', tokenId: 't1', creator: 'xmbA' }),
   blk('b7', { type: 'contract', contractHash: 'c'.repeat(64), abi: [] }),
-  blk('b8', { type: 'state_diff', args: { 'k:1': 'v1' } }),
+  blk('b8', { type: 'state_diff', args: datumWrite({ k: 1, v: 'v1' }, 0) }),
 ];
 
 console.log('\n0. negative control — the OLD rule must leave the tree empty');
