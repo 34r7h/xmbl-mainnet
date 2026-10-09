@@ -1217,6 +1217,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
       return { ...lastApplied.result, unchanged: true };
     }
     lastApplied = null;
+    writes++;
     const promise = Promise.resolve().then(() => handleOp(req));
     writing = { key, op: req.op, since: Date.now(), promise };
     const done = () => { if (writing && writing.promise === promise) writing = null; };
@@ -1227,6 +1228,32 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
     return promise;
   }
 
+  // ⛔ A NODE SIGNS ONLY A CHAIN IT HOLDS. MEASURED 2026-10-09 by the broker on 4293b3c6 (one address, one
+  // coordinator, beacons ~31s apart): signed heights 19746, 9882, 17442, 19791, 9909 — and every low one refused
+  // as a replay. `chain` keeps its block count by bumping on 'block:added'; a rebuild wipes every row and reseals
+  // the whole set, every resealed block bumps a count nobody reset, and the rescan only comes after the op
+  // returns. So inside a rebuild the count climbs toward TWICE the chain (chain-during-write.test.mjs: 567 signed
+  // on a 297-row chain) beside a state root from a tree still being rebuilt — and the coordinator starts one every
+  // ~90s. While a write runs, `chain` answers with the last reading taken with no write in flight, signature and
+  // own ts unchanged (so the broker's freshness window still bounds it), marked `during_write`; with no such
+  // reading yet it answers unsigned. A reading that a write started under is not kept and not signed.
+  let writes = 0;          // ledger writes started — a read that spans one is not a settled reading
+  let settledChain = null; // the last `chain` reply read with no ledger write in flight
+  const unsigned = (r) => { const { stmt, sig, pk, ...rest } = r || {}; return rest; };
+  function readChain(req) {
+    const duringWrite = () => ({ op: writing.op, running_for_s: Math.round((Date.now() - writing.since) / 1000) });
+    if (writing) {
+      if (settledChain) return { ...settledChain, during_write: duringWrite() };
+      return Promise.resolve(handleOp(req)).then((r) => ({ ...unsigned(r), ...(writing ? { during_write: duringWrite() } : {}) }));
+    }
+    const at = writes;
+    return Promise.resolve(handleOp(req)).then((r) => {
+      if (writes !== at) return unsigned(r);
+      if (r && r.ok && r.stmt) settledChain = r;
+      return r;
+    });
+  }
+
   function handleLine(sock, line) {
     let req;
     try { req = JSON.parse(line); } catch { return; } // ignore malformed lines
@@ -1235,7 +1262,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
     if (req.op === 'subscribe') { void handleSubscribe(sock, req).catch((e) => reply({ ok: false, error: String(e?.message || e) })); return; }
     // Any throw/rejection in an op becomes a JSON error — never an unhandled crash.
     Promise.resolve()
-      .then(() => (LEDGER_WRITES.has(req.op) ? runLedgerWrite(req) : handleOp(req)))
+      .then(() => (LEDGER_WRITES.has(req.op) ? runLedgerWrite(req) : req.op === 'chain' ? readChain(req) : handleOp(req)))
       .then(reply)
       .catch((e) => reply({ ok: false, error: String(e?.message || e) }));
   }
