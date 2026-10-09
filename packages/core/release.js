@@ -13,6 +13,7 @@
 //                         rule is "xmbl npm always latest"), or a broker endpoint returning { version }.
 //   installRootOf()     — where `npm install @xmbl/core@<latest>` runs: the install that owns THIS core, or
 //                         null in a source checkout (a checkout is updated by git, never by the daemon).
+//   otaRestartMode()    — after the install: exit 75 to a supervisor that still owns this node, or respawn.
 // The daemon (bin/xmbl-node.js) wires these: check on an interval → suspend when behind → install → restart.
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -113,4 +114,35 @@ export function installRootOf(coreDir = HERE) {
 /** The exact command an update runs, so it can be logged, tested and audited. */
 export function updateCommand(latest) {
   return { cmd: 'npm', args: ['install', `@xmbl/core@${latest}`, '--no-audit', '--no-fund', '--omit=dev', '--no-save'] };
+}
+
+// WHO RESTARTS THIS NODE once an update is installed. Exit 75 hands the restart to a supervisor, so it is right only
+// while one still owns this process; with nobody left to see it, it is a node that stops and stays stopped.
+// MEASURED 2026-10-09 on 831cfb42 (aws-syd1): its coordinator spawned it with --ppid on 10-02, self-updated on 10-04
+// (`detach`, exit, the replacement ADOPTED the running node — it is nobody's child after that), and at 05:59:00 the
+// 0.1.21 OTA installed and the node exited 75 into nothing; it was still down 8 h later. Five more nodes showed
+// the same "control socket unreachable" with their coordinators online.
+//   --ppid given: owned only while that launcher is still this process's parent and the watch was never detached —
+//                 XMBL_SUPERVISED cannot override that, because a coordinator sets both.
+//   no --ppid:    XMBL_SUPERVISED=1 means pm2/systemd owns it; otherwise nobody does.
+export function otaRestartMode({ watchPpid = 0, ppid = 0, detached = false, envSupervised = false } = {}) {
+  if (watchPpid) return !detached && ppid === watchPpid ? 'exit' : 'respawn';
+  return envSupervised ? 'exit' : 'respawn';
+}
+
+// The command line and environment a node that restarts ITSELF boots with. Neither may claim a supervisor: a
+// respawn that kept `--ppid <launcher>` would arm the parent watch against a pid that is not its parent and shut
+// itself down within 3 s, and one that kept XMBL_SUPERVISED=1 would exit 75 into nothing on the next update.
+export function respawnArgv(argv) {
+  const out = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--ppid') { if (argv[i + 1] && !argv[i + 1].startsWith('--')) i++; continue; }
+    if (String(argv[i]).startsWith('--ppid=')) continue;
+    out.push(argv[i]);
+  }
+  return out;
+}
+export function respawnEnv(env) {
+  const { XMBL_SUPERVISED, ...rest } = env;
+  return rest;
 }

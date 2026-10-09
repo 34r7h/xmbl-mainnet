@@ -32,7 +32,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { loadConfig } from '../node-config.js';
-import { fetchLatestVersion, otaDecision, installRootOf, updateCommand, OTA_EXIT_CODE, DEFAULT_RELEASE_URL } from '../release.js';
+import { fetchLatestVersion, otaDecision, installRootOf, updateCommand, otaRestartMode, respawnArgv, respawnEnv, OTA_EXIT_CODE, DEFAULT_RELEASE_URL } from '../release.js';
 import { ensureIdentityAtPath, loadIdentityAtPath } from '@xmbl/identity';
 import { loadOrCreatePeerKey } from '@xmbl/networking';
 import { installTimestampedLogging, installExitMarkers } from '../lifecycle-log.js';   // B5: every line stamped, every exit marked
@@ -53,7 +53,7 @@ const CORE_VERSION = JSON.parse(fs.readFileSync(path.join(CORE_DIR, 'package.jso
 // producing: no submits, anchors, validations or seals on stale code; reads and the control socket stay up),
 // then `npm install @xmbl/core@<latest>` in the install that owns this core (XMBL_INSTALL_DIR overrides; a
 // source checkout has none and only suspends — git updates it), then RESTART onto the new code: exit with
-// OTA_EXIT_CODE (75) under a supervisor (--ppid / XMBL_SUPERVISED=1), or respawn itself when unsupervised.
+// OTA_EXIT_CODE (75) to a supervisor that still owns this node, or respawn itself when none does (otaRestartMode).
 // An unreachable release source never suspends (latest unknown ≠ behind). XMBL_OTA=0 disables the loop; the
 // version proof (`status.build`, the signed `chain` claim) is reported regardless.
 function startOta({ core, flags, shutdown }) {
@@ -61,9 +61,9 @@ function startOta({ core, flags, shutdown }) {
   const url = process.env.XMBL_RELEASE_URL || DEFAULT_RELEASE_URL;
   const every = Math.max(60_000, Number(process.env.XMBL_OTA_CHECK_MS) || 600_000);
   const installRoot = process.env.XMBL_INSTALL_DIR || installRootOf(CORE_DIR);
-  const supervised = !!flags.ppid || process.env.XMBL_SUPERVISED === '1';
   core.ota = { enabled: true, url, every_ms: every, running: CORE_VERSION, latest: null, checked_at: null, behind: false,
-               install_root: installRoot, supervised, updating: false, last_error: null };
+               install_root: installRoot, updating: false, last_error: null,
+               get supervised() { return restartMode(flags) === 'exit'; } };   // as of now — a detach changes it
   let updating = false;
   const check = async () => {
     let latest = null;
@@ -101,8 +101,10 @@ function startOta({ core, flags, shutdown }) {
         console.error(`xmbl-node: OTA update FAILED — ${core.ota.last_error}; still suspended, retrying next check`);
         return;
       }
-      console.log(`xmbl-node: updated to @xmbl/core@${latest} — restarting onto it (${supervised ? `exit ${OTA_EXIT_CODE}` : 'respawn'})`);
-      await shutdown('ota-update', { exitCode: supervised ? OTA_EXIT_CODE : 0, respawn: !supervised });
+      // Decided NOW, not at boot: a coordinator that spawned this node may have detached it and gone since.
+      const mode = restartMode(flags);
+      console.log(`xmbl-node: updated to @xmbl/core@${latest} — restarting onto it (${mode === 'exit' ? `exit ${OTA_EXIT_CODE}` : `respawn — no supervisor owns this node (ppid ${process.ppid}${flags.ppid ? `, launcher ${flags.ppid}${detached ? ', detached' : ''}` : ''})`})`);
+      await shutdown('ota-update', { exitCode: mode === 'exit' ? OTA_EXIT_CODE : 0, respawn: mode === 'respawn' });
     } finally { updating = false; core.ota.updating = false; }
   };
   const timer = setInterval(() => { check().catch((e) => { core.ota.last_error = e.message; }); }, every);
@@ -172,10 +174,10 @@ async function selfHealFromBadInstall(err, flags = {}) {
   }
   // Nothing was constructed, so there is nothing to release: no pidfile, no socket, no machine lock, no open
   // store. A plain exit is the clean handoff back to the supervisor.
-  const supervised = !!flags.ppid || process.env.XMBL_SUPERVISED === '1';
-  console.error(`xmbl-node: installed @xmbl/core@${latest} — restarting onto it (${supervised ? `exit ${OTA_EXIT_CODE}` : 'respawn'})`);
-  if (supervised) process.exit(OTA_EXIT_CODE);
-  const child = spawn(process.execPath, process.argv.slice(1), { detached: true, stdio: 'inherit', env: process.env });
+  const mode = restartMode(flags);
+  console.error(`xmbl-node: installed @xmbl/core@${latest} — restarting onto it (${mode === 'exit' ? `exit ${OTA_EXIT_CODE}` : 'respawn'})`);
+  if (mode === 'exit') process.exit(OTA_EXIT_CODE);
+  const child = spawn(process.execPath, respawnArgv(process.argv.slice(1)), { detached: true, stdio: 'inherit', env: respawnEnv(process.env) });
   child.unref();
   console.error(`xmbl-node: respawned as pid ${child.pid} on the updated code`);
   process.exit(0);
@@ -248,6 +250,7 @@ function toCoreConfig(cfg, dataDir) {
 // when no watch exists (a pm2/systemd-managed node), which the op reports accurately rather than faking.
 let detachPpidWatch = null;
 let detached = false;
+const restartMode = (flags) => otaRestartMode({ watchPpid: flags.ppid ? Number(flags.ppid) : 0, ppid: process.ppid, detached, envSupervised: process.env.XMBL_SUPERVISED === '1' });
 
 async function cmdStart(cfgPath, flags = {}) {
   // B5 — installed FIRST, before anything can log or die, so a node that fails during boot still says so.
@@ -433,7 +436,7 @@ async function cmdStart(cfgPath, flags = {}) {
     // OTA restart without a supervisor: everything above has been released (pidfile, socket, machine lock,
     // stores flushed), so the replacement boots onto the updated install without a race.
     if (opts.respawn) {
-      const child = spawn(process.execPath, process.argv.slice(1), { detached: true, stdio: 'inherit', env: process.env });
+      const child = spawn(process.execPath, respawnArgv(process.argv.slice(1)), { detached: true, stdio: 'inherit', env: respawnEnv(process.env) });
       child.unref();
       console.log(`xmbl-node: respawned as pid ${child.pid} on the updated code`);
     }
