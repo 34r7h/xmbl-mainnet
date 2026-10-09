@@ -1,6 +1,6 @@
-// ⛔ THE HEAP LEAK THAT TOOK THE SEED DOWN. Measured 2026-10-01 on two public nodes: the node on 173.255.233.69
+// ⛔ THE HEAP LEAK THAT TOOK A PUBLIC NODE DOWN. Measured 2026-10-01 on two public nodes: the node on 173.255.233.69
 // hit "JavaScript heap out of memory" every 30-45 min (12 times on 2026-09-29, then its supervisor gave up — the
-// outage the broker's deploy gate reported as a dead seed), and the ap-southeast-2 node OOM'd after 8.8 h. Two heap
+// outage the broker's deploy gate reported as a dead node), and the ap-southeast-2 node OOM'd after 8.8 h. Two heap
 // snapshots 7.5 min apart on the latter grew by exactly 2,838 of each of: CustomEvent, Ed25519PeerId, Digest,
 // Ed25519PublicKey, Promise, Listener, and the closures `onItem` / `rejectHandler` / `cancel` — a linked list of
 // abort listeners on ONE AbortSignal, each holding a walked peer.

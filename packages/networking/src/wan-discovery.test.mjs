@@ -1,11 +1,11 @@
 // ⛔ THE GATE THAT WAS MISSING. `peerDiscovery: [mdns()]` was the ENTIRE discovery config of this
 // package from the first commit until 0.1.17. mDNS is LAN multicast — it cannot cross the internet.
 // So WAN discovery was one hardcoded multiaddr in the bundle's config and nothing else, and on
-// 2026-09-20 that one seed was re-provisioned onto an ephemeral port under a new peer id. Every box
-// in the fleet dialled a port nothing listened on, the seed logged "This node is isolated" 120
+// 2026-09-20 the one box at that address was re-provisioned onto an ephemeral port under a new peer id. Every box
+// in the fleet dialled a port nothing listened on, that box logged "This node is isolated" 120
 // times, and NOTHING else went red: the boxes stayed up, kept beaconing, kept serving `current`. A
 // star topology cannot report its own partition. It surfaced only because a deploy gate happens to
-// TCP-probe the seed.
+// TCP-probe that one address.
 //
 // kadDHT was imported at node.js:5 and called ZERO times the whole time, so a source-level check for
 // the import would have passed every day this was broken. This asserts by OUTCOME, on a node that
@@ -49,16 +49,16 @@ await n.stop?.();
 
 // AND IT MUST ACTUALLY FIND A PEER. Everything above is configuration — true of a service that
 // constructs and then does nothing. This is the outcome: three nodes, two of which know only the
-// seed, and one of them resolves the OTHER through peer routing. `peerRouting.findPeer` is a query
-// over /xmbl/kad/1.0.0 answered by the seed's routing table; mDNS implements no peer routing at
+// first, and one of them resolves the OTHER through peer routing. `peerRouting.findPeer` is a query
+// over /xmbl/kad/1.0.0 answered by A's routing table; mDNS implements no peer routing at
 // all, so it cannot be what satisfies this, and against `peerDiscovery: [mdns()]` alone libp2p has
 // no router to ask and the call throws. This is the shape of the outage: one box that everyone
 // reaches, and peers that have to find each other THROUGH it rather than from a constant.
-const A = new XNNode({ addresses: ['/ip4/127.0.0.1/tcp/47917'], announce: ['/dns4/seed.test.invalid/tcp/47917'] });
+const A = new XNNode({ addresses: ['/ip4/127.0.0.1/tcp/47917'], announce: ['/dns4/public.test.invalid/tcp/47917'] });
 await A.start();
-const seed = `/ip4/127.0.0.1/tcp/47917/p2p/${A.node.peerId.toString()}`;
-const B = new XNNode({ addresses: ['/ip4/127.0.0.1/tcp/0'], bootstrap: [seed] });
-const C = new XNNode({ addresses: ['/ip4/127.0.0.1/tcp/0'], bootstrap: [seed] });
+const aAddr = `/ip4/127.0.0.1/tcp/47917/p2p/${A.node.peerId.toString()}`;
+const B = new XNNode({ addresses: ['/ip4/127.0.0.1/tcp/0'], bootstrap: [aAddr] });
+const C = new XNNode({ addresses: ['/ip4/127.0.0.1/tcp/0'], bootstrap: [aAddr] });
 await B.start();
 await C.start();
 await new Promise((r) => setTimeout(r, 6000));

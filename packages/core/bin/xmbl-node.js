@@ -224,9 +224,9 @@ function isAlive(pid) {
 // Map the node config (A5a shape) onto the XMBLCore/app config shape.
 function toCoreConfig(cfg, dataDir) {
   return {
-    // peerCache: the peers this node has connected to, kept in its own data_dir and dialled on boot before any
-    // seed (@xmbl/networking peer-cache.js) — so after its first join no single seed, and no broker, is
-    // load-bearing for this node again.
+    // peerCache: the peers this node has connected to, kept in its own data_dir and dialled on boot alongside the
+    // bootstrap_peers addresses, none of them first (@xmbl/networking discovery.js join) — so after its first join
+    // no single box, and no broker, is load-bearing for this node again.
     network: { addresses: cfg.listen_addrs, bootstrap: cfg.bootstrap_peers, announce: cfg.announce_addrs || [], peerCache: path.join(dataDir, 'known-peers.json') },
     ledger: { dbPath: path.join(dataDir, 'ledger') },
     stateMachine: { dbPath: path.join(dataDir, 'xvsm'), totalShards: 4 },
@@ -313,7 +313,7 @@ async function cmdStart(cfgPath, flags = {}) {
   // Create-once if absent, load if present, then hand it to XNNode via
   // config.network BEFORE core.start() constructs libp2p (else it mints a fresh
   // peer_id each boot). D3/E1 (validation tasks keyed to a stable node) and a
-  // bootstrap seed's published multiaddr (which embeds its peer_id) require this.
+  // published multiaddr (which embeds its peer_id) in other nodes' bootstrap_peers require this.
   const peerKeyPath = path.join(path.dirname(cfg.identity_path), 'libp2p-peer.key');
   const peerKeyInfo = await loadOrCreatePeerKey(peerKeyPath);
   coreCfg.network.privateKey = peerKeyInfo.privateKey;

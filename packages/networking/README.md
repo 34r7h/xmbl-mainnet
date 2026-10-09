@@ -11,8 +11,8 @@ npm install @xmbl/networking
 ## Discovery is WAN-capable — that is a gate, not a detail
 
 Until 0.1.17 this package configured `peerDiscovery: [mdns()]` and nothing else. mDNS is LAN
-multicast: it cannot cross the internet, so every cross-network peer came from one hardcoded seed
-multiaddr while `kadDHT` sat imported and never called. When that seed moved, the whole fleet
+multicast: it cannot cross the internet, so every cross-network peer came from one hardcoded
+multiaddr while `kadDHT` sat imported and never called. When the box at that address moved, the whole fleet
 partitioned and nothing went red — the boxes stayed up, kept beaconing and kept serving. A star
 topology cannot report its own partition.
 
@@ -30,23 +30,23 @@ libp2p registers it as a discovery source through the peer-discovery symbol it e
 LAN discovery was never the bug, being LAN-*only* was.
 
 `wan-discovery.test.mjs` asserts it on a **started** node, because a check for the import passes even
-when nothing is wired, and ends on the outcome: three nodes, two of which know only the seed, and one
+when nothing is wired, and ends on the outcome: three nodes, two of which know only the first, and one
 resolves the *other* through `peerRouting.findPeer` — a query over `/xmbl/kad/1.0.0` answered from the
-seed's routing table. mDNS implements no peer routing, so it cannot be what satisfies that. **1/5
+first node's routing table. mDNS implements no peer routing, so it cannot be what satisfies that. **1/5
 against 0.1.16** (the outcome check fails with "No peer routers available"), **5/5 after**.
 
 ⚠ What this does *not* yet establish: `clientMode: false` means libp2p promotes a node to DHT
-**server** once it has a publicly dialable address, and on this mesh the seed may be the only box that
+**server** once it has a publicly dialable address, and on this mesh one public box may be the only one that
 does. Measured only on loopback so far, where all three nodes promoted. Until the share of prod boxes
-in server mode is counted, "peers find each other without the seed" is the design, not a measurement —
-the seed may still be the hinge, one layer up.
+in server mode is counted, "peers find each other through any peer" is the design, not a measurement —
+one public box may still be the hinge, one layer up.
 
 ## What it owns
 
 | Export | What it is |
 |---|---|
-| `XNNode` | The node. Announce addresses, circuit-relay reservations on the seeds, DHT + mDNS discovery, and auto-dial on discovery (discovery emits, it does not connect). |
-| `PeerDiscovery` | Bootstrap as a **standing intent**: keeps seeds connected with backoff, says what happened, and never dials itself. |
+| `XNNode` | The node. Announce addresses, a circuit-relay reservation through whichever connected peer runs a relay, DHT + mDNS discovery, and auto-dial on discovery (discovery emits, it does not connect). |
+| `PeerDiscovery` | `join()`: one dialer over every peer the node knows — the ones it met before (`known-peers.json`) and the addresses it was given — none of them special; holds up to `XN_JOIN_TARGET` peers, falls back to the bare address when a peer id is stale, says what happened, and never dials itself. |
 | `ConnectionManager` | Enforces the connection cap — a flood cannot exceed `maxConnections`. |
 | `MessageRouter` | **Deny-by-default**: an unknown or forged message type invokes no handler, it throws. |
 | `PubSubManager` | Topic pub/sub over floodsub. |

@@ -1,7 +1,7 @@
 // A NODE'S peer_id MUST SURVIVE A RESTART, AND THE KEY THAT DECIDES IT WAS 46.9% COVERED.
 //
 // By default libp2p mints a fresh key every start, so peer_id changes on every restart: presence
-// continuity breaks, a bootstrap seed multiaddr (which embeds its peer_id) goes stale, and
+// continuity breaks, every peer's multiaddr for the node (which embeds its peer_id) goes stale, and
 // validation-task assignment keyed to a stable node stops being stable. peer-identity.js persists the
 // key. What was never checked is the part that makes it safe — the create-once `wx` write that stops
 // two simultaneous starts minting two different identities for one node, and the 0600 mode on a file

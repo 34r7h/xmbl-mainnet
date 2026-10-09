@@ -10,7 +10,7 @@ const mode = process.argv[2] || 'after';
 
 // A: announces a PUBLIC address (a dns4 name), so under the fix it must self-elect as the relay server.
 // It binds a real local port so B can actually dial it.
-const A = new XNNode({ addresses: ['/ip4/127.0.0.1/tcp/47901'], announce: ['/dns4/seed.test.invalid/tcp/47901'] });
+const A = new XNNode({ addresses: ['/ip4/127.0.0.1/tcp/47901'], announce: ['/dns4/public.test.invalid/tcp/47901'] });
 if (mode === 'before') process.env.XMBL_RELAY_SERVER = '0';   // simulate the pre-fix world: nobody set the flag
 await A.start();
 const aRelay = !!A.node.services.relay;

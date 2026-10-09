@@ -4,7 +4,8 @@ export class PeerDiscovery {
   constructor(node) {
     this.node = node;
     this.discoveredPeers = new Set();
-    this._seedTimer = null;
+    this._joinTimer = null;
+    this._stopped = false;
 
     // Track discovered peers
     node.on('peer:discovered', (peer) => {
@@ -12,121 +13,139 @@ export class PeerDiscovery {
     });
   }
 
-  // BOOTSTRAP IS A STANDING INTENT, NOT ONE DIAL AT BOOT — and it must be audible.
+  // ⛔ NO PEER IS SPECIAL. A node joins the mesh through ANY peer it knows, and no box is the way in.
   //
-  // THE BUG THIS REPLACES: this dialed each seed exactly once, at start, and swallowed every error with the
-  // comment "silently handle bootstrap errors - expected in test environments". Both halves were wrong in
-  // production. One shot means a seed that is momentarily unreachable — not yet up, transport not ready, a
-  // blip at boot — is never tried again, and the node sits isolated forever with a perfectly good seed sitting
-  // in its config. Silence means that state produces NO evidence anywhere: no log line, no counter, nothing
-  // for an operator to find.
+  // THE DESIGN THIS REPLACES gave the addresses in bootstrap_peers a role no other peer had: they alone were
+  // dialed at boot, they alone were kept connected forever, and node.js took the node's relay reservation from
+  // them alone. The installer shipped one such address, so the mesh had one way in. MEASURED 2026-10-09: the only
+  // public node up, 173.255.233.69, had been re-keyed on 09-20; every config written before then named its old
+  // peer id, the node there refused that id ("Payload identity key … does not match expected remote identity
+  // key …"), and every NAT'd box holding such a config sat at 0 peers — this Mac included, while the same ip and
+  // port without the id connected at once.
   //
-  // MEASURED, and it is exactly this shape: a node booted with a correct, reachable seed in bootstrap_peers
-  // (/ip4/173.255.233.69/tcp/4001/p2p/12D3KooWKKZ…, TCP-verified open from the dialing machine) and reported
-  // peers: 0 and live_lead_count: 1 indefinitely. The same address through the `connect` control op
-  // succeeded immediately: 2 peers, live_lead_count 2, seal_quorum 2. Transport, identity, presence gossip
-  // and quorum all worked. The only thing that had failed was the one dial at boot, quietly.
+  // Now there is ONE list of candidates and ONE dialer. The candidates are the peers this node has connected to
+  // before (`book`, peer-cache.js) and the addresses it was given at start (`given`, the bootstrap_peers input —
+  // an entry in the address book like any other, not a role). Each round, while the node holds fewer than TARGET
+  // peers, every candidate it does not already hold is dialed at once, and any one that answers is as good as any
+  // other; at TARGET nothing is dialed. The DHT, identify and mDNS find the rest (node.js auto-dials what they
+  // find) — they need one connection to start from, and that is all a candidate is for. A NAT'd node's relay
+  // comes from circuit-relay's discoverRelays, which reserves on whichever connected peer runs a relay server.
   //
-  // So: keep trying until connected, with backoff, and SAY what happened each time. Stops as soon as every
-  // seed is connected; a permanently dead seed reports itself instead of looking like a working config.
-  async bootstrap(bootstrapAddresses) {
-    const seeds = (bootstrapAddresses || []).filter(Boolean);
-    if (!seeds.length) return;
+  // A PEER ID IN AN ADDRESS IS A CLAIM, AND IT GOES STALE when a box is re-keyed. On that refusal ONLY (not on a
+  // timeout, not on a closed port), the dialer dials the same address without the id and uses the id that answered;
+  // the transport still authenticates whoever answers, and every block and tx is still verified on arrival.
+  //
+  // It keeps going and it says what happened: a round with failures is ONE line naming them, every round while the
+  // budget lasts and then once per QUIET_EVERY rounds — MEASURED 2026-09-16, one dead address per line per retry
+  // wrote 8,542 identical lines into node.log, which buries the evidence as surely as not logging it.
+  async join({ given = [], book = null } = {}) {
+    const RETRY_MS = Math.max(1000, Number(process.env.XN_JOIN_RETRY_MS) || 15000);
+    const TARGET = Math.max(1, Number(process.env.XN_JOIN_TARGET) || 4);
+    const MAX_TRIES = Math.max(1, Number(process.env.XN_JOIN_MAX_TRIES) || 40);          // ~10 min at 15s
+    const QUIET_EVERY = Math.max(1, Number(process.env.XN_JOIN_QUIET_EVERY) || MAX_TRIES);
+    this._stopped = false;
 
-    const RETRY_MS = Math.max(5000, Number(process.env.XN_BOOTSTRAP_RETRY_MS) || 15000);
-    const MAX_TRIES = Math.max(1, Number(process.env.XN_BOOTSTRAP_MAX_TRIES) || 40);   // ~10 min at 15s
-    // How often the per-seed warning repeats AFTER the retry budget is spent. Same cadence as the budget
-    // itself (~10 min at 15s), so a permanently dead seed costs ~6 lines an hour instead of ~240.
-    const QUIET_EVERY = Math.max(1, Number(process.env.XN_BOOTSTRAP_QUIET_EVERY) || MAX_TRIES);
-    let tries = 0;
-
+    const lib = this.node.node;
+    const selfId = (() => { try { return lib.peerId.toString(); } catch { return null; } })();
     const peerIdOf = (addr) => { const m = /\/p2p\/([^/]+)$/.exec(String(addr)); return m ? m[1] : null; };
-    const connected = (addr) => {
-      const id = peerIdOf(addr);
-      return !!(id && this.node.connectionManager && this.node.connectionManager.getConnection(id));
+    // libp2p merges concurrent dials to one peer id and then throws "All multiaddr dials failed" with the real
+    // reasons in `.errors`, so every test below reads those too.
+    const why = (e) => (Array.isArray(e?.errors) && e.errors.length ? e.errors.map(why).join(' | ') : String(e?.message || e));
+    const wrongKey = (e) => e?.name === 'UnexpectedPeerError' || (Array.isArray(e?.errors) && e.errors.some(wrongKey))
+      || /does not match expected remote identity|unexpected peer/i.test(String(e?.message || e));
+    const isSelfDial = (e) => /can not dial self/i.test(why(e));
+    const heldIds = () => {
+      try { if (typeof lib.getPeers === 'function') return new Set(lib.getPeers().map(String)); } catch { /* fall through */ }
+      return new Set((this.node.connectionManager?.getAllConnections?.() || []).map(([id]) => String(id)));
     };
 
-    // NEVER DIAL YOURSELF. The published seed list is a constant every provisioned node inherits, INCLUDING
-    // the seed box itself — re-run the installer there and the box gets its own multiaddr in bootstrap_peers.
-    // The one-shot version failed at that silently; the retry loop below would instead warn every 15s for ten
-    // minutes and then declare the node unreachable from itself. The auto-dial handler in node.js already
-    // carries this exact guard (`idStr === this.node.peerId.toString()`); the bootstrap path did not.
-    const selfId = (() => { try { return this.node.node.peerId.toString(); } catch { return null; } })();
-    const skipped = seeds.filter((a) => selfId && peerIdOf(a) === selfId);
-    if (skipped.length) console.log(`[xn] bootstrap: skipping ${skipped.length} seed(s) that are THIS node`);
-    const targets = seeds.filter((a) => !selfId || peerIdOf(a) !== selfId);
-    if (!targets.length) return;
+    // NEVER DIAL YOURSELF. The installer hands every box the same address list, the box at that address included.
+    const all = [...new Set((given || []).filter(Boolean))];
+    const mine = all.filter((a) => selfId && peerIdOf(a) === selfId);
+    if (mine.length) console.log(`[xn] join: skipping ${mine.length} given address(es) that are THIS node`);
+    let addrs = all.filter((a) => !mine.includes(a));
+    if (!addrs.length && !book) return;
+    const resolved = new Map();                       // given address → the peer id that actually answered there
 
-    // A SEED CONNECTION IS NOT A ONE-TIME EVENT EITHER. An earlier version of this loop stopped itself the
-    // moment every seed was connected — which is the same one-shot mistake one level up: restart the seed box
-    // and the connection dies with it, nothing re-dials, and the node is isolated again with no log line.
-    // MEASURED: after the seed process was replaced, this node's live_lead_count fell 2 -> 1 (presence stopped
-    // arriving, so the stale lead correctly expired) and stayed there. The loop now KEEPS RUNNING and simply
-    // does nothing while everything is connected — the tick is a Map lookup per seed. `tries` counts only
-    // rounds that had work to do, so a long-lived healthy node never walks into the give-up branch.
-    let announcedAll = false;
-    const attempt = async () => {
-      const pending = targets.filter((a) => !connected(a));
-      if (!pending.length) {
-        if (!announcedAll) { announcedAll = true; console.log(`[xn] bootstrap: connected to all ${targets.length} seed(s)`); }
-        tries = 0;                                     // healthy again — a later drop gets a full retry budget
-        return;
+    // Dial; if the address answers under a different key, dial it again without the id. Returns the connection.
+    const dialAt = async (target) => {
+      try { return await lib.dial(target); } catch (e) {
+        if (!wrongKey(e)) throw e;
+        const bare = (Array.isArray(target) ? target : [target]).map((m) => m.decapsulateCode(421));
+        return lib.dial(bare.length === 1 ? bare[0] : bare);
       }
-      if (announcedAll) { announcedAll = false; console.warn(`[xn] bootstrap: ${pending.length}/${targets.length} seed(s) DROPPED — re-dialing`); }
+    };
+    const rekeyed = (where, was, now) => console.warn(`[xn] join: ${where} answers as ${now}, not ${was} — that id is stale (the box was re-keyed); using ${now}`);
+
+    let tries = 0;
+    const round = async () => {
+      if (this._stopped) return;
+      const held = heldIds();
+      if (held.size >= TARGET) { tries = 0; return; }
+      const fromGiven = addrs.map((a) => ({ a, id: resolved.get(String(a)) || peerIdOf(a) })).filter((c) => !(c.id && held.has(c.id)));
+      const learned = book
+        ? book.targets(selfId).filter((t) => !held.has(t.id) && !fromGiven.some((c) => c.id === t.id)).slice(0, TARGET * 2)
+        : [];
+      const n = fromGiven.length + learned.length;
+      if (!n) return;
       tries++;
-      for (const addr of pending) {
-        try {
-          const ma = typeof addr === 'string' ? multiaddr(addr) : addr;
-          await this.node.node.dial(ma);
-          console.log(`[xn] bootstrap: connected to seed ${addr}`);
-        } catch (error) {
-          // A seed that does not answer is worse than no seed at all: it looks configured, every node dials
-          // it, and nothing reports the failure. Name it, with the reason — every attempt while there is still
-          // a retry budget, and then PERIODICALLY rather than forever.
-          //
-          // ⛔ WHY THE THROTTLE. This warned on every attempt for the life of the process. A node whose only
-          // seed is down writes one line per seed per RETRY_MS, indefinitely: MEASURED on this node
-          // 2026-09-16, 8,542 identical lines in node.log against 10 give-up lines, from a single seed
-          // refusing connections. node.log is the file an operator greps, and burying it under one dead seed
-          // is the same defect as not logging at all — the evidence exists and cannot be found. After the
-          // budget is spent the loop keeps watching (a seed that returns must still reconnect), but it says so
-          // once per QUIET_EVERY attempts and carries the real attempt count so nothing looks like it stopped.
-          //
-          // ⛔ AND DO NOT PRINT A RATIO PAST ITS OWN DENOMINATOR. The old line read
-          // "unreachable (attempt 206/40)" — a counter 166 past the budget that was supposed to bound it.
-          // That is the tell, and it is a different fault from the volume: a reader who sees only "too many
-          // lines" fixes the verbosity and leaves a loop that has outlived its own bound looking like a bug.
-          // The loop being unbounded IS deliberate (a seed that comes back must reconnect), so the genuine
-          // rendering is to stop pretending there is a budget left and say what the loop is actually doing.
-          if (tries <= MAX_TRIES || tries % QUIET_EVERY === 0) {
-            const where = tries <= MAX_TRIES
-              ? `attempt ${tries}/${MAX_TRIES}`
-              : `attempt ${tries}, retry budget spent — watching for recovery, next line in ${QUIET_EVERY} attempt(s)`;
-            console.warn(`[xn] bootstrap: seed ${addr} unreachable (${where}): ${error?.message || error}`);
+      let reached = 0;
+      const failures = [];
+      await Promise.all([
+        ...fromGiven.map(async ({ a, id }) => {
+          try {
+            const ma = typeof a === 'string' ? multiaddr(a) : a;
+            const known = resolved.get(String(a));
+            const conn = await dialAt(known ? ma.decapsulateCode(421).encapsulate(`/p2p/${known}`) : ma);
+            const now = conn?.remotePeer?.toString();
+            if (now && id && now !== id) { resolved.set(String(a), now); rekeyed(String(ma.decapsulateCode(421)), id, now); }
+            reached++;
+          } catch (e) {
+            if (isSelfDial(e)) {                       // THIS node, behind an id it had before a re-key
+              addrs = addrs.filter((x) => x !== a);
+              console.log(`[xn] join: dropping ${a} — it is THIS node under an old id`);
+              return;
+            }
+            failures.push(`${a}: ${why(e)}`);
           }
-        }
+        }),
+        ...learned.map(async (t) => {
+          try {
+            const conn = await dialAt(t.addrs.map((x) => multiaddr(x)));
+            const now = conn?.remotePeer?.toString();
+            if (now && now !== t.id) { book.forget(t.id); rekeyed(t.addrs[0].replace(/\/p2p\/[^/]+$/, ''), t.id, now); }
+            reached++;
+          } catch (e) {
+            book.failed(t.id);
+            failures.push(`${t.id} (met before): ${why(e)}`);
+          }
+        }),
+      ]);
+      const holding = heldIds().size;
+      if (reached) console.log(`[xn] join: ${reached} of ${n} known peer(s) answered — holding ${holding}`);
+      if (failures.length && (tries <= MAX_TRIES || tries % QUIET_EVERY === 0)) {
+        const where = tries <= MAX_TRIES
+          ? `round ${tries}/${MAX_TRIES}`
+          : `round ${tries}, retry budget spent — still dialing, next line in ${QUIET_EVERY} round(s)`;
+        const shown = failures.slice(0, 3).join('; ') + (failures.length > 3 ? `; +${failures.length - 3} more` : '');
+        console.warn(`[xn] join: ${failures.length} of ${n} known peer(s) did not answer (${where}, holding ${holding}): ${shown}`);
       }
-      // GIVE UP LOUDLY, BUT KEEP THE LOOP. Stopping the timer here would restore the original defect for any
-      // seed that comes back later. Say it once, then fall back to a slow watch so recovery is still possible.
-      if (tries === MAX_TRIES) {
-        const still = targets.filter((a) => !connected(a));
-        // ISOLATED MEANS NO PEERS, NOT "A SEED IS DOWN". With learned peers and the DHT a node can hold a full
-        // mesh while every configured seed is dead; calling that isolation is a false partition report.
-        const holding = (() => { try { return this.node.node.getPeers().length; } catch { return 0; } })();
-        if (still.length) console.error(`[xn] bootstrap: ${still.length}/${targets.length} seed(s) have not answered in ${tries} attempts: ${still.join(', ')}. ${holding ? `Not isolated: this node holds ${holding} peer(s) through other paths` : 'This node holds NO peers and is isolated (mdns can still find LAN peers)'}; still watching.`);
+      // ISOLATED MEANS NO PEERS. Said once, when the budget runs out; the dialing does not stop, so a peer that
+      // comes back is still reached.
+      if (tries === MAX_TRIES && holding === 0) {
+        console.error(`[xn] join: no known peer has answered in ${tries} rounds — this node holds NO peers and is isolated (mdns can still find LAN peers); still dialing every ${RETRY_MS / 1000}s`);
       }
     };
 
-    await attempt();                                   // first try inline, so a healthy seed connects at boot
-    // Armed unconditionally, even when the first attempt connected everything: the loop's job is to keep the
-    // seed connections UP, not merely to establish them once.
-    this._seedTimer = setInterval(() => { attempt().catch(() => { /* never throw out of the retry */ }); }, RETRY_MS);
-    if (this._seedTimer.unref) this._seedTimer.unref();   // never hold the process open
+    await round();                                     // first round inline, so a reachable peer is held at boot
+    this._joinTimer = setInterval(() => { round().catch(() => { /* never throw out of the loop */ }); }, RETRY_MS);
+    if (this._joinTimer.unref) this._joinTimer.unref();   // never hold the process open
   }
 
-  // Stop the retry loop (node shutdown). Safe to call when it was never armed.
+  // Stop the join loop (node shutdown). Safe to call when it was never armed.
   stop() {
-    if (this._seedTimer) { clearInterval(this._seedTimer); this._seedTimer = null; }
+    this._stopped = true;
+    if (this._joinTimer) { clearInterval(this._joinTimer); this._joinTimer = null; }
   }
 
   getDiscoveredPeers() {

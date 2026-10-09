@@ -1,7 +1,7 @@
 // A5f — persist xn's libp2p peer key so peer_id is STABLE across node restarts.
 //
 // By default createLibp2p mints a FRESH key every start → a new peer_id each
-// restart, which breaks presence continuity, bootstrap-seed stability (a seed
+// restart, which breaks presence continuity, every peer's record of this node (a
 // multiaddr embeds its peer_id), and validation-task assignment keyed to a stable
 // node. This persists an Ed25519 libp2p key at a caller-chosen path (0600) and
 // loads it back, so the same peer_id survives restarts — the libp2p analog of A5e

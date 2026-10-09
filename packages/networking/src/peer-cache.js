@@ -1,15 +1,15 @@
-// ⛔ A NODE THAT FORGETS EVERY PEER ON RESTART HAS ONE POINT OF FAILURE: ITS SEED LIST.
+// ⛔ A NODE THAT FORGETS EVERY PEER ON RESTART CAN ONLY COME BACK THROUGH THE ADDRESSES IT WAS GIVEN.
 //
 // Until 0.1.21 a node kept no record of whom it had met. Every boot started from `bootstrap_peers` and nothing
 // else, so the mesh's resilience was exactly the resilience of that list — and the installer shipped ONE entry.
-// MEASURED 2026-10-01: the one published seed (173.255.233.69:4001) went down after its node hit a heap OOM 12
+// MEASURED 2026-10-01: the box at that one address (173.255.233.69:4001) went down after its node hit a heap OOM 12
 // times on 2026-09-29 and its supervisor gave up; a fresh public node in ap-southeast-2 booted with 0 peers; and
-// the broker's deploy gate rolled a release back on "every published seed answers". The DHT could not help: it
-// finds peers by asking peers, and a node that has none has nobody to ask.
+// the broker's deploy gate rolled a release back. The DHT could not help: it finds peers by asking peers, and a
+// node that has none has nobody to ask.
 //
-// So a node now remembers the peers it actually connected to, in its own data_dir, and dials them on boot
-// alongside whatever seeds are configured. Once a node has joined the mesh ONCE, no single seed — and no broker —
-// is load-bearing for it again.
+// So a node remembers the peers it actually connected to, in its own data_dir, and the join loop (discovery.js)
+// dials them alongside the addresses it was given, none of them first. Once a node has joined the mesh ONCE, no
+// single box — and no broker — is load-bearing for it again.
 //
 // Scope, said plainly: listen addresses come from identify, which is SELF-REPORTED by the peer. This file bounds
 // the damage (a capped size, ranking by last successful connection, eviction after repeated failures) but it is
@@ -28,8 +28,8 @@ export class PeerCache {
   constructor(file, opts = {}) {
     this.file = file;
     this.max = opts.max || 64;
-    // 40 failed rounds is ~10 min at the 15 s rejoin cadence — the same budget the seed loop gives a seed — so a peer
-    // that is briefly down survives, and one that is gone stops costing a dial. A peer that comes back is re-learned.
+    // 40 failed rounds is ~10 min at the 15 s join cadence — the join loop's own retry budget — so a peer that is
+    // briefly down survives, and one that is gone stops costing a dial. A peer that comes back is re-learned.
     this.maxFailures = opts.maxFailures || 40;
     this.maxAddrs = opts.maxAddrs || 4;
     // Private and loopback addresses are useless to a peer on another network, so they are dropped by default.
@@ -93,6 +93,11 @@ export class PeerCache {
     e.failures += 1;
     if (e.failures >= this.maxFailures) this.peers.delete(id);
     this._scheduleSave();
+  }
+
+  /** The id is no longer the one at its address (the box was re-keyed); the new id is recorded on connect. */
+  forget(peerId) {
+    if (this.peers.delete(String(peerId))) this._scheduleSave();
   }
 
   _trim() {

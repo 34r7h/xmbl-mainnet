@@ -85,27 +85,12 @@ export class XNNode extends EventEmitter {
       : [`/ip4/0.0.0.0/tcp/${this.options.port}`];
     if (!listen.includes('/p2p-circuit')) listen.push('/p2p-circuit');   // accept relayed inbound
 
-    // RESERVE ON THE SEEDS EXPLICITLY, don't only hope to discover a relay. `discoverRelays` finds a relay
-    // solely through identify on a peer this node already holds a connection to — which is the seed, the one
-    // box whose connection the logs show flapping ("1/1 seed(s) DROPPED — re-dialing"). Every flap drops the
-    // discovered reservation and the node goes undialable again until rediscovery. A bootstrap seed is a
-    // KNOWN relay candidate by construction, so listen on its /p2p-circuit directly: libp2p then keeps that
-    // reservation refreshed itself, and a seed that runs no relay server just fails the reservation
-    // harmlessly. Self is filtered the same way discovery.bootstrap does it.
-    // ⛔ ELECT BEFORE THE SEED CIRCUITS ARE ADDED, AND ONLY ON THIS NODE'S OWN ADDRESSES. Measured in prod
-    // 2026-09-15: computing this over the full `listen` array AFTER appending `<seed>/p2p-circuit` made a
-    // NAT'd laptop read the SEED's public ip out of its own reservation address and elect ITSELF as the
-    // relay server — "[xn] circuit-relay SERVER enabled (self-elected: public address
-    // /ip4/173.255.233.69/.../p2p-circuit)" on a box behind 192.168.1.77. A relay address describes the
-    // RELAY, never the reserving node, so it can never be evidence about this box.
+    // ⛔ ELECT ONLY ON THIS NODE'S OWN ADDRESSES. Measured in prod 2026-09-15: a NAT'd laptop read a relay's
+    // public ip out of its own reservation address and elected ITSELF relay server ("[xn] circuit-relay SERVER
+    // enabled (self-elected: public address /ip4/173.255.233.69/.../p2p-circuit)" on a box behind 192.168.1.77).
+    // A relay address describes the RELAY, never the reserving node, so it can never be evidence about this box.
     const ownAddrs = [...announce, ...listen];
     const publicAddrs = ownAddrs.filter(isPublicMultiaddr);
-
-    const seeds = Array.isArray(this.options.bootstrap) ? this.options.bootstrap.filter(Boolean) : [];
-    for (const seed of seeds) {
-      const circuit = `${String(seed).replace(/\/+$/, '')}/p2p-circuit`;
-      if (!listen.includes(circuit)) listen.push(circuit);
-    }
 
     const services = {
       identify: identify(),
@@ -116,8 +101,8 @@ export class XNNode extends EventEmitter {
       dcutr: dcutr(),
       // ⛔ WAN PEER DISCOVERY. `peerDiscovery: [mdns()]` below is LAN multicast and cannot cross the
       // internet, so until 0.1.17 the ONLY way a box outside the local segment was ever found was the
-      // hardcoded seed in bootstrap_peers — kadDHT was imported at the top of this file and called zero
-      // times. MEASURED 2026-09-20: the single published seed was re-provisioned onto an ephemeral port
+      // one hardcoded address in bootstrap_peers — kadDHT was imported at the top of this file and called zero
+      // times. MEASURED 2026-09-20: the box at that one address was re-provisioned onto an ephemeral port
       // under a fresh peer id, every box in the fleet dialled a port nothing listened on, and nothing
       // went red anywhere — the boxes stayed up, kept beaconing and served `current` while the mesh was
       // partitioned. A star topology cannot report its own partition. With a DHT a peer is found by
@@ -159,8 +144,8 @@ export class XNNode extends EventEmitter {
       },
       transports: [tcp(), wssHttpPathWebSockets(), circuitRelayTransport({ discoverRelays: 1 })],
       // ⛔ A RESERVATION THAT FAILS MUST NOT KILL THE NODE. libp2p's default FATAL_ALL treats ANY listen
-      // address it cannot bind as fatal, and `<seed>/p2p-circuit` above is a listen address whose success
-      // depends on a REMOTE box running a relay server. Measured in prod 2026-09-15: every node died at boot
+      // address it cannot bind as fatal, and a `/p2p-circuit` listen address succeeds only if a REMOTE box
+      // runs a relay server. Measured in prod 2026-09-15: every node died at boot
       // with "Some configured addresses failed to be listened on" and crash-looped through its restart
       // budget — the nodes went from 3 nodes up to 0. NO_FATAL keeps the addresses this node CAN bind and
       // logs the rest, which is the only correct behaviour for an address that is a request to a peer.
@@ -198,6 +183,13 @@ export class XNNode extends EventEmitter {
     // `connect` op. That is not "discoverable AND connected". Dial every freshly discovered peer once, guarded:
     // skip self, skip peers we already hold a connection to, and de-dupe in-flight dials so a discovery storm
     // cannot open N² dials. A dial failure is normal (peer went away) and must never throw out of the handler.
+    //
+    // DIAL THE PEER, NOT JUST ITS ADDRESS. mdns hands over addresses without `/p2p/<id>`, and an address with no id
+    // is a dial libp2p cannot match to a dial of the same peer already in flight (circuit-relay discovery dials every
+    // discovered peer by id). MEASURED 2026-10-09 (relay-election.test.mjs): both dials to one address completed,
+    // libp2p aborted the second as "Duplicate multiaddr connection", and that was the connection the far side had
+    // just picked for its relay reservation and its DHT ping — the reservation failed with "The connection muxer
+    // is \"closed\"", the peer never entered the routing table, and neither was retried.
     this._autoDialing = new Set();
     this.node.addEventListener('peer:discovery', (evt) => {
       this.emit('peer:discovered', evt.detail);
@@ -207,7 +199,9 @@ export class XNNode extends EventEmitter {
       if (this._autoDialing.has(idStr)) return;
       if (this.connectionManager.getConnection(idStr)) return;
       this._autoDialing.add(idStr);
-      const target = (evt.detail.multiaddrs && evt.detail.multiaddrs.length) ? evt.detail.multiaddrs : id;
+      const target = (evt.detail.multiaddrs && evt.detail.multiaddrs.length)
+        ? evt.detail.multiaddrs.map((m) => (/\/p2p\/[^/]+$/.test(String(m)) ? m : m.encapsulate(`/p2p/${idStr}`)))
+        : id;
       Promise.resolve(this.node.dial(target))
         .catch(() => { /* peer unreachable/gone — mdns will re-announce; nothing to do */ })
         .finally(() => this._autoDialing.delete(idStr));
@@ -242,52 +236,17 @@ export class XNNode extends EventEmitter {
     await this.node.start();
     this.started = true;
 
-    // Learned peers are dialled FIRST and without waiting on the seeds: a node that has met the mesh before must
-    // not need any particular seed — or the broker — to meet it again.
-    if (this.peerCache) this._rejoin();
-
-    if (this.options.bootstrap && this.options.bootstrap.length > 0) {
-      await this.discovery.bootstrap(this.options.bootstrap);
-    }
+    // One dialer for every peer this node knows — the ones it met before and the addresses it was given — and no
+    // peer in particular (discovery.js join).
+    await this.discovery.join({ given: this.options.bootstrap, book: this.peerCache });
 
     this.emit('started');
   }
 
-  // REJOIN FROM MEMORY. Dial the learned peers, most recently connected first, until this node holds
-  // REJOIN_TARGET connections; repeat on the bootstrap cadence while it holds fewer. A peer that does not answer
-  // is charged a failure (repeated failures evict it). One summary line per round that had work, never one per peer.
-  _rejoin() {
-    const TARGET = Math.max(1, Number(process.env.XN_REJOIN_TARGET) || 4);
-    const RETRY_MS = Math.max(1000, Number(process.env.XN_REJOIN_RETRY_MS) || Number(process.env.XN_BOOTSTRAP_RETRY_MS) || 15000);
-    const self = this.node.peerId.toString();
-    let announced = false;
-    const round = async () => {
-      if (!this.started) return;
-      const have = this.node.getPeers().length;
-      if (have >= TARGET) return;
-      const held = new Set(this.node.getPeers().map(String));
-      const todo = this.peerCache.targets(self).filter((t) => !held.has(t.id)).slice(0, TARGET * 2);
-      if (!todo.length) return;
-      let reached = 0;
-      await Promise.all(todo.map(async (t) => {
-        try { await this.node.dial(t.addrs.map((a) => multiaddr(a))); reached++; }
-        catch { this.peerCache.failed(t.id); }
-      }));
-      if (reached || !announced) {
-        announced = true;
-        console.log(`[xn] rejoin: ${reached} of ${todo.length} learned peer(s) answered (now holding ${this.node.getPeers().length})`);
-      }
-    };
-    round().catch(() => { /* never throw out of the rejoin */ });
-    this._rejoinTimer = setInterval(() => { round().catch(() => {}); }, RETRY_MS);
-    if (this._rejoinTimer.unref) this._rejoinTimer.unref();
-  }
-
   async stop() {
     if (!this.started) return;
-    // The bootstrap retry loop outlives a single dial by design; it must not outlive the node.
+    // The join loop outlives a single dial by design; it must not outlive the node.
     this.discovery?.stop?.();
-    if (this._rejoinTimer) { clearInterval(this._rejoinTimer); this._rejoinTimer = null; }
     this.peerCache?.save();
     await this.node.stop();
     this.started = false;

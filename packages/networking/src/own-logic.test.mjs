@@ -81,42 +81,43 @@ await check('PeerDiscovery tracks discovered peers (deduped) and stop() is safe 
   assert.doesNotThrow(() => d.stop(), 'stop() threw before the loop was ever armed');
 });
 
-await check('NEVER DIAL YOURSELF: a seed list of only this node dials nothing and arms no loop', async () => {
+await check('NEVER DIAL YOURSELF: an address list of only this node dials nothing and arms no loop', async () => {
   const node = new FakeNode('SELFID');
   const d = new PeerDiscovery(node);
-  await d.bootstrap(['/ip4/127.0.0.1/tcp/4001/p2p/SELFID']);   // the only seed IS this node
+  await d.join({ given: ['/ip4/127.0.0.1/tcp/4001/p2p/SELFID'] });   // the only address IS this node
   assert.deepStrictEqual(node.node.dialed, [], 'the node dialed itself');
-  assert.strictEqual(d._seedTimer, null, 'the retry loop was armed for a self-only seed list');
+  assert.strictEqual(d._joinTimer, null, 'the join loop was armed for a self-only address list');
   d.stop();
 });
 
 await check('self is skipped but a real peer is still dialed', async () => {
   const node = new FakeNode('SELFID');
   const d = new PeerDiscovery(node);
-  const peerSeed = { marker: 'a-real-peer' };                   // a pre-parsed (non-string) multiaddr
-  await d.bootstrap(['/ip4/127.0.0.1/tcp/4001/p2p/SELFID', peerSeed]);
+  const peerAddr = { marker: 'a-real-peer' };                   // a pre-parsed (non-string) multiaddr
+  await d.join({ given: ['/ip4/127.0.0.1/tcp/4001/p2p/SELFID', peerAddr] });
   assert.strictEqual(node.node.dialed.length, 1, 'expected exactly one dial (the real peer)');
-  assert.strictEqual(node.node.dialed[0], peerSeed, 'the real peer was not dialed');
+  assert.strictEqual(node.node.dialed[0], peerAddr, 'the real peer was not dialed');
   assert.ok(!node.node.dialed.some((a) => String(a).includes('SELFID')), 'the node dialed itself despite the guard');
   d.stop();
 });
 
-await check('an already-connected seed is not re-dialed', async () => {
+await check('an already-connected peer is not re-dialed', async () => {
   const node = new FakeNode('ME');
   node.connectionManager.addConnection('PEER1', { live: true });  // already connected
   const d = new PeerDiscovery(node);
-  await d.bootstrap(['/ip4/10.0.0.9/tcp/4001/p2p/PEER1']);
-  assert.deepStrictEqual(node.node.dialed, [], 're-dialed a seed that was already connected');
+  await d.join({ given: ['/ip4/10.0.0.9/tcp/4001/p2p/PEER1'] });
+  assert.deepStrictEqual(node.node.dialed, [], 're-dialed a peer that was already connected');
   d.stop();
 });
 
-await check('an empty seed list is a no-op (no dial, no loop)', async () => {
+await check('an empty address list and no peer book is a no-op (no dial, no loop)', async () => {
   const node = new FakeNode('ME');
   const d = new PeerDiscovery(node);
-  await d.bootstrap([]);
-  await d.bootstrap(undefined);
+  await d.join({ given: [] });
+  await d.join({ given: undefined });
+  await d.join();
   assert.deepStrictEqual(node.node.dialed, []);
-  assert.strictEqual(d._seedTimer, null);
+  assert.strictEqual(d._joinTimer, null);
 });
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'} — ${pass} passed, ${fail} failed\n`);
