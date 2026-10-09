@@ -1,5 +1,26 @@
 # @xmbl/core
 
+## 0.1.23
+
+### Patch Changes
+
+- **A node signs only a chain it holds.** `chain` counted block rows once and then added one on every
+  'block:added'; `rebuild_ledger` wipes every row and reseals the whole set, so inside a rebuild the signed
+  height climbed toward twice the chain. The broker kept that as the node's high-water mark and refused every
+  honest reading after it as a replay. Measured on the broker's /xmbl/status, 30 samples 2026-10-09
+  23:38–23:43Z: 4293b3c6a6 had 10 of 30 readings refused (mark 22590 = 2 × 11295), 831cfb42ed 9 of 30
+  (mark 21384 = 2 × 10692). Now a `chain` read while a ledger write runs answers with the last reading taken
+  with no write in flight, its signature and ts unchanged, marked `during_write`; with none it answers
+  unsigned. Every write ends by taking a fresh reading while it still holds the write lock, so a box that
+  rebuilds back to back never hands out one reading until the broker refuses it as stale.
+  chain-during-write.test.mjs: 19/19; against 0.1.22's control socket 8 fail, with only the first change 2 fail.
+- **Rehearsed before release, with real processes:** a 0.1.22 node updated itself to 0.1.23 from a local
+  registry and respawned in 35 s, and the broker's own verifier (coordinator-chain-claim.ts) read `chain`
+  while a driver rebuilt a growing set. A rebuild every ~3 s with a reading every 2 s: 0.1.22 had 79 of 120
+  refused and 36 heights above the chain; 0.1.23 had 120 of 120 verified, none above the chain, the oldest
+  14 s. Rebuilds back to back with a reading every 30 s: without the second change 7 of 11 were refused as
+  stale (one reading signed for 300 s); 0.1.23 had 11 of 11 verified, the oldest 8 s.
+
 ## 0.1.22
 
 ### Patch Changes
