@@ -8,6 +8,10 @@ const CRYPTO_SECRETKEYBYTES = 24;
 const CRYPTO_PUBLICKEYBYTES = 1420;
 const CRYPTO_BYTES = 454;
 
+// scheme -> Promise<MAYOWasm>; see MAYOWasm.load.
+const LOADED = new Map();
+let INSTANTIATIONS = 0;
+
 export class MAYOWasm {
   constructor(module, scheme = DEFAULT_SCHEME) {
     this.module = module;
@@ -33,20 +37,36 @@ export class MAYOWasm {
   }
 
   /**
-   * Load the MAYO WASM instance for a signature scheme (a fresh module per call,
-   * as before F5 — no caching is introduced here).
+   * The MAYO WASM instance for a signature scheme — ONE per scheme per process.
+   *
+   * This used to instantiate a fresh Emscripten module on every call, and every sign and every verify
+   * called it, so a node compiled and threw away a WASM module per signature. Measured on a 2-node
+   * fleet (scripts/fleet-load.mjs, 500 node-signed datums): 0.56 s in load alone plus the garbage it
+   * left, on top of 2.9 s of actual signing and verifying. sign, verify and keygen are synchronous
+   * inside (malloc, call, free — no await between), so one module serves every caller in turn.
+   * A load that fails is not cached; the next call tries again.
    *
    * The scheme selects WHICH artifact to load, via the pure resolver in
-   * wasm-schemes.js. Passing no scheme uses DEFAULT_SCHEME ('mayo') and resolves
-   * to the exact artifact loaded before F5 — so existing callers are unchanged.
+   * wasm-schemes.js. Passing no scheme uses DEFAULT_SCHEME ('mayo').
    *
    * @param {string} [scheme=DEFAULT_SCHEME] - one of KNOWN_SCHEMES
    * @returns {Promise<MAYOWasm>}
    */
-  static async load(scheme = DEFAULT_SCHEME) {
+  static load(scheme = DEFAULT_SCHEME) {
+    let p = LOADED.get(scheme);
+    if (!p) {
+      p = MAYOWasm._instantiate(scheme);
+      LOADED.set(scheme, p);
+      p.catch(() => { if (LOADED.get(scheme) === p) LOADED.delete(scheme); });
+    }
+    return p;
+  }
+
+  /** How many Emscripten modules this process has instantiated (tests read it). */
+  static get instantiations() { return INSTANTIATIONS; }
+
+  static async _instantiate(scheme) {
     // Resolve the scheme to its artifact paths (throws clearly on unknown scheme).
-    // Default scheme resolves to the exact artifact loaded before F5, so the
-    // default path is unchanged — a fresh module per call, as before.
     const { cjsPath, wasmPath } = resolveScheme(scheme);
 
     // Load the CommonJS module - it exports createModule function.
@@ -66,6 +86,7 @@ export class MAYOWasm {
     };
 
     // Call createModule to get the module instance
+    INSTANTIATIONS++;
     const mayoModule = await createModule(moduleConfig);
 
     // If it's a promise, wait for it

@@ -5,6 +5,11 @@ import { createHash } from 'crypto';
 import { verifyMicromine, type6TxBody, authorityOf, validateXid } from '@xmbl/cubic-ledger';   // content-addressing: the ONLY admissible proof an unsigned type-6 or type-7 carries
 import { validateForConsensus } from './validate.js';                 // THE ORDER: 1. can it happen  2. is the xid correct  3. (seal/adopt) placement
 
+// THE PER-TX TRACE IS OFF UNLESS XPC_DEBUG=1. Every tx used to write about 62 lines per node — three pretty-printed
+// JSON dumps per tx plus one per validation report — 3 MB of log per 500 txs, and stringifying and writing it cost
+// a node more than its signature checks (measured on a 2-node fleet: 1.4 s in writeBuffer per 500 txs).
+const XPC_DEBUG = process.env.XPC_DEBUG === '1';
+
 export class ConsensusWorkflow extends EventEmitter {
   constructor(options = {}) {
     super();
@@ -67,13 +72,13 @@ export class ConsensusWorkflow extends EventEmitter {
 
     // Listen for finalized transactions and add to ledger
     this.on('tx:finalized', async (data) => {
-      console.log('[XPC] tx:finalized listener triggered, xclt:', !!this.xclt, 'txData:', !!data.txData);
+      if (XPC_DEBUG) console.log('[XPC] tx:finalized listener triggered, xclt:', !!this.xclt, 'txData:', !!data.txData);
       // A5: the consensus clock rides BESIDE the tx from here to the block. A tx that reaches the ledger
       // therefore still carries exactly the bytes its signer signed — which is what lets B7 verify it again.
       const sealOpts = { validationTimestamp: data.validationTimestamp ?? null };
       if (this.batchSealer) {
         try {
-          console.log('[XPC] Routing finalized tx through lead batchSealer:', data.txId || data.txData?.id);
+          if (XPC_DEBUG) console.log('[XPC] Routing finalized tx through lead batchSealer:', data.txId || data.txData?.id);
           await this.batchSealer(data.txData, sealOpts);
         } catch (error) {
           console.error('[XPC] batchSealer failed on finalized tx:', error);
@@ -82,9 +87,9 @@ export class ConsensusWorkflow extends EventEmitter {
       }
       if (this.xclt) {
         try {
-          console.log('[XPC] Adding transaction to ledger:', data.txId || data.txData?.id);
+          if (XPC_DEBUG) console.log('[XPC] Adding transaction to ledger:', data.txId || data.txData?.id);
           const result = await this.xclt.addTransaction(data.txData, sealOpts);
-          console.log('[XPC] Transaction added to ledger successfully, blockId:', result?.blockId);
+          if (XPC_DEBUG) console.log('[XPC] Transaction added to ledger successfully, blockId:', result?.blockId);
         } catch (error) {
           console.error('[XPC] Failed to add finalized transaction to ledger:', error);
           console.error('[XPC] Error stack:', error.stack);
@@ -714,17 +719,17 @@ export class ConsensusWorkflow extends EventEmitter {
       validatorId: validatorId || task.validatorId || 'unknown',
       timestamp: timestamp ? timestamp.toString() : null
     };
-    console.log('[XPC] ===== EMITTING validation:complete =====');
-    console.log('[XPC] Validation data:', JSON.stringify(validationData, null, 2));
+    if (XPC_DEBUG) console.log('[XPC] ===== EMITTING validation:complete =====');
+    if (XPC_DEBUG) console.log('[XPC] Validation data:', JSON.stringify(validationData, null, 2));
     this.emit('validation:complete', validationData);
-    console.log('[XPC] validation:complete event emitted');
+    if (XPC_DEBUG) console.log('[XPC] validation:complete event emitted');
     
     // Check if enough validations
     const validations = this._getValidationCount(rawTxId);
     const need = this._requiredFor(rawTxId);   // this tx's REAL validator set, not a global constant
-    console.log(`Validation count for ${rawTxId}: ${validations}/${need}`);
+    if (XPC_DEBUG) console.log(`Validation count for ${rawTxId}: ${validations}/${need}`);
     if (validations >= need) {
-      console.log(`Moving transaction ${rawTxId} to processing`);
+      if (XPC_DEBUG) console.log(`Moving transaction ${rawTxId} to processing`);
       await this.moveToProcessing(rawTxId);
     }
     return true;
@@ -746,7 +751,7 @@ export class ConsensusWorkflow extends EventEmitter {
       rawTxId,
       txId: rawTx.txData?.id || rawTxId
     });
-    console.log(`moveToProcessing: Moving ${rawTxId} to processing with ${rawTx.validationTimestamps?.length || 0} validations`);
+    if (XPC_DEBUG) console.log(`moveToProcessing: Moving ${rawTxId} to processing with ${rawTx.validationTimestamps?.length || 0} validations`);
     
     // Calculate average timestamp from validators (nanoseconds)
     // Validators return timestamp of when they received tx to validate
@@ -785,15 +790,15 @@ export class ConsensusWorkflow extends EventEmitter {
     // Remove from raw_tx_mempool
     await this._removeRawTransaction(rawTxId);
     
-    console.log('[XPC] ===== EMITTING tx:processing =====');
+    if (XPC_DEBUG) console.log('[XPC] ===== EMITTING tx:processing =====');
     const processingData = { 
       txId: validatedHash, 
       rawTxId, 
       validationTimestamp: avgTimestamp ? avgTimestamp.toString() : null
     };
-    console.log('[XPC] Processing transaction data:', JSON.stringify(processingData, null, 2));
+    if (XPC_DEBUG) console.log('[XPC] Processing transaction data:', JSON.stringify(processingData, null, 2));
     this.emit('tx:processing', processingData);
-    console.log('[XPC] tx:processing event emitted');
+    if (XPC_DEBUG) console.log('[XPC] tx:processing event emitted');
   }
 
   isInProcessing(rawTxId) {
@@ -865,7 +870,7 @@ export class ConsensusWorkflow extends EventEmitter {
     // Emit finalized event - xclt will add this to ledger
     // Blocks are sorted by hash when face has 9 blocks
     // Faces are sorted by hash when cube has 3 faces
-    console.log('[XPC] ===== EMITTING tx:finalized =====');
+    if (XPC_DEBUG) console.log('[XPC] ===== EMITTING tx:finalized =====');
     
     // Convert BigInt values in txData to strings for serialization
     function serializeBigInt(obj) {
@@ -889,9 +894,9 @@ export class ConsensusWorkflow extends EventEmitter {
       txData: txDataSerialized,
       validationTimestamp: processingTx.validationTimestamp ? processingTx.validationTimestamp.toString() : null // Convert BigInt to string for serialization
     };
-    console.log('[XPC] Finalized transaction data:', JSON.stringify(finalizedData, null, 2));
+    if (XPC_DEBUG) console.log('[XPC] Finalized transaction data:', JSON.stringify(finalizedData, null, 2));
     this.emit('tx:finalized', finalizedData);
-    console.log('[XPC] tx:finalized event emitted');
+    if (XPC_DEBUG) console.log('[XPC] tx:finalized event emitted');
     return true;
   }
 
@@ -1001,7 +1006,7 @@ export class ConsensusWorkflow extends EventEmitter {
       // Store {nodeId, timestamp} so we can track which validator provided which timestamp
       rawTx.validationTimestamps.push({ nodeId, timestamp });
       await this.mempool._saveRawTx(leaderId, rawTxId, rawTx);
-      console.log(`Added validation timestamp for ${rawTxId} from ${nodeId}, count: ${rawTx.validationTimestamps.length}`);
+      if (XPC_DEBUG) console.log(`Added validation timestamp for ${rawTxId} from ${nodeId}, count: ${rawTx.validationTimestamps.length}`);
     } else {
       console.warn(`_addValidationTimestamp: No rawTx found for ${rawTxId}`);
     }

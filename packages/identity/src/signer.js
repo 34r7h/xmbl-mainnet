@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { MAYOWasm } from './wasm-wrapper.js';
 import {
   sign as cubicSigSign,
@@ -101,9 +102,32 @@ export async function verify(message, signature, publicKey, opts) {
     const sigObj = typeof signature === 'object' ? signature : deserializeSignature(signature);
     return cubicSigVerify(toMessageBytes(message), sigObj, pk, cubeContext);
   }
+  const bytes = toMessageBytes(message);
+  const key = verifyKey(scheme, bytes, signature, publicKey);
+  const known = VERIFIED.get(key);
+  if (known !== undefined) { VERIFY_STATS.hits++; return known; }
+  VERIFY_STATS.misses++;
   const mayo = await MAYOWasm.load(scheme);
-  return mayo.verify(toMessageBytes(message), signature, publicKey);
+  const ok = mayo.verifySync(bytes, signature, publicKey);
+  VERIFIED.set(key, ok);
+  if (VERIFIED.size > VERIFY_MEMO_MAX) VERIFIED.delete(VERIFIED.keys().next().value);
+  return ok;
 }
+
+// ONE MAYO VERIFY PER (scheme, public key, signature, message) PER PROCESS. A node checks the same signed tx
+// at the door, again when it validates, again when it finalizes and again when the ledger seals it — and a
+// verify is a pure function of those four inputs, so every check after the first is this lookup. Bounded,
+// oldest first out; a refusal is remembered as well as an acceptance.
+const VERIFIED = new Map();
+const VERIFY_MEMO_MAX = Number(process.env.XMBL_VERIFY_MEMO_MAX) || 16384;
+const VERIFY_STATS = { hits: 0, misses: 0 };
+function verifyKey(scheme, bytes, signature, publicKey) {
+  // base64 and scheme names never contain NUL, and the message goes last, so no two inputs share a key.
+  return createHash('sha256').update(String(scheme)).update('\0').update(String(publicKey)).update('\0')
+    .update(String(signature)).update('\0').update(bytes).digest('base64');
+}
+/** {hits, misses, size} of the verify memo (tests and the chain op read it). */
+export function verifyStats() { return { ...VERIFY_STATS, size: VERIFIED.size, max: VERIFY_MEMO_MAX }; }
 
 /**
  * Construct a scheme-tagged signature envelope. Forward hook for callers that

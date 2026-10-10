@@ -18,7 +18,7 @@ const K = Number(opt('txs', 2000));
 const CLASS = opt('class', 'datum');
 const BATCH = Math.min(500, Number(opt('batch', 500)));
 const STALL_S = Number(opt('stall', 30));
-const env = Object.fromEntries(all('env').map((kv) => kv.split('=')));
+const env = Object.fromEntries(all('env').map((kv) => [kv.slice(0, kv.indexOf('=')), kv.slice(kv.indexOf('=') + 1)]));
 const kills = all('kill').map((s) => { const [i, t] = s.split('@'); return { i: Number(i), at: Number(t) * 1000 }; });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const run = Date.now().toString(36);
@@ -40,7 +40,12 @@ const snap = async (i) => {
            applied: c?.applied_tx_count ?? null, mempool: c?.mempool ?? null, root: c?.state_root ? String(c.state_root).slice(0, 12) : null };
 };
 const baseline = await Promise.all(f.alive().map(snap));
-const base = Object.fromEntries(baseline.map((s) => [s.node, s.blocks ?? 0]));
+// A tx is in a node's ledger once it is a block there, sealed into a face or pooled in the face still filling
+// (a face takes 9 blocks, so the last few of a run wait for the next traffic). Both are counted; the sealed
+// figure is printed beside it.
+const held = (s) => (s.blocks ?? 0) + (s.pooled ?? 0);
+const base = Object.fromEntries(baseline.map((s) => [s.node, held(s)]));
+const baseSealed = Object.fromEntries(baseline.map((s) => [s.node, s.blocks ?? 0]));
 
 console.log(`preparing ${K} ${CLASS} txs`);
 const txs = Array.from({ length: K }, (_, j) => makeTx(j));
@@ -72,13 +77,13 @@ const tSubmitted = Date.now();
 console.log(`submitted: ${accepted} accepted, ${rejected} rejected, ${lost} lost in ${tSubmitted - t0} ms (${Math.round(accepted / ((tSubmitted - t0) / 1000))} tx/s at the door)`);
 for (const [e, c] of errors) console.log(`  rejected x${c}: ${String(e).slice(0, 160)}`);
 
-// Wait until every live node holds `accepted` new blocks, or nothing moves for STALL_S seconds.
+// Wait until every live node holds `accepted` new txs, or nothing moves for STALL_S seconds.
 let last = null, lastMove = Date.now(), tDone = null;
 while (true) {
   const rows = await Promise.all(f.alive().map(snap));
-  const got = rows.map((r) => (r.blocks ?? 0) - (base[r.node] ?? 0));
+  const got = rows.map((r) => held(r) - (base[r.node] ?? 0));
   const key = JSON.stringify(got);
-  if (key !== last) { last = key; lastMove = Date.now(); console.log(`+${Date.now() - t0} ms  new blocks per live node ${key}  pooled ${JSON.stringify(rows.map((r) => r.pooled))}`); }
+  if (key !== last) { last = key; lastMove = Date.now(); console.log(`+${Date.now() - t0} ms  new txs per live node ${key}  of them pooled ${JSON.stringify(rows.map((r) => r.pooled))}`); }
   if (got.length && got.every((g) => g >= accepted)) { tDone = Date.now(); break; }
   if (Date.now() - lastMove > STALL_S * 1000) break;
   await sleep(1000);
@@ -86,8 +91,9 @@ while (true) {
 const rows = await Promise.all(f.alive().map(snap));
 for (const r of rows) console.log(JSON.stringify(r));
 const roots = new Set(rows.map((r) => r.root));
-const minBlocks = Math.min(...rows.map((r) => (r.blocks ?? 0) - (base[r.node] ?? 0)));
+const minHeld = Math.min(...rows.map((r) => held(r) - (base[r.node] ?? 0)));
+const minSealed = Math.min(...rows.map((r) => (r.blocks ?? 0) - (baseSealed[r.node] ?? 0)));
 const wall = ((tDone ?? lastMove) - t0) / 1000;
-console.log(`\nRESULT nodes=${N} live=${rows.length} class=${CLASS} accepted=${accepted} on_every_node=${minBlocks} wall=${wall.toFixed(1)}s ` +
-  `e2e=${Math.round(minBlocks / wall)} tx/s state_roots=${roots.size}${tDone ? '' : ' (STALLED)'}`);
+console.log(`\nRESULT nodes=${N} live=${rows.length} class=${CLASS} accepted=${accepted} on_every_node=${minHeld} (sealed ${minSealed}) ` +
+  `wall=${wall.toFixed(1)}s e2e=${Math.round(minHeld / wall)} tx/s state_roots=${roots.size}${tDone ? '' : ' (STALLED)'}`);
 await stop(tDone ? 0 : 1);
