@@ -2,6 +2,35 @@ import { EventEmitter } from 'events';
 let WebTorrent = null;
 // WebTorrent is optional - will be loaded lazily if available
 
+// ONE MESSAGE PER FLUSH, NOT ONE PER TX. Every raw tx and every validation report used to be its own pubsub
+// message, and each message costs every receiver a noise decrypt, a yamux frame, a floodsub ed25519 signature
+// check and a JSON parse — measured on 4 real nodes, 2000 node-signed txs: 1.7 s in floodsub processMessage,
+// 1 s in noise decrypt, 0.9 s in yamux send and 0.65 s in ed25519 per node, more than the MAYO checks. Raw txs
+// and reports now wait up to XPC_GOSSIP_FLUSH_MS (10 ms) and go out together as {type:'batch', items}, each
+// item exactly the message it would have been alone, so a receiver handles it exactly as before.
+// A node only batches when every live peer has said in its presence that it reads batches (caps: ['batch']):
+// a node still on the previous release ignores a type it does not know, and would lose every tx and report
+// in it. Presence itself is never batched.
+const BATCHABLE = new Set(['raw_tx', 'validation_report']);
+// libp2p reads a frame of at most 4 MiB; a MAYO-signed tx is about 3 KB of JSON, so a flush of 1 MiB carries
+// a few hundred and is split before it reaches the limit.
+const BATCH_MAX_BYTES = 1 << 20;
+const FLUSH_MS = Math.max(1, Number(process.env.XPC_GOSSIP_FLUSH_MS) || 10);
+const KEEP_BROADCASTS = 1000;
+export const GOSSIP_CAPS = ['batch'];
+
+// True when at least one peer has been heard from inside `ttlMs` and every such peer named `cap` in its presence.
+// `registry` is the node's address -> {caps, lastSeen} map; its own entry, if any, is skipped.
+export function everyLivePeerHas(registry, self, cap = 'batch', ttlMs = 30000, now = Date.now()) {
+  let live = 0;
+  for (const [address, p] of registry) {
+    if (address === self || now - (p.lastSeen || 0) > ttlMs) continue;
+    live++;
+    if (!Array.isArray(p.caps) || !p.caps.includes(cap)) return false;
+  }
+  return live > 0;
+}
+
 /**
  * Consensus Gossip with WebTorrent integration
  * Broadcasts consensus messages via WebTorrent swarms
@@ -9,7 +38,11 @@ let WebTorrent = null;
 export class ConsensusGossip extends EventEmitter {
   constructor(options = {}) {
     super();
-    this.broadcasts = []; // Store broadcasts for testing
+    this.broadcasts = []; // the last KEEP_BROADCASTS published, for tests (it kept every message for the life of the process)
+    // Set by the node: true when every live peer reads batches. Until then every message goes out alone.
+    this.canBatch = options.canBatch || (() => false);
+    this._outbox = []; this._outboxBytes = 0; this._flushTimer = null;
+    this.stats = { messages: 0, batches: 0, batchedItems: 0 };
     this.client = null; // Will be initialized lazily if WebTorrent is available
     this.swarms = new Map(); // topic -> swarm
     
@@ -102,7 +135,7 @@ export class ConsensusGossip extends EventEmitter {
   // Node presence: {address, publicKey, roles}. Every node keeps a live registry from these,
   // which is how leaders are chosen + submitter public keys resolved — no central directory.
   async broadcastPresence(presence) {
-    await this._publish({ type: 'presence', ...presence, ts: Date.now() });
+    await this._publish({ type: 'presence', ...presence, caps: GOSSIP_CAPS, ts: Date.now() });
   }
 
   // 2b seal-boundary agreement (ab5932a5): a node's proposed candidate SET for a level — {level:'L1'|'L2',
@@ -112,9 +145,34 @@ export class ConsensusGossip extends EventEmitter {
     await this._publish({ type: 'seal_proposal', ...proposal, ts: Date.now() });
   }
 
-  // Shared publish path: WebTorrent swarm (if present) + libp2p pubsub (the real transport).
   async _publish(message) {
     this.broadcasts.push(message);
+    if (this.broadcasts.length > KEEP_BROADCASTS) this.broadcasts.splice(0, this.broadcasts.length - KEEP_BROADCASTS);
+    if (BATCHABLE.has(message.type) && this.canBatch()) { this._enqueue(message); return; }
+    await this._send(message);
+  }
+
+  _enqueue(message) {
+    const size = JSON.stringify(message).length;
+    if (this._outbox.length && this._outboxBytes + size > BATCH_MAX_BYTES) this.flush();
+    this._outbox.push(message);
+    this._outboxBytes += size;
+    if (!this._flushTimer) this._flushTimer = setTimeout(() => this.flush(), FLUSH_MS);
+  }
+
+  /** Send whatever is waiting now (the timer does this on its own). */
+  flush() {
+    if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
+    if (!this._outbox.length) return;
+    const items = this._outbox;
+    this._outbox = []; this._outboxBytes = 0;
+    if (items.length > 1) { this.stats.batches++; this.stats.batchedItems += items.length; }
+    this._send(items.length === 1 ? items[0] : { type: 'batch', items, ts: Date.now() }).catch(() => {});
+  }
+
+  // Shared send path: WebTorrent swarm (if present) + libp2p pubsub (the real transport).
+  async _send(message) {
+    this.stats.messages++;
     const swarm = this.swarms.get(this.topic);
     if (swarm) {
       try { swarm.broadcast(Buffer.from(JSON.stringify(message))); } catch (error) { /* ignore */ }
@@ -142,7 +200,12 @@ export class ConsensusGossip extends EventEmitter {
         });
         break;
       case 'presence':
-        this.emit('presence:received', { address: message.address, publicKey: message.publicKey, roles: message.roles });
+        this.emit('presence:received', { address: message.address, publicKey: message.publicKey, roles: message.roles,
+          caps: Array.isArray(message.caps) ? message.caps : [] });
+        break;
+      case 'batch':
+        // Each item is handled as if it had arrived alone; a batch inside a batch is not a thing a node sends.
+        if (Array.isArray(message.items)) for (const item of message.items) if (item && item.type !== 'batch') this._handleMessage(item);
         break;
       case 'seal_proposal':
         this.emit('seal_proposal:received', { level: message.level, nodeId: message.nodeId, setHash: message.setHash, memberIds: message.memberIds || [] });
@@ -154,6 +217,7 @@ export class ConsensusGossip extends EventEmitter {
    * Cleanup and destroy swarms
    */
   async destroy() {
+    this.flush();
     for (const swarm of this.swarms.values()) {
       try {
         swarm.destroy();
@@ -162,7 +226,8 @@ export class ConsensusGossip extends EventEmitter {
       }
     }
     this.swarms.clear();
-    this.client.destroy();
+    // The client is null when WebTorrent is not installed or could not bind (see _initSwarm); destroy() threw then.
+    if (this.client) { try { this.client.destroy(() => {}); } catch { /* already down */ } this.client = null; }
   }
 }
 

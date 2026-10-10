@@ -73,18 +73,30 @@ const mined6 = () => { const t = { chain: 'xmbl', from: ['a'], to: ['b'], asset:
   check('REJECTS an EMPTY array `from`', w._admitToPool('nodeA', { type: 'tx', from: [], sig: 'S' }) === false);
 }
 
-// (c) FLOOD ban applies per submitter, to every type
+// (c) FLOOD is a per-submitter RATE, applied to every type — over it the rest of the window is refused, and the
+// next window admits again (it was a ban for the life of the process: 500 in 60 s and a relaying node was cut
+// off by every peer for good)
 {
   process.env.XPC_JUNK_BAN_MAX = '3';
+  process.env.XPC_JUNK_WINDOW_MS = '150';
   const w = mk();
-  let banned = null;
-  w.on('submitter:banned', (d) => { banned = d; });
+  let throttled = null;
+  w.on('submitter:throttled', (d) => { throttled = d; });
   for (let i = 0; i < 3; i++) check(`signed anchor ${i + 1} admitted (<=MAX)`, w._admitToPool('flooder', signedAnchor('h' + i)) === true);
-  check('4th exceeds MAX -> dropped + ban', w._admitToPool('flooder', signedAnchor('h4')) === false);
-  check('submitter:banned emitted with reason=flood', banned && banned.submitterId === 'flooder' && banned.reason === 'flood');
-  check('banned submitter dropped even for a valid value-tx', w._admitToPool('flooder', { ...mined6(), sig: 'S' }) === false);
+  check('4th exceeds MAX -> refused', w._admitToPool('flooder', signedAnchor('h4')) === false);
+  check('submitter:throttled emitted with reason=flood', throttled && throttled.submitterId === 'flooder' && throttled.reason === 'flood');
+  check('the rest of the window is refused even for a valid value-tx', w._admitToPool('flooder', { ...mined6(), sig: 'S' }) === false);
   check('a DIFFERENT submitter is unaffected', w._admitToPool('genuine', signedAnchor()) === true);
+  await new Promise((r) => setTimeout(r, 200));
+  check('the next window admits the same submitter again (no permanent ban)', w._admitToPool('flooder', signedAnchor('h5')) === true);
   delete process.env.XPC_JUNK_BAN_MAX;
+  delete process.env.XPC_JUNK_WINDOW_MS;
+}
+{
+  const w = mk();
+  let n = 0;
+  for (let i = 0; i < 5000; i++) if (w._admitToPool('relay', signedAnchor('r' + i))) n++;
+  check('by default one relaying node gets 5,000 txs in a second through (the old cap stopped it at 500 a minute)', n === 5000);
 }
 
 // (d) rollback switch still admits everything

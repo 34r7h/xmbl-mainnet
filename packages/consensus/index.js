@@ -2,7 +2,7 @@ import { ConsensusWorkflow } from './src/workflow.js';
 import { LeaderElection } from './src/leader-election.js';
 import { Mempool } from './src/mempool.js';
 import { ValidationTaskManager } from './src/validation-tasks.js';
-import { ConsensusGossip } from './src/gossip.js';
+import { ConsensusGossip, everyLivePeerHas, GOSSIP_CAPS } from './src/gossip.js';
 import { ValidationWorker } from './src/validation-worker.js';
 import { runValidationRetryTick } from './src/validation-retry.js';
 import { SealRoundManager } from './src/seal-round.js';
@@ -14,6 +14,8 @@ export {
   Mempool,
   ValidationTaskManager,
   ConsensusGossip,
+  everyLivePeerHas,
+  GOSSIP_CAPS,
   ValidationWorker,
   runValidationRetryTick,
   SealRoundManager,

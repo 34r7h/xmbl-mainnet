@@ -175,8 +175,7 @@ export class ConsensusWorkflow extends EventEmitter {
   // node's pool — a local submit is already gated by the broker's own auth.
   _admitToPool(submitterId, txData, local = false) {
     if (process.env.XPC_INGRESS_GUARD === '0') return true;                 // rollback switch
-    if (!this._junkCounts) { this._junkCounts = new Map(); this._bannedSubmitters = new Set(); }
-    if (this._bannedSubmitters.has(submitterId)) return false;
+    if (!this._junkCounts) this._junkCounts = new Map();
     if (!txData || typeof txData !== 'object') return false;
 
     // THE ORDER OF VALIDATION (operator, 2026-09-16): 1. can this transaction happen (shape, authorization, value)
@@ -194,17 +193,24 @@ export class ConsensusWorkflow extends EventEmitter {
 
     // 2. FLOOD -> rate-limit per submitter, applied to every type rather than singling one out. One identity
     // accounted for 13,737/13,740 and 15,955/15,959 of two pools; that is the actual abuse pattern.
-    const WINDOW = Math.max(1000, Number(process.env.XPC_JUNK_WINDOW_MS) || 60000);
-    const MAX = Math.max(1, Number(process.env.XPC_JUNK_BAN_MAX) || 500);
+    // A RATE, NOT A BAN. This was 500 per 60 s and then a ban for the life of the process, and the submitter
+    // here is the PEER NODE that gossiped the tx — every user tx that node relays counts against it. That
+    // capped what one node could feed the network at 8 tx/s, and measured on 4 real nodes the first node to
+    // pass 500 in a minute was cut off by every peer for good. Over the rate, the excess in this window is
+    // refused and the next window admits again; the pool bound (XPC-BOUND) is what keeps memory finite.
+    // Default 20,000 per second per submitter (the network target is 15,000 tx/s, and one gateway may carry
+    // all of it); XPC_FLOOD_MAX / XPC_FLOOD_WINDOW_MS (or the older XPC_JUNK_BAN_MAX / XPC_JUNK_WINDOW_MS) set it.
+    const WINDOW = Math.max(100, Number(process.env.XPC_FLOOD_WINDOW_MS || process.env.XPC_JUNK_WINDOW_MS) || 1000);
+    const MAX = Math.max(1, Number(process.env.XPC_FLOOD_MAX || process.env.XPC_JUNK_BAN_MAX) || 20000);
     const now = Date.now();
     let e = this._junkCounts.get(submitterId);
-    if (!e || now - e.start > WINDOW) { e = { start: now, count: 0 }; this._junkCounts.set(submitterId, e); }
+    if (!e || now - e.start > WINDOW) { e = { start: now, count: 0, told: false }; this._junkCounts.set(submitterId, e); }
     e.count++;
     if (e.count > MAX) {
-      if (!this._bannedSubmitters.has(submitterId)) {
-        this._bannedSubmitters.add(submitterId);
-        console.warn(`ingress-guard: BAN ${submitterId} — ${e.count} txs in ${WINDOW}ms exceeds ${MAX}`);
-        this.emit('submitter:banned', { submitterId, reason: 'flood', count: e.count, windowMs: WINDOW });
+      if (!e.told) {
+        e.told = true;
+        console.warn(`ingress-guard: THROTTLE ${submitterId} — over ${MAX} txs in ${WINDOW}ms, the rest of this window is refused`);
+        this.emit('submitter:throttled', { submitterId, reason: 'flood', max: MAX, windowMs: WINDOW });
       }
       return false;
     }

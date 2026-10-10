@@ -2,7 +2,7 @@ import { Identity } from '@xmbl/identity';
 import { XNNode } from '@xmbl/networking';
 import { Ledger, micromineTx } from '@xmbl/cubic-ledger';
 import { StateMachine } from '@xmbl/state-machine';
-import { ConsensusWorkflow, ConsensusGossip, ValidationWorker, runValidationRetryTick, SealRoundManager, sealSetHash } from '@xmbl/consensus';
+import { ConsensusWorkflow, ConsensusGossip, everyLivePeerHas, ValidationWorker, runValidationRetryTick, SealRoundManager, sealSetHash } from '@xmbl/consensus';
 import { StorageNode, MarketPricing, ComputeNode } from '@xmbl/storage-compute';
 import { ContractHost } from '@xmbl/contracts';
 import { LeadWorker } from './lead-worker.js';
@@ -379,10 +379,19 @@ export class XMBLCore {
 
     // --- presence gossip ---
     const announce = () => this.gossip.broadcastPresence({ address: self, publicKey: this.xid.publicKey, roles: this.config.roles || {} }).catch(() => {});
-    this.gossip.on('presence:received', ({ address, publicKey, roles }) => {
+    this.gossip.on('presence:received', ({ address, publicKey, roles, caps }) => {
       if (!address || address === self) return;
-      this.peerRegistry.set(address, { publicKey, roles: roles || {}, lastSeen: Date.now() });
+      this.peerRegistry.set(address, { publicKey, roles: roles || {}, caps: caps || [], lastSeen: Date.now() });
     });
+    // Batch raw txs and reports only while every peer heard from inside the presence TTL reads batches (a node on
+    // the previous release would drop them). Recomputed at most once a second — it is asked once per message.
+    let batchOk = false, batchCheckedAt = 0;
+    this.gossip.canBatch = () => {
+      const now = Date.now();
+      if (now - batchCheckedAt < 1000) return batchOk;
+      batchCheckedAt = now;
+      return (batchOk = everyLivePeerHas(this.peerRegistry, self, 'batch', PRESENCE_TTL_MS, now));
+    };
     this.xn.on('peer:connected', () => announce());   // greet a newly connected peer immediately
     this._presenceTimer = setInterval(announce, 4000);
     if (this._presenceTimer.unref) this._presenceTimer.unref();
@@ -764,6 +773,8 @@ export class XMBLCore {
     if (this.leadWorker) {
       this.leadWorker.stop();
     }
+    // Txs and reports still waiting in the gossip batch go out before the transport closes.
+    this.gossip?.flush?.();
     if (this.xn) {
       await this.xn.stop();
     }
