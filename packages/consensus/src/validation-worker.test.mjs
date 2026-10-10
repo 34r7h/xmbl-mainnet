@@ -239,5 +239,32 @@ const task = (id, leaderId = ME, complete = false) => ({ task: id, leaderId, com
   w.stop();
 }
 
+// ── A CLAIM OUTLIVES ITS TASK ONLY UNTIL THE NEXT PRUNE ──
+// The claimed set kept every task id the node ever validated. Every 1024 claims, ids whose task the workflow
+// no longer holds are let go; ids still held (in flight, or refused and still pooled) are kept.
+{
+  const held = new Set();
+  const wf = makeWorkflow();
+  wf.taskManager.getTask = (leader, id) => (leader === ME && held.has(id) ? { task: id } : undefined);
+  const w = new ValidationWorker({ workflow: wf, identityAddress: ME });
+  w.start();
+  await tick();
+  for (let i = 0; i < 1023; i++) {
+    const id = `tx${i}:${ME}:validate`;
+    if (i < 10) held.add(id);
+    wf.emit('validation_tasks:created', { rawTxId: `tx${i}`, tasks: [task(id, ME)] });
+  }
+  await tick();
+  ok('1023 claims are all kept until the prune', w.claimed.size === 1023);
+  held.add(`tx1023:${ME}:validate`);
+  wf.emit('validation_tasks:created', { rawTxId: 'tx1023', tasks: [task(`tx1023:${ME}:validate`, ME)] });
+  await tick();
+  ok('the 1024th claim lets go of every id whose task is gone, and keeps the 11 still held', w.claimed.size === 11);
+  wf.emit('validation_tasks:created', { rawTxId: 'tx5', tasks: [task(`tx5:${ME}:validate`, ME)] });
+  await tick();
+  ok('a held task is still never run twice', wf.completed.filter((c) => c.taskId === `tx5:${ME}:validate`).length === 1);
+  w.stop();
+}
+
 console.log(`\n${pass}/${pass + fail} passed`);
 process.exit(fail ? 1 : 0);

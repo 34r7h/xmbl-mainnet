@@ -9,6 +9,10 @@ import { validateForConsensus } from './validate.js';                 // THE ORD
 // JSON dumps per tx plus one per validation report — 3 MB of log per 500 txs, and stringifying and writing it cost
 // a node more than its signature checks (measured on a 2-node fleet: 1.4 s in writeBuffer per 500 txs).
 const XPC_DEBUG = process.env.XPC_DEBUG === '1';
+// @xmbl/identity is loaded on first use, once: `await import()` per call re-ran module resolution on every
+// signature check (0.08 s of a 2007-tx run per node).
+let identityModule = null;
+const loadIdentity = () => (identityModule ||= import('@xmbl/identity'));
 
 export class ConsensusWorkflow extends EventEmitter {
   constructor(options = {}) {
@@ -16,13 +20,22 @@ export class ConsensusWorkflow extends EventEmitter {
     const dbPath = options.dbPath || './data/xpc';
     this.mempool = new Mempool({ dbPath: `${dbPath}/mempool` });
     this.taskManager = new ValidationTaskManager({ store: this.mempool });
+    // A tx gone from the raw pool takes its tasks and its submitter mapping with it. The age reaper, the cap
+    // sweep and core's forced eviction removed txs without either, so both grew with every tx they dropped.
+    this.mempool.onRawTxRemoved = (leaderId, rawTxId) => {
+      if (this.rawTxToId.get(rawTxId) !== leaderId) return;   // mapped to (and pooled under) another submitter
+      this.rawTxToId.delete(rawTxId);
+      this.taskManager.clearTasksForRawTx(rawTxId);
+    };
     // Stage 2 rehydration: the mempool loads all five tiers from LevelDB, then the task manager adopts the
     // persisted validation tasks. Awaiting `ready` before submitting work guarantees a restarted node resumes
     // its assigned tasks instead of stranding the raw pool.
     this.ready = Promise.resolve(this.mempool.ready).then(() => {
-      const n = this.taskManager.hydrate();
-      if (n) console.log(`[XPC] stage 2 rehydrated: ${n} validation task(s) restored from disk`);
       const s = this.rehydrateSubmitters();
+      // Only the tasks of txs still in the raw pool (rehydrateSubmitters has just mapped every one of them): the
+      // rest belong to txs that already reached processing.
+      const n = this.taskManager.hydrate((rawTxId) => this.rawTxToId.has(rawTxId));
+      if (n) console.log(`[XPC] stage 2 rehydrated: ${n} validation task(s) restored from disk`);
       const r = this.recoverStrandedRawTxs();
       return { tasks: n, submitters: s, recovered: r };
     }).catch(() => ({ tasks: 0, submitters: 0, recovered: 0 }));
@@ -40,6 +53,10 @@ export class ConsensusWorkflow extends EventEmitter {
     // so this reliably identifies a re-arrival. A re-ingest spanning a process RESTART is a documented residual —
     // the durable guard is a ledger "already-sealed?" check, which lives in xclt, not here.
     this._processedRawTxIds = new Set();
+    // A pooled tx's signature, once verified here, against which key. completeValidation re-verified it on every
+    // report (3 or more per tx per node); the signer memo answered, but each answer still hashed the message,
+    // signature and key. Keyed by the pooled txData object, so a re-ingested copy is checked again.
+    this._sigVerified = new WeakMap();
 
     // Integration: xid for signature verification
     this.xid = options.xid || null;
@@ -399,10 +416,9 @@ export class ConsensusWorkflow extends EventEmitter {
         // resolver is wired (tests, static validationLeaders), preserving the previous behaviour there.
         const liveNow = (typeof this.getLiveLeaders === 'function' ? this.getLiveLeaders() : null);
         const liveSet = Array.isArray(liveNow) && liveNow.length ? new Set(liveNow) : null;
-        const realHolders = this.taskManager.getKnownLeaderIds()
+        const realHolders = this.taskManager.leadersHolding(rawTxId)
           .filter(id => !isPlaceholder(id))
-          .filter(id => !liveSet || liveSet.has(id))
-          .filter(id => this.taskManager.getTasksForLeader(id).some(t => t.task.startsWith(`${rawTxId}:`)));
+          .filter(id => !liveSet || liveSet.has(id));
         if (realHolders.length >= this._requiredFor(rawTxId)) continue;   // this tx's real set, not a node-count floor
         if (!this.rawTxToId.has(rawTxId)) this.rawTxToId.set(rawTxId, leaderId);
         try {
@@ -565,7 +581,7 @@ export class ConsensusWorkflow extends EventEmitter {
     try { publicKey = this.getPublicKeyByAddress(txData.from); } catch { return false; }
     if (!publicKey) return false;
     try {
-      const { Identity } = await import('@xmbl/identity');
+      const { Identity } = await loadIdentity();
       return (await Identity.verifyTransaction(txData, publicKey)) === false;
     } catch { return false; }
   }
@@ -608,11 +624,7 @@ export class ConsensusWorkflow extends EventEmitter {
     const submitterId = this.rawTxToId.get(rawTxId);
     const leaders = this.rawTxLeaders.get(rawTxId) || this._getValidationLeaders(submitterId);
     const allTasks = [];
-    leaders.forEach(leaderId => {
-      const tasks = this.taskManager.getTasksForLeader(leaderId);
-      const relevantTasks = tasks.filter(t => t.task.startsWith(`${rawTxId}:`));
-      allTasks.push(...relevantTasks);
-    });
+    leaders.forEach(leaderId => allTasks.push(...this.taskManager.tasksOf(leaderId, rawTxId)));
     return allTasks;
   }
 
@@ -674,7 +686,7 @@ export class ConsensusWorkflow extends EventEmitter {
       const rawTx = this._getRawTransaction(rawTxId);
       if (rawTx && rawTx.txData && rawTx.txData.sig && rawTx.txData.from) {
         try {
-          const { Identity } = await import('@xmbl/identity');
+          const { Identity } = await loadIdentity();
           
           // Look up public key from address (from xid module or identity registry)
           // For now, we'll need to get it from the simulator's identities
@@ -687,8 +699,11 @@ export class ConsensusWorkflow extends EventEmitter {
           }
           
           // If we have public key, verify signature and address ownership
-          if (publicKey) {
+          if (publicKey && this._sigVerified.get(rawTx.txData) === publicKey) {
+            // Verified on an earlier report against this same key.
+          } else if (publicKey) {
             const isValid = await Identity.verifyTransaction(rawTx.txData, publicKey);
+            if (isValid) this._sigVerified.set(rawTx.txData, publicKey);
             if (!isValid) {
               // EVICT, don't just fail. Returning false alone left the tx pooled and the retry sweep re-chewed
               // it on every pass — the mechanism behind the 13k/15k backlogs. It is provably invalid here, so
@@ -1091,6 +1106,9 @@ export class ConsensusWorkflow extends EventEmitter {
       await this.mempool._deleteRawTx(leaderId, rawTxId);
     }
     this.rawTxToId.delete(rawTxId);
+    // Its validation tasks are spent. Nothing dropped them on this path, so every tx a node ever processed kept
+    // its tasks in memory and a validationTasks row on disk, and every boot reloaded them all.
+    this.taskManager.clearTasksForRawTx(rawTxId);
   }
 
   _averageTimestamps(validationTimestamps) {

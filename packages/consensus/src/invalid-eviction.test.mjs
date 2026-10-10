@@ -72,5 +72,50 @@ await check('drain on an empty pool is a clean no-op', async () => {
   assert.deepStrictEqual(r, { scanned: 0, evicted: 0 });
 });
 
+console.log('\n4. a pooled tx\'s signature is checked once per key, not once per report');
+{
+  const { Identity, verifyStats } = await import('@xmbl/identity');
+  const alice = await Identity.create(), mallory = await Identity.create();
+  const calls = () => { const s = verifyStats(); return s.hits + s.misses; };
+  const pooled = async (tx, keyOf) => {
+    const w = mk();
+    w.xid = true;
+    w.getPublicKeyByAddress = keyOf;
+    w.mempool._saveRawTx = async () => {};
+    w.mempool._deleteRawTx = async () => {};
+    const rawTxId = 'sig1';
+    w.rawTxToId.set(rawTxId, 'L');
+    w.mempool.rawTx.set('L', new Map([[rawTxId, { txData: tx, validationTimestamps: [] }]]));
+    w.taskManager.assignTasks(rawTxId, w.taskManager.createTasks(rawTxId, ['A', 'B', 'C', 'D', 'E']));
+    w._requiredFor = () => 99;   // keep it pooled through every report
+    return { w, rawTxId };
+  };
+  const tx = await alice.signTransaction({ type: 'anchor', to: 'xmb' + '0'.repeat(40), amount: 1, ts: 7 });
+  await check('five reports, one signature check', async () => {
+    const { w, rawTxId } = await pooled(tx, () => alice.publicKey);
+    const before = calls();
+    for (const v of ['A', 'B', 'C', 'D', 'E']) assert.strictEqual(await w.completeValidation(rawTxId, `${rawTxId}:${v}:validate`, 1000, null, v), true, v);
+    assert.strictEqual(calls() - before, 1);
+    assert.strictEqual(w._getValidationCount(rawTxId), 5);
+  });
+  await check('the key the address resolves to changes: checked again, and evicted when it no longer verifies', async () => {
+    let key = alice.publicKey;
+    const { w, rawTxId } = await pooled(tx, () => key);
+    await w.completeValidation(rawTxId, `${rawTxId}:A:validate`, 1000, null, 'A');
+    key = mallory.publicKey;
+    const before = calls();
+    assert.strictEqual(await w.completeValidation(rawTxId, `${rawTxId}:B:validate`, 1000, null, 'B'), false);
+    assert.strictEqual(calls() - before, 1);
+    assert.strictEqual(w.mempool.rawTx.get('L').has(rawTxId), false, 'not evicted');
+  });
+  await check('a tx that does not verify is refused on every report, never remembered', async () => {
+    const forged = { ...tx, amount: 2 };
+    const { w, rawTxId } = await pooled(forged, () => alice.publicKey);
+    assert.strictEqual(await w.completeValidation(rawTxId, `${rawTxId}:A:validate`, 1000, null, 'A'), false);
+    assert.strictEqual(w._sigVerified.has(forged), false);
+    assert.strictEqual(w._getValidationCount(rawTxId), 0);
+  });
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'} — ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

@@ -225,8 +225,10 @@ export class Mempool extends EventEmitter {
 
   // ---- validation_tasks_mempool (stage 2/5) public API, mirroring the other four stages ----
   // Persist ONLY the tasks belonging to one rawTxId. The in-memory list stays whole; the write is bounded.
+  // Writes one tx's slice. The in-memory copy is the boot-time load only (ValidationTaskManager.hydrate adopts it);
+  // a caller that still passes the leader's whole list keeps it here as before.
   setValidationTasksFor(leaderId, rawTxId, tasksForTx, wholeList) {
-    this.validationTasks.set(leaderId, wholeList);
+    if (wholeList !== undefined) this.validationTasks.set(leaderId, wholeList);
     this._saveValidationTasks(leaderId, rawTxId, tasksForTx).catch(() => {});
   }
 
@@ -256,7 +258,11 @@ export class Mempool extends EventEmitter {
     }
   }
 
+  // Every path that takes a tx out of the raw pool (sealing, invalid eviction, the age reaper, the cap sweep,
+  // core's forced eviction) deletes it from the Map and then calls this. The owner hears it here, so a tx's
+  // validation tasks and submitter mapping leave with it whichever path that was.
   async _deleteRawTx(leaderId, rawTxId) {
+    try { this.onRawTxRemoved?.(leaderId, rawTxId); } catch { /* the delete must still happen */ }
     if (!this._dbOpen) return;
     try {
       await this.db.del(`rawTx:${leaderId}:${rawTxId}`);

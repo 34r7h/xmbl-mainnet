@@ -17,6 +17,7 @@ export class ValidationWorker extends EventEmitter {
     this.identityAddress = identityAddress;
     this.onValidationCompleted = onValidationCompleted;
     this.claimed = new Set(); // taskId -> already claimed, never double-process
+    this._claimsSincePrune = 0;
     this.running = false;
     this._onCreated = this._onValidationTasksCreated.bind(this);
   }
@@ -52,11 +53,23 @@ export class ValidationWorker extends EventEmitter {
       if (this.claimed.has(task.task)) continue;
       const rawTxId = String(task.task).split(':')[0];
       if (!rawTxId) continue;
-      this.claimed.add(task.task);
+      this._claim(task.task);
       try { await this._runCheckAndReport(rawTxId, task); ran++; } catch { /* one bad task must not stop the sweep */ }
     }
     if (ran) console.log(`[XPC] validation worker: claimed ${ran} task(s) that were restored from disk and had no creation event to react to`);
     return ran;
+  }
+
+  // A claim only has to outlive its task. This set kept every task id this node ever validated (one per tx,
+  // forever); every 1024 claims, the ids whose task the workflow no longer holds (the tx sealed or left the
+  // pool) are let go. A task created again after that is a new task, and validating it again is correct.
+  _claim(taskId) {
+    this.claimed.add(taskId);
+    if (++this._claimsSincePrune < 1024) return;
+    this._claimsSincePrune = 0;
+    const tm = this.workflow?.taskManager;
+    if (typeof tm?.getTask !== 'function') return;
+    for (const id of this.claimed) if (!tm.getTask(this.identityAddress, id)) this.claimed.delete(id);
   }
 
   stop() {
@@ -73,7 +86,7 @@ export class ValidationWorker extends EventEmitter {
     const myTasks = tasks.filter((t) => t.leaderId === this.identityAddress);
     for (const task of myTasks) {
       if (this.claimed.has(task.task)) continue;
-      this.claimed.add(task.task);
+      this._claim(task.task);
       await this._runCheckAndReport(rawTxId, task);
     }
   }
