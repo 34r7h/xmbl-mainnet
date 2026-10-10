@@ -1,5 +1,18 @@
 # @xmbl/state-machine
 
+## 0.1.24
+
+### Patch Changes
+
+- **The state tree holds about one object per key, not one per trie level.** Every key's path was 32 objects
+  deep, so 14,134 anchors were 436,927 tree objects and about 200 MB of heap. A key that shares no level with
+  another key is now one leaf that hashes its path when asked; a level becomes a branch only where two keys
+  share it. The commitment is unchanged to the bit: the same root, proofs, keyPath and tree shape as 0.1.23,
+  pinned against golden vectors taken from it. 20,000 keys: 12,936 -> 434 bytes of heap per key, and
+  1,655 -> 7,711 writes/s on one core with a root read after every write. On a real node, rebuild_ledger over
+  14,134 anchors: 26.1 s -> 5.2 s, heap after it 262 MB -> 72 MB, state_root a0aa77ab… on both.
+  verkle-compression.test.mjs: 13/13; 0.1.23's tree fails the heap bound at 12,935 bytes per key.
+
 ## 0.1.21
 
 ### Patch Changes

@@ -1,5 +1,17 @@
 # @xmbl/consensus
 
+## 0.1.24
+
+### Patch Changes
+
+- **The stranded-pool sweep runs every 15 s, not every 1 ms.** The interval was read as
+  `Number(process.env.XPC_RECOVERY_SWEEP_MS) ?? 15000`. With the variable unset that is NaN, `??` keeps NaN,
+  and `setInterval(fn, NaN)` fires every millisecond, so every node without it set swept its pool about a
+  thousand times a second, and the pass cap was NaN too, so the sweep stopped only when a pass found nothing.
+  An unset, empty, non-numeric or non-positive value now falls back to 15,000 ms and 40 passes. A pass no longer
+  starts while the last one runs, and it waits for its own pool drain before recovering, so drains no longer
+  stack one copy per tick. recovery-sweep.test.mjs: 9/9; 5 fail on 0.1.23.
+
 ## 0.1.16
 
 ### Patch Changes

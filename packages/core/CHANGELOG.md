@@ -1,5 +1,26 @@
 # @xmbl/core
 
+## 0.1.24
+
+### Patch Changes
+
+- **A node fits a small box.** hermes-agentic reported xmbl-node at 50-60% of RAM on a box with under 1 GiB,
+  then OOM. Three causes, all fixed in this release; measured 2026-10-10 on a real node doing the
+  coordinator's `rebuild_ledger` over the 14,134-anchor canonical set (a coordinator sends it every 90 s):
+  rebuild 26.1 s -> 5.2 s, heap after it 262 MB -> 72 MB, RSS peak 468 MB -> 259 MB, RSS after an unchanged
+  repeat 672 MB -> 247 MB, state_root a0aa77ab… on both.
+  - @xmbl/state-machine 0.1.24: the state tree held one object per trie level per key (436,927 objects for
+    14,134 keys); it now holds about one per key, with the same commitment to the bit.
+  - @xmbl/consensus 0.1.24: the stranded-pool sweep ran every 1 ms on any node without
+    `XPC_RECOVERY_SWEEP_MS` set; it runs every 15 s.
+  - This package: the control socket copied a long request once per chunk it arrived in. A rebuild_ledger
+    request is about 4 MB; a 16 MB line in 1,025 chunks took 3,681-4,007 ms and now takes 33-92 ms.
+    control-socket-lines.test.mjs: 7/7; the old reader fails the 16 MB check.
+- **Rehearsed before release, with real processes:** a 0.1.23 node installed from npm rebuilt the 14,134-anchor
+  set and then a 14,122-anchor set, updated itself to 0.1.24 from a local registry in 76 s and came back with the
+  same state_root, then rebuilt both sets again. 0.1.23: 20.8 s and 26.4 s, RSS peak 516 MB and 844 MB. 0.1.24:
+  5.3 s and 5.8 s, RSS peak 279 MB and 305 MB. Both roots (a0aa77ab…, 41d74e74…) are the same on both versions.
+
 ## 0.1.23
 
 ### Patch Changes
