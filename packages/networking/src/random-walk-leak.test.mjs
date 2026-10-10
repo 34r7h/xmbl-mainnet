@@ -62,6 +62,84 @@ check(`with the fix, walked peers are freed while the walk keeps running (${N} w
 
 const control = await measure({ fix: false });
 check(`CONTROL: libp2p's own walk() retains the walked peers (${N} walked)`, control <= N * 0.1, `${control} of ${N} freed`);
+
+// ⛔ THE WALK IS PACED. libp2p's startWalk() starts the next DHT query the moment the last one ends; on a small mesh
+// that is ~500 queries a second (random-walk-leak.js has the measurement). Each case below drives a fresh RandomWalk
+// whose router answers on the next turn of the event loop, and counts how many queries it ran.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function paced(router, gaps, fix = true) {
+  const rw = new RandomWalk({ logger: host.node.components.logger, peerRouting: { getClosestPeers: router } });
+  rw.start();
+  if (fix) plugRandomWalkLeak({ components: { randomWalk: rw } }, gaps);
+  return rw;
+}
+// A consumer that keeps asking for peers until told to stop, as relay discovery does.
+function consume(rw) {
+  const got = [];
+  let stop = false;
+  const done = (async () => { for await (const p of rw.walk({})) { got.push(p); if (stop) break; } })().catch(() => {});
+  return { got, end: async () => { stop = true; await Promise.race([done, sleep(200)]); } };
+}
+const tick = () => new Promise((r) => setImmediate(r));
+const samePeer = (calls) => async function* () { calls.n++; await tick(); yield { id: { toString: () => 'only-peer' }, multiaddrs: [] }; };
+
+{
+  const calls = { n: 0 };
+  const rw = paced(samePeer(calls), { minGapMs: 50, maxGapMs: 400 });
+  const c = consume(rw);
+  await sleep(1000);
+  await c.end();
+  rw.stop();
+  const ctl = { n: 0 };
+  const raw = paced(samePeer(ctl), null, false);
+  const c2 = consume(raw);
+  await sleep(1000);
+  await c2.end();
+  raw.stop();
+  check('a walk that keeps meeting the same peer backs off instead of querying in a loop', calls.n >= 3 && calls.n <= 10,
+    `${calls.n} queries in 1 s at 50 ms doubling to 400 ms; libp2p's own startWalk ran ${ctl.n}`);
+  check('CONTROL: libp2p\'s own startWalk queries in a loop', ctl.n > 100, `${ctl.n} queries in 1 s`);
+}
+
+{
+  const calls = { n: 0 };
+  const rw = paced(samePeer(calls), { minGapMs: 10000, maxGapMs: 60000 });
+  const t0 = Date.now();
+  const it = rw.walk({});
+  const first = await Promise.race([it.next(), sleep(1000).then(() => null)]);
+  check('the first query runs at once', first?.value?.id?.toString() === 'only-peer' && Date.now() - t0 < 500, `${Date.now() - t0} ms`);
+  // The walk is now in its 10 s pause; the last consumer leaving must end it now, not after the pause.
+  await it.return();
+  await sleep(50);
+  check('the last consumer leaving ends a walk that is mid-pause', rw.walking === false && calls.n === 1, `walking=${rw.walking} queries=${calls.n}`);
+  rw.stop();
+}
+
+{
+  let seq = 0;
+  const calls = { n: 0 };
+  const rw = paced(async function* () { calls.n++; await tick(); yield { id: { toString: () => `new-${seq++}` }, multiaddrs: [] }; }, { minGapMs: 50, maxGapMs: 400 });
+  const c = consume(rw);
+  await sleep(1000);
+  await c.end();
+  rw.stop();
+  check('a walk that keeps meeting new peers keeps the shortest gap', calls.n >= 12 && calls.n <= 25, `${calls.n} queries in 1 s at a 50 ms gap`);
+}
+
+{
+  // A walk() that arrives while the previous walk is winding down (its last consumer just left) must still get peers.
+  const calls = { n: 0 };
+  const rw = paced(samePeer(calls), { minGapMs: 10000, maxGapMs: 60000 });
+  const a = rw.walk({});
+  await a.next();
+  const left = a.return();
+  const b = rw.walk({});
+  await left;
+  const got = await Promise.race([b.next(), sleep(1000).then(() => null)]);
+  check('a consumer that arrives as the walk winds down still gets a peer', got?.value?.id?.toString() === 'only-peer', `queries=${calls.n}`);
+  await b.return();
+  rw.stop();
+}
 await host.stop();
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');

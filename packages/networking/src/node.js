@@ -166,7 +166,7 @@ export class XNNode extends EventEmitter {
     // circuit-relay transport begins its relay discovery walk. createLibp2p() otherwise starts the node itself,
     // and a walk already running keeps the leaking generator for its whole life.
     this.node = await createLibp2p({ ...libp2pOptions, start: false });
-    if (!plugRandomWalkLeak(this.node)) console.warn('[xn] random-walk leak fix NOT applied: libp2p RandomWalk changed shape — heap growth on relay discovery is unguarded');
+    if (!plugRandomWalkLeak(this.node)) console.warn('[xn] random-walk fix NOT applied: libp2p RandomWalk changed shape — the relay discovery walk runs unpaced and its heap growth unguarded');
     // `peerCache` is a file path (the daemon passes <data_dir>/known-peers.json). Absent → no memory, exactly the
     // pre-0.1.21 behaviour, so existing XNNode callers are unaffected.
     this.peerCache = this.options.peerCache

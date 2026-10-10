@@ -5,6 +5,7 @@
 //
 // Run: node scripts/fleet-load.mjs [--nodes 4] [--txs 2000] [--class datum] [--batch 500] [--kill 1@3]
 //                                  [--env XPC_CONSENSUS_V2=1] [--stall 30] [--keep] [--rounds 1]
+//   --hold s        keep the fleet up s seconds after the last round (to take a heap snapshot, say)
 //   --rounds r      submit r rounds of --txs each to the same fleet and report each round on its own: a later
 //                   round's heap delta is what a node keeps per tx once its start-up allocations are behind it
 //   --class datum   node-authored state_diff carrying one type-0 datum: the node micromines and signs it
@@ -21,6 +22,7 @@ const CLASS = opt('class', 'datum');
 const BATCH = Math.min(500, Number(opt('batch', 500)));
 const STALL_S = Number(opt('stall', 30));
 const ROUNDS = Math.max(1, Number(opt('rounds', 1)));
+const HOLD_S = Number(opt('hold', 0));
 const env = Object.fromEntries(all('env').map((kv) => [kv.slice(0, kv.indexOf('=')), kv.slice(kv.indexOf('=') + 1)]));
 const kills = all('kill').map((s) => { const [i, t] = s.split('@'); return { i: Number(i), at: Number(t) * 1000 }; });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -120,4 +122,5 @@ for (let round = 0; round < ROUNDS && !stalled; round++) {
   console.log(`\nRESULT round=${round + 1} nodes=${N} live=${rows.length} class=${CLASS} accepted=${accepted} on_every_node=${minHeld} (sealed ${minSealed}) ` +
     `wall=${wall.toFixed(1)}s e2e=${Math.round(minHeld / wall)} tx/s state_roots=${roots.size}${tDone ? '' : ' (STALLED)'}`);
 }
+if (HOLD_S > 0) { console.log(`holding the fleet ${HOLD_S} s: pids ${f.nodes.map((nd) => nd.proc?.pid).join(',')}`); await sleep(HOLD_S * 1000); }
 await stop(stalled ? 1 : 0);
