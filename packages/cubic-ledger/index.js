@@ -33,7 +33,7 @@ export { verifyCube, planAdoption, diffWanted, setDigest, TOPIC_DIGEST, TOPIC_LI
 // exports map has only "."). The consensus ingress guard needs verifyMicromine to admit an UNSIGNED type-6
 // on its content address; re-implementing the hash there would be a second copy of a golden-vector-pinned
 // algorithm. The deployed node bundle has carried this export since task 9d80916e; this repo had not.
-export { micromine, verifyMicromine, oidOf, typePrefix, type6TxBody, type7PointerBody } from './src/micromine.js';
+export { micromine, micromineStats, verifyMicromine, oidOf, typePrefix, type6TxBody, type7PointerBody } from './src/micromine.js';
 
 // THE VERSION OF THE CODE THIS PROCESS LOADED. Read once at import time from this package's own manifest, so a
 // running node can report what it is actually executing — an install that lands on disk after this module was

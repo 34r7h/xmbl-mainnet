@@ -8,6 +8,10 @@ import { sortFacesByHash } from './placement.js';
 import { sealBlocksIntoFaces } from './face-sealing.js';
 import { verifyPlacement } from './deterministic-placement.js';
 import { micromineBody } from './transaction-validator.js';   // the forged-bytes eviction key (see _forgedKey)
+// @xmbl/identity is loaded on first use, once: `await import()` per call re-ran module resolution on every
+// signature check (0.08 s of a 2007-tx run per node).
+let identityModule = null;
+const loadIdentity = () => (identityModule ||= import('@xmbl/identity'));
 import { Level } from 'level';
 import { anchorTimestampNanos, blockTimestampNanos } from './timestamps.js';
 export { anchorTimestampNanos, blockTimestampNanos };
@@ -256,7 +260,7 @@ export class Ledger extends EventEmitter {
     // Integration: Verify signature if xid available and tx has signature and from address
     if (this.xid && tx.sig && tx.from) {
       try {
-        const { Identity } = await import('@xmbl/identity');
+        const { Identity } = await loadIdentity();
         
         // Look up public key from address
         let publicKey = null;
@@ -378,7 +382,7 @@ export class Ledger extends EventEmitter {
       // addTransaction, which also enforces derivedAddress===from sig-ownership.
       if (this.xid && tx.sig && tx.from) {
         try {
-          const { Identity } = await import('@xmbl/identity');
+          const { Identity } = await loadIdentity();
           let publicKey = null;
           if (this.getPublicKeyByAddress && typeof this.getPublicKeyByAddress === 'function') {
             publicKey = await this.getPublicKeyByAddress(tx.from);

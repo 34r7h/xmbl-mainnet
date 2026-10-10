@@ -16,14 +16,29 @@ export function typePrefix(type) { return '0' + String(type); }
 /** oid = SHA256(JSON.stringify({ data })) — the content id of a datum body. */
 export function oidOf(data) { return sha256hex(JSON.stringify({ data })); }
 
+// THE NONCE SEARCH IS DONE ONCE PER CONTENT PER PROCESS. A two-hex prefix ('00' for a datum) takes 256 hashes on
+// average, and a node asked it of the same datum at the door, at validation, at finalize and in the tree: measured
+// on 4 real nodes, 2007 node-signed datums, 0.8 s of 10.9 s per node. The answer is a pure function of (oid, type),
+// so it is kept by that pair; the oid is still hashed from the data on every call, so different data is never
+// given another's answer. XMBL_MICROMINE_MEMO_MAX bounds it (oldest dropped first).
+const MINED = new Map();
+const MINED_MAX = Number(process.env.XMBL_MICROMINE_MEMO_MAX) || 16384;
+export const micromineStats = { hits: 0, searches: 0 };
+
 /** Micromine `data` to numeric `type`: smallest nonce>=0 s.t. xid=SHA256(oid+String(nonce)) starts with the
  *  type prefix. Byte-identical to the app + broker (golden-vector pinned). */
 export function micromine(data, type) {
   const oid = oidOf(data);
   const prefix = typePrefix(type);
+  const memoKey = prefix + ':' + oid;
+  const known = MINED.get(memoKey);
+  if (known) { micromineStats.hits++; return { oid, nonce: known.nonce, xid: known.xid, key: `${known.xid}_${known.nonce}` }; }
+  micromineStats.searches++;
   let nonce = 0, xid = '';
   for (; nonce <= 1000000; nonce++) { xid = sha256hex(oid + String(nonce)); if (xid.startsWith(prefix)) break; }
   if (!xid.startsWith(prefix)) throw new Error(`micromine: no nonce<=1e6 for type ${type} (prefix ${prefix})`);
+  MINED.set(memoKey, { nonce, xid });
+  if (MINED.size > MINED_MAX) MINED.delete(MINED.keys().next().value);
   return { oid, nonce, xid, key: `${xid}_${nonce}` };
 }
 
