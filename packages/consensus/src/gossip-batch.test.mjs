@@ -147,5 +147,50 @@ await check('everyLivePeerHas: one live peer without the cap, or no live peer, m
   assert.strictEqual(everyLivePeerHas(reg([['old', { caps: ['batch'], lastSeen: now - ttl - 1 }]]), 'me', 'batch', ttl, now), false);
 });
 
+// A raw tx travels with the key it was signed under (signer-keys.js), alone as signerKey and in a batch once per
+// signer under `keys`, so a receiver can check the signature before it has heard the signer's presence.
+const KA = 'A'.repeat(1896), KB = 'B'.repeat(1896);
+const signed = (j, from) => ({ ...tx(j), from });
+await check('a batch carries each signer\'s key once and every raw tx is heard with its own signer\'s key', async () => {
+  const { b, a, heard } = pair(true);
+  for (let j = 0; j < 50; j++) {
+    await a.broadcastRawTransaction('L', signed(j, 'xmbA'), null, KA);
+    await a.broadcastRawTransaction('L', signed(100 + j, 'xmbB'), null, KB);
+    await a.broadcastValidationReport(report(j));
+  }
+  await sleep(40);
+  assert.strictEqual(b.wire.length, 1);
+  assert.deepStrictEqual(JSON.parse(b.wire[0]).keys, { xmbA: KA, xmbB: KB });
+  assert.strictEqual(b.wire[0].split(KA).length - 1, 1, 'signer A\'s key sent more than once');
+  assert.strictEqual(b.wire[0].split(KB).length - 1, 1, 'signer B\'s key sent more than once');
+  const raws = heard.filter(([t]) => t === 'raw_tx').map(([, e]) => e);
+  assert.strictEqual(raws.length, 100);
+  for (const e of raws) assert.strictEqual(e.signerKey, e.tx.from === 'xmbA' ? KA : KB, e.tx.args.j);
+  assert.ok(b.wire[0].length < 100 * 900 + 2 * 1896, `${b.wire[0].length} bytes`);
+});
+await check('a raw tx sent alone, or alone in its flush, carries its key; one sent without a key is heard with null', async () => {
+  const alone = pair(false);
+  await alone.a.broadcastRawTransaction('L', signed(1, 'xmbA'), null, KA);
+  await alone.a.broadcastRawTransaction('L', signed(2, 'xmbA'), null);
+  assert.strictEqual(JSON.parse(alone.b.wire[0]).signerKey, KA);
+  assert.deepStrictEqual(alone.heard.map(([, e]) => e.signerKey), [KA, null]);
+  const one = pair(true);
+  await one.a.broadcastRawTransaction('L', signed(3, 'xmbB'), null, KB);
+  await sleep(40);
+  assert.strictEqual(JSON.parse(one.b.wire[0]).type, 'raw_tx');
+  assert.strictEqual(one.heard[0][1].signerKey, KB);
+});
+await check('a batch\'s key is handed only to raw txs from that signer, and a non-string key is ignored', async () => {
+  const { r, heard } = pair(false);
+  r._handleMessage({ type: 'batch', keys: { xmbA: KA, xmbC: 7, __proto__: { xmbD: 'inherited' } }, items: [
+    { type: 'raw_tx', leaderId: 'L', tx: signed(1, 'xmbA') },
+    { type: 'raw_tx', leaderId: 'L', tx: signed(2, 'xmbB') },
+    { type: 'raw_tx', leaderId: 'L', tx: signed(3, 'xmbC') },
+    { type: 'raw_tx', leaderId: 'L', tx: signed(4, 'constructor') },
+    { type: 'raw_tx', leaderId: 'L', tx: signed(5, 'xmbA'), signerKey: KB },
+  ] });
+  assert.deepStrictEqual(heard.map(([, e]) => e.signerKey), [KA, null, null, null, KB]);
+});
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'} — ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

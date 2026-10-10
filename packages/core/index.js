@@ -2,7 +2,7 @@ import { Identity } from '@xmbl/identity';
 import { XNNode } from '@xmbl/networking';
 import { Ledger, micromineTx } from '@xmbl/cubic-ledger';
 import { StateMachine } from '@xmbl/state-machine';
-import { ConsensusWorkflow, ConsensusGossip, everyLivePeerHas, ValidationWorker, runValidationRetryTick, SealRoundManager, sealSetHash } from '@xmbl/consensus';
+import { ConsensusWorkflow, ConsensusGossip, everyLivePeerHas, ValidationWorker, runValidationRetryTick, SealRoundManager, sealSetHash, SignerKeys } from '@xmbl/consensus';
 import { StorageNode, MarketPricing, ComputeNode } from '@xmbl/storage-compute';
 import { ContractHost } from '@xmbl/contracts';
 import { LeadWorker } from './lead-worker.js';
@@ -347,7 +347,14 @@ export class XMBLCore {
     // NOTE the asymmetry: public-key resolution reads the FULL registry, unfiltered. The allowlist scopes who
     // may VALIDATE, not whose signatures we can verify — narrowing the key lookup would break verification of
     // txs submitted by non-allowlisted peers, which we still ingest and still relay.
-    const resolveKey = (addr) => this.peerRegistry.get(addr)?.publicKey || (addr === self ? this.xid.publicKey : null);
+    // A key carried with a raw tx (signer-keys.js) is checked to derive to its address before it is kept, so it
+    // is preferred to the registry's, which is whatever a presence message claimed. keyMisses counts the lookups
+    // that found no key at all: each one is a signature that was not checked.
+    this.signerKeys = new SignerKeys({ derive: (pk) => Identity.deriveAddress(pk) });
+    this.keyMisses = { consensus: 0, ledger: 0 };
+    const keyOf = (addr) => (addr === self ? this.xid.publicKey : null) || this.signerKeys.get(addr) || this.peerRegistry.get(addr)?.publicKey || null;
+    const resolveKey = (addr) => keyOf(addr) || (typeof addr === 'string' && this.keyMisses.consensus++, null);
+    this._keyOf = keyOf;
     this.xpc.getPublicKeyByAddress = resolveKey;
     // B7 — RE-VERIFICATION AT THE LEDGER. Ledger.addTransaction and addSealedBatch have always verified a
     // signed tx when they could resolve its signer's key, and the daemon never handed them a resolver: on every
@@ -357,7 +364,7 @@ export class XMBLCore {
     // into the signed body, a finalized tx could not re-verify and this resolver would have refused every
     // genuine tx. Same resolver, same registry, same asymmetry (the allowlist scopes who may VALIDATE, never
     // whose signature can be verified), so a signed tx is now verified at both doors.
-    this.xclt.getPublicKeyByAddress = resolveKey;
+    this.xclt.getPublicKeyByAddress = (addr) => keyOf(addr) || (typeof addr === 'string' && this.keyMisses.ledger++, null);
     // LIVENESS IS THE WHOLE POINT OF THE NAME, and it was never checked. `lastSeen` was written on every
     // presence and read by NOTHING but the status display, so this filtered on roles.lead alone: every peer
     // this node had EVER seen stayed a validator forever. Once a mesh had come and gone, _getValidationLeaders
@@ -413,8 +420,9 @@ export class XMBLCore {
     if (this._leadWatchTimer.unref) this._leadWatchTimer.unref();
 
     // --- a peer's raw tx: replicate it locally + validate the task addressed to us ---
-    this.gossip.on('raw_tx:received', async ({ leaderId, tx, leaders }) => {
+    this.gossip.on('raw_tx:received', async ({ leaderId, tx, leaders, signerKey }) => {
       if (!tx || leaderId === self) return;             // our own submission is already in our mempool
+      if (signerKey && tx.sig) this.signerKeys.learn(tx.from, signerKey);
       // Per-tx dedup key. A CONTENT-ADDRESSED tx (type-6) is UNSIGNED, so `tx.sig` is empty and EVERY such tx
       // from a leader would collapse to `${leaderId}:` — only the first ingests, the rest are dropped as false
       // "duplicates" and never validate on peers (no cross-node quorum → no seal). Prefer the stable 06 content
@@ -645,7 +653,7 @@ export class XMBLCore {
           myReports: this._myReports,
           retries: this._retryAttempts,
           maxRetries: MAX_RETRIES,
-          broadcastRawTx: (l, tx, ld) => { this.gossip.broadcastRawTransaction(l, tx, ld).catch(() => {}); },
+          broadcastRawTx: (l, tx, ld) => { this.gossip.broadcastRawTransaction(l, tx, ld, tx?.sig ? this._keyOf(tx.from) : null).catch(() => {}); },
           broadcastReport: (r) => { this.gossip.broadcastValidationReport(r).catch(() => {}); },
         });
       } catch { /* the sweep must never throw into the interval */ }
@@ -859,7 +867,7 @@ export class XMBLCore {
     // Broadcast via gossip WITH the exact leader set we assigned, so every peer builds the identical validation
     // tasks and validates the one addressed to it.
     const leaders = this.xpc.rawTxLeaders ? this.xpc.rawTxLeaders.get(rawTxId) : null;
-    await this.gossip.broadcastRawTransaction(this.xid.address, submitted, leaders);
+    await this.gossip.broadcastRawTransaction(this.xid.address, submitted, leaders, submitted.sig ? this.xid.publicKey : null);
 
     return rawTxId;
   }

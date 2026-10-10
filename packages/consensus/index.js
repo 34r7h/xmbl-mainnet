@@ -7,6 +7,7 @@ import { ValidationWorker } from './src/validation-worker.js';
 import { runValidationRetryTick } from './src/validation-retry.js';
 import { SealRoundManager } from './src/seal-round.js';
 import { setHash as sealSetHash } from './src/seal-agreement.js';
+import { SignerKeys } from './src/signer-keys.js';
 
 export {
   ConsensusWorkflow,
@@ -19,7 +20,8 @@ export {
   ValidationWorker,
   runValidationRetryTick,
   SealRoundManager,
-  sealSetHash
+  sealSetHash,
+  SignerKeys
 };
 
 

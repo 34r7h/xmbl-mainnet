@@ -1154,9 +1154,12 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
               processed_ids: x._processedRawTxIds?.size ?? null, tasks: x.taskManager?.size?.().tasks ?? null,
               applied_reports: core._appliedReports?.size ?? null, pending_reports: core._pendingReports?.size ?? null,
               ingested: core._ingested?.size ?? null, my_reports: core._myReports?.size ?? null,
+              signer_keys: core.signerKeys?.size ?? null, ledger_blocks: core.xclt?.blocks?.size ?? null,
+              ledger_cubes: core.xclt?.cubes?.size ?? null, state_diffs: core.xvsm?.diffs?.length ?? null,
+              state_tx_log: core.xvsm?.transactionLog?.length ?? null,
             };
             return { cpu_ms: Math.round((cpu.user + cpu.system) / 1000), heap_mb: +(process.memoryUsage().heapUsed / 1048576).toFixed(1), heap_after_gc: gcd,
-                     verify, micromine: micromineStats ? { ...micromineStats } : null, gossip: core.gossip?.stats ? { ...core.gossip.stats } : null, held };
+                     verify, key_misses: core.keyMisses ? { ...core.keyMisses } : null, micromine: micromineStats ? { ...micromineStats } : null, gossip: core.gossip?.stats ? { ...core.gossip.stats } : null, held };
           })(),
           // the same reading, bound to this node's identity — see the block above
           ...(stmt && sig && pk ? { stmt, sig, pk } : {}),

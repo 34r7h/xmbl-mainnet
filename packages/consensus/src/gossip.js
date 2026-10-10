@@ -42,6 +42,7 @@ export class ConsensusGossip extends EventEmitter {
     // Set by the node: true when every live peer reads batches. Until then every message goes out alone.
     this.canBatch = options.canBatch || (() => false);
     this._outbox = []; this._outboxBytes = 0; this._flushTimer = null;
+    this._outboxKeys = null;   // signer address -> key for the raw txs waiting in the outbox, sent once per flush
     this.stats = { messages: 0, batches: 0, batchedItems: 0 };
     this.client = null; // Will be initialized lazily if WebTorrent is available
     this.swarms = new Map(); // topic -> swarm
@@ -116,12 +117,15 @@ export class ConsensusGossip extends EventEmitter {
    * @param {string} leaderId - Leader ID
    * @param {Object} tx - Transaction data
    */
-  async broadcastRawTransaction(leaderId, tx, leaders = null) {
+  async broadcastRawTransaction(leaderId, tx, leaders = null, signerKey = null) {
     // `leaders` (the deterministic validation-leader set for this tx) rides WITH the
     // broadcast so every receiver builds the SAME validation tasks the submitter did,
     // independent of any per-node registry timing. Backward compatible (null → receiver
     // computes its own).
-    const message = { type: 'raw_tx', leaderId, tx, leaders, timestamp: Date.now() };
+    // `signerKey` is the key tx.sig was made under, so a receiver can check the signature before it has heard
+    // the signer's presence (see signer-keys.js). In a batch it is sent once per signer, not once per tx: a MAYO
+    // public key is about 1.9 KB of base64 against about 0.75 KB for the signed tx itself.
+    const message = { type: 'raw_tx', leaderId, tx, leaders, timestamp: Date.now(), ...(signerKey ? { signerKey } : {}) };
     this.emit('raw_tx:broadcast', message);
     await this._publish(message);
   }
@@ -153,10 +157,20 @@ export class ConsensusGossip extends EventEmitter {
   }
 
   _enqueue(message) {
-    const size = JSON.stringify(message).length;
+    let item = message, key = null, from = null;
+    if (message.type === 'raw_tx' && message.signerKey && typeof message.tx?.from === 'string') {
+      ({ signerKey: key, ...item } = message);
+      from = message.tx.from;
+    }
+    const size = JSON.stringify(item).length + (key ? key.length + from.length + 6 : 0);
     if (this._outbox.length && this._outboxBytes + size > BATCH_MAX_BYTES) this.flush();
-    this._outbox.push(message);
+    this._outbox.push(item);
     this._outboxBytes += size;
+    if (key) {
+      if (!this._outboxKeys) this._outboxKeys = new Map();
+      if (this._outboxKeys.get(from) === key) this._outboxBytes -= key.length + from.length + 6;
+      else this._outboxKeys.set(from, key);
+    }
     if (!this._flushTimer) this._flushTimer = setTimeout(() => this.flush(), FLUSH_MS);
   }
 
@@ -164,10 +178,17 @@ export class ConsensusGossip extends EventEmitter {
   flush() {
     if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
     if (!this._outbox.length) return;
-    const items = this._outbox;
-    this._outbox = []; this._outboxBytes = 0;
+    const items = this._outbox, keys = this._outboxKeys;
+    this._outbox = []; this._outboxBytes = 0; this._outboxKeys = null;
     if (items.length > 1) { this.stats.batches++; this.stats.batchedItems += items.length; }
-    this._send(items.length === 1 ? items[0] : { type: 'batch', items, ts: Date.now() }).catch(() => {});
+    let out;
+    if (items.length === 1) {
+      const key = items[0].type === 'raw_tx' ? keys?.get(items[0].tx?.from) : null;
+      out = key ? { ...items[0], signerKey: key } : items[0];
+    } else {
+      out = { type: 'batch', items, ...(keys ? { keys: Object.fromEntries(keys) } : {}), ts: Date.now() };
+    }
+    this._send(out).catch(() => {});
   }
 
   // Shared send path: WebTorrent swarm (if present) + libp2p pubsub (the real transport).
@@ -191,7 +212,8 @@ export class ConsensusGossip extends EventEmitter {
     if (!message || !message.type) return;
     switch (message.type) {
       case 'raw_tx':
-        this.emit('raw_tx:received', { leaderId: message.leaderId, tx: message.tx, leaders: message.leaders || null });
+        this.emit('raw_tx:received', { leaderId: message.leaderId, tx: message.tx, leaders: message.leaders || null,
+          signerKey: typeof message.signerKey === 'string' ? message.signerKey : null });
         break;
       case 'validation_report':
         this.emit('validation_report:received', {
@@ -205,7 +227,15 @@ export class ConsensusGossip extends EventEmitter {
         break;
       case 'batch':
         // Each item is handled as if it had arrived alone; a batch inside a batch is not a thing a node sends.
-        if (Array.isArray(message.items)) for (const item of message.items) if (item && item.type !== 'batch') this._handleMessage(item);
+        // A raw tx's signer key rides once per batch in `keys`, by signer address.
+        if (Array.isArray(message.items)) {
+          const keys = message.keys && typeof message.keys === 'object' ? message.keys : null;
+          for (const item of message.items) {
+            if (!item || item.type === 'batch') continue;
+            const key = keys && item.type === 'raw_tx' && !item.signerKey && typeof item.tx?.from === 'string' ? keys[item.tx.from] : null;
+            this._handleMessage(typeof key === 'string' ? { ...item, signerKey: key } : item);
+          }
+        }
         break;
       case 'seal_proposal':
         this.emit('seal_proposal:received', { level: message.level, nodeId: message.nodeId, setHash: message.setHash, memberIds: message.memberIds || [] });
