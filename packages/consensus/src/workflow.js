@@ -491,18 +491,30 @@ export class ConsensusWorkflow extends EventEmitter {
   // [self] is a complete, valid validator set under user-as-validator, so recovery must run on a solo node
   // instead of gating on live.length >= requiredValidations and leaving the pool stranded until peers show up.
   startStrandedRecoverySweep(opts = {}) {
-    const intervalMs = opts.intervalMs ?? Number(process.env.XPC_RECOVERY_SWEEP_MS) ?? 15000;
-    const maxPasses = opts.maxPasses ?? Number(process.env.XPC_RECOVERY_MAX_PASSES) ?? 40;
-    let passes = 0;
-    // async because it AWAITS the promote pass (see below); setInterval ignores the returned promise, and the
-    // in-flight guard inside promoteSatisfiedRawTxs is what actually prevents two passes overlapping.
+    // An unset env var is Number(undefined) = NaN, and `NaN ?? 15000` is NaN, because `??` only replaces null
+    // and undefined. setInterval(fn, NaN) fires every 1 ms (measured 2026-10-10: 175 ticks in 200 ms), so a node
+    // without these vars swept its whole pool about a thousand times a second instead of every 15 s, and the
+    // pass cap was NaN too, so `passes >= maxPasses` was never true.
+    const num = (v, d) => { const n = Number(v); return v !== undefined && v !== '' && Number.isFinite(n) && n > 0 ? n : d; };
+    const intervalMs = opts.intervalMs ?? num(process.env.XPC_RECOVERY_SWEEP_MS, 15000);
+    const maxPasses = opts.maxPasses ?? num(process.env.XPC_RECOVERY_MAX_PASSES, 40);
+    let passes = 0, running = false;
+    // ONE PASS AT A TIME. setInterval ignores the promise a tick returns, so a pass slower than the interval had
+    // the next one start on top of it; the drain, which walks the whole pool and verifies signatures, was not
+    // guarded at all and piled up one copy per tick.
     const tick = async () => {
+      if (running) return;
+      running = true;
+      try { await pass(); } finally { running = false; }
+    };
+    const pass = async () => {
       passes++;
       const live = (typeof this.getLiveLeaders === 'function' ? this.getLiveLeaders() : []) || [];
       {
         // DRAIN FIRST. Recovering a pool that is mostly provably-invalid is pure waste — and on a small box it
-        // is actively harmful (see the 1GB box that OOM'd building tasks for 13,740 doomed txs).
-        this.drainInvalidMempool().catch(() => {});
+        // is actively harmful (see the 1GB box that OOM'd building tasks for 13,740 doomed txs). Awaited, so
+        // recovery below sees the drained pool.
+        await this.drainInvalidMempool().catch(() => {});
         const n = this.recoverStrandedRawTxs();
         // Promote BEFORE deciding the sweep is done: a tx that is already satisfied is not "stranded" by
         // recoverStrandedRawTxs's test, so a sweep that only counted recoveries declared itself complete
