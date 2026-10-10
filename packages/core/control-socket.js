@@ -1280,15 +1280,21 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
   return new Promise((resolve, reject) => {
     const server = net.createServer((sock) => {
       sock.setEncoding('utf8');
-      let buf = '';
+      // Search only the chunk that just arrived for the newline, and join a line's chunks once. `buf += d`
+      // then buf.indexOf('\n') flattened the whole growing line on every chunk: a rebuild_ledger carrying the
+      // 4.1 MB canonical set arrives in ~500 chunks and was copied ~500 times (166 ms of copying measured
+      // 2026-10-10, against 10 ms joined once), and the copying grows with the square of the set.
+      let parts = [];
       sock.on('data', (d) => {
-        buf += d;
         let i;
-        while ((i = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, i);
-          buf = buf.slice(i + 1);
+        while ((i = d.indexOf('\n')) >= 0) {
+          parts.push(d.slice(0, i));
+          const line = parts.length === 1 ? parts[0] : parts.join('');
+          parts = [];
+          d = d.slice(i + 1);
           if (line.trim()) handleLine(sock, line);
         }
+        if (d) parts.push(d);
       });
       sock.on('error', () => {}); // a client disconnecting mid-write must not crash the daemon
     });
