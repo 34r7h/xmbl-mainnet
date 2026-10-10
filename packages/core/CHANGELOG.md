@@ -1,5 +1,26 @@
 # @xmbl/core
 
+## 0.1.25
+
+### Patch Changes
+
+- **Throughput, counted on real nodes.** scripts/fleet-load.mjs boots real nodes on loopback, submits node-signed
+  datum state_diffs over their control sockets and times until every node holds every tx. 0.1.24: 4 nodes x 500
+  sealed 0 in the signing node's ledger and split the state root 2 ways. 0.1.25: 2 nodes x 504 at 154-168 tx/s end
+  to end, every tx sealed on both nodes, one state root, 1.00 signature checks per tx on each node.
+  - @xmbl/consensus 0.1.25: a node-signed tx reaches the ledger (finalize no longer adds an `id` the signer never
+    signed); raw txs and validation reports go out batched, one gossip message per 10 ms; a relaying node is
+    throttled per second (XPC_FLOOD_MAX 20000 per XPC_FLOOD_WINDOW_MS 1000) instead of banned for life; a tx's
+    validation tasks leave with it; a signed tx is checked against the key it carries, so no pooled tx goes
+    unverified while the signer's presence is on its way.
+  - @xmbl/identity 0.1.25: one MAYO module per scheme and one verify per signature per process.
+  - @xmbl/cubic-ledger 0.1.25: a datum's nonce search runs once per (content, type) per process.
+  - @xmbl/networking 0.1.25: the relay-discovery walk is paced; two idle nodes sent each other about 500 DHT
+    queries a second (15,794 in 30 s), now 18 in 30 s; CPU per tx down about 40%.
+  - This package: the chain op reports cpu_ms, heap_mb (after a full GC with params.gc under --expose-gc),
+    verify, micromine, gossip and key-miss counters, and the size of every per-tx structure; a node batches only
+    while every peer it hears says caps ['batch'], so a 0.1.24 peer is never sent a message type it would drop.
+
 ## 0.1.24
 
 ### Patch Changes

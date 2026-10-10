@@ -1,5 +1,16 @@
 # @xmbl/networking
 
+## 0.1.25
+
+### Patch Changes
+
+- **The relay-discovery walk is paced.** libp2p's random walk ran getClosestPeers back to back for as long as a
+  node held no relay reservation, and kad-dht keeps each inbound query's stream alive 10 s, so two idle nodes
+  sent each other about 500 DHT queries a second (15,794 in 30 s) and the heap grew with them. A walk now waits
+  2 s between queries, doubling to 60 s while no new peer turns up; the first query is immediate and a new
+  peer resets the wait. Measured: 18 queries in 30 s; on 2 nodes x 504 txs, CPU 7.0-7.7 -> 3.5-4.9 ms per tx and
+  heap kept 20-32 -> 6-10 KB per tx. random-walk-pace: 14 messages in 10 s (600 unpaced).
+
 ## 0.1.22
 
 ### Patch Changes

@@ -1,5 +1,28 @@
 # @xmbl/consensus
 
+## 0.1.25
+
+### Patch Changes
+
+- **A node-signed tx reaches the ledger.** Finalize gave every tx without an `id` one (`id: validatedHash`), a
+  field the signer never saw, so the ledger's signature check failed on every node that knew the signer's key:
+  4 real nodes x 500 sealed 0 in the signing node's ledger and split the state root 2 ways. Now 495 sealed + 5
+  pooled on all 4, one root. devnet 29/29.
+- **Batched gossip.** Raw txs and validation reports go out as one message per 10 ms flush, split at 1 MiB, and
+  only while every peer heard inside the presence TTL advertises caps ['batch']. 4 nodes x 2007: 210-219 tx/s end
+  to end, measured at this change, before every pooled tx's signature was checked (below). gossip-batch 12/12.
+- **A relay is throttled, not banned.** The ingress flood rule was 500 txs per 60 s per submitter, then a ban
+  for life, which capped a node relaying for its clients at 8 tx/s. It is now XPC_FLOOD_MAX (20000) per
+  XPC_FLOOD_WINDOW_MS (1000), refused past that with submitter:throttled and admitted again next window.
+- **A tx's validation tasks leave with it.** Nothing cleared them when a tx reached processing or left the raw
+  pool, so every tx a node ever saw kept its tasks in memory and a validationTasks row every boot reloaded. Tasks
+  are indexed per tx and cleared on every path out of the pool; a boot drops rows of txs no longer pooled.
+  validation-tasks 8/8.
+- **Every pooled signed tx is verified.** A signer's key was looked up only in the peer registry, which fills from
+  presence every 4 s, and the check is skipped when no key resolves: the receiving node sealed 500 of 504 txs on
+  0.01 MAYO verifies per tx. A raw tx now carries its signer's key, kept only when it hashes to the signer's
+  address (SignerKeys, at most 4096). Measured: 1.00 verifies per tx, 0 key misses. signer-keys 5/5.
+
 ## 0.1.24
 
 ### Patch Changes

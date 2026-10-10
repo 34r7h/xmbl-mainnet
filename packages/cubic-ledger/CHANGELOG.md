@@ -1,5 +1,13 @@
 # @xmbl/cubic-ledger
 
+## 0.1.25
+
+### Patch Changes
+
+- **A datum's nonce search runs once per (content, type) per process.** A node searched the same datum at the
+  door, at validation, at finalize and in the tree. The memo is keyed by type and oid, the oid is still hashed
+  from the data on every call, and XMBL_MICROMINE_MEMO_MAX (16384) bounds it. micromine-memo 7/7.
+
 ## 0.1.21
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @xmbl/identity
 
+## 0.1.25
+
+### Patch Changes
+
+- **One MAYO module per scheme, one verify per signature.** Every sign and verify instantiated a fresh Emscripten
+  module, and a node verified the same signed tx at the door, at validation, at finalize and in the ledger. 2
+  nodes x 500 went 41 -> 158 tx/s. mayo-cache 7/7.
+
 ## 0.1.20
 
 ### Patch Changes
