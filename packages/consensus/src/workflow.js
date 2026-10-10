@@ -853,18 +853,14 @@ export class ConsensusWorkflow extends EventEmitter {
     const utxos = this._extractUtxos(processingTx.txData);
     await this.mempool.unlockUtxos(utxos);
     
-    // PRESERVE THE ORIGINATOR'S SIGNED `id`. This block used to overwrite it with
-    // `validatedHash` unconditionally — but `id` is inside the signed message (identity's
-    // signingMessage covers every field except sig/publicKey), so the mutation made the
-    // ledger's re-verification stringify a different tx and a valid signature could never
-    // match ("Invalid transaction signature or address mismatch"). The consensus hash is
-    // already carried to the ledger as the finalized event's `txId`, and the ledger derives
-    // its own content-addressed block id via Block.fromTransaction — it never needs
-    // txData.id to equal validatedHash. So: keep the signed id when present; only fall back
-    // to validatedHash for a tx that carried none (was DEVNET-SEAM-FINDING defect (a)).
-    const txDataWithId = processingTx.txData.id != null
-      ? processingTx.txData
-      : { ...processingTx.txData, id: validatedHash };
+    // THE TX GOES TO THE LEDGER AS IT WAS SIGNED — NOTHING ADDED. This used to give a tx that carried no `id` one
+    // (`id: validatedHash`). Every field but sig/publicKey is inside the signed message (identity's
+    // signingMessage), so the added field made the ledger's re-verification stringify a different tx: on a
+    // 4-node loopback fleet (2026-10-11) 500 of 500 node-signed state_diffs reached tx:finalized and 0 reached
+    // the signing node's ledger ("Invalid signature for transaction from xmb…"); the other nodes admitted only the
+    // ones they checked before they knew the signer's key. The consensus hash already travels as the finalized
+    // event's `txId`, the ledger derives its own block id from the tx's xid, and nothing reads txData.id.
+    const txDataWithId = processingTx.txData;
     
     // Emit finalized event - xclt will add this to ledger
     // Blocks are sorted by hash when face has 9 blocks

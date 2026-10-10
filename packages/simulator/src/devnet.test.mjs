@@ -86,6 +86,22 @@ const ok = (name, cond, detail = '') => {
        (await Identity.verifyTransaction(withVt, from.publicKey)) === false);
     try { await w.mempool?.db?.close?.(); } catch { /* in-memory / already closed */ }
   }
+  // A SIGNED TX WITH NO `id` GETS NONE. The node-authored path (core.submitTransaction: micromine, then sign) never
+  // sets one, and finalize used to add `id: validatedHash` — a field the signer never saw — so every node-signed tx
+  // failed the ledger's re-verification (measured on a 4-node loopback fleet: 500 finalized, 0 in the ledger).
+  {
+    const { id: _drop, ...noId } = micromineTx({ type: 'utxo', from: from.address, to: net.addressOf(1), amount: 3, timestamp: Date.now() });
+    const signedNoId = await from.signTransaction(noId);
+    const w = new ConsensusWorkflow({});
+    const validatedHash = 'validatedHash_' + 'cd'.repeat(8);
+    w.mempool.processingTx.set(validatedHash, { txData: { ...signedNoId }, validationTimestamp: null });
+    let emitted = null;
+    w.on('tx:finalized', (d) => { emitted = d; });
+    await w.finalizeTransaction(validatedHash);
+    ok('a signed tx that carried no id is finalized with no id added', !!emitted && !('id' in emitted.txData), `keys=${Object.keys(emitted?.txData || {})}`);
+    ok('... and it still verifies against the signer key', !!emitted && (await Identity.verifyTransaction(emitted.txData, from.publicKey)) === true);
+    try { await w.mempool?.db?.close?.(); } catch { /* in-memory / already closed */ }
+  }
 
   // FIX(c) / A5 — DRIVEN AT THE REAL SITE, not asserted on a hand-built object. The previous version of this
   // block pinned the DEFECT by checking a property of verifyTransaction itself, which no amount of fixing
