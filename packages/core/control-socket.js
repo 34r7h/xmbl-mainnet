@@ -2,9 +2,9 @@ import net from 'net';
 import fs from 'fs';
 import { createHash } from 'crypto';
 import { collectEarnings } from './earnings.js';
-import { sign, sealChainKey, SUPPORTED_CHAINS, VERSION as IDENTITY_VERSION } from '@xmbl/identity';   // the ONE signature seam — a chain claim the broker can verify is signed HERE or nowhere
+import { sign, sealChainKey, SUPPORTED_CHAINS, verifyStats, VERSION as IDENTITY_VERSION } from '@xmbl/identity';   // the ONE signature seam — a chain claim the broker can verify is signed HERE or nowhere
 import { VERSION as NETWORKING_VERSION } from '@xmbl/networking';
-import { VERSION as CUBIC_LEDGER_VERSION, validateXid, micromineTx } from '@xmbl/cubic-ledger';
+import { VERSION as CUBIC_LEDGER_VERSION, validateXid, micromineTx, micromineStats } from '@xmbl/cubic-ledger';
 import { VERSION as STATE_MACHINE_VERSION } from '@xmbl/state-machine';
 import { VERSION as CONSENSUS_VERSION } from '@xmbl/consensus';
 import { VERSION as STORAGE_COMPUTE_VERSION } from '@xmbl/storage-compute';
@@ -1139,6 +1139,25 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
           versions: RUNNING_VERSIONS,                          // what this process is running (see status)
           build: RUNNING_BUILD.digest,                         // the version proof (see RUNNING_BUILD)
           suspended: core.suspended || null,
+          // What this process has spent, for throughput work: CPU since boot, the signature memo's hits and
+          // misses (a miss is one MAYO verify), micromine nonce searches and memo hits, gossip messages sent and
+          // how many items rode in batches, the heap (after a full GC when asked with params.gc and the process
+          // runs with --expose-gc), and how many entries each per-tx structure holds. Not part of the signed reading.
+          perf: (() => {
+            const cpu = process.cpuUsage();
+            let verify = null; try { verify = verifyStats(); } catch { verify = null; }
+            const gcd = !!(req.params?.gc && typeof globalThis.gc === 'function');
+            if (gcd) globalThis.gc();
+            const x = core.xpc || {};
+            const held = {
+              raw_tx_to_id: x.rawTxToId?.size ?? null, raw_tx_leaders: x.rawTxLeaders?.size ?? null,
+              processed_ids: x._processedRawTxIds?.size ?? null, tasks: x.taskManager?.size?.().tasks ?? null,
+              applied_reports: core._appliedReports?.size ?? null, pending_reports: core._pendingReports?.size ?? null,
+              ingested: core._ingested?.size ?? null, my_reports: core._myReports?.size ?? null,
+            };
+            return { cpu_ms: Math.round((cpu.user + cpu.system) / 1000), heap_mb: +(process.memoryUsage().heapUsed / 1048576).toFixed(1), heap_after_gc: gcd,
+                     verify, micromine: micromineStats ? { ...micromineStats } : null, gossip: core.gossip?.stats ? { ...core.gossip.stats } : null, held };
+          })(),
           // the same reading, bound to this node's identity — see the block above
           ...(stmt && sig && pk ? { stmt, sig, pk } : {}),
         };

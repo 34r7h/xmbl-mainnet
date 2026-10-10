@@ -33,13 +33,14 @@ const stop = async (code) => { await f.stop(); process.exit(code); };
 process.on('SIGINT', () => stop(130));
 await f.waitMesh();
 
-const snap = async (i) => {
-  const c = await f.call(i, { op: 'chain' }, 10000);
+const snap = async (i, gc = false) => {
+  const c = await f.call(i, { op: 'chain', ...(gc ? { params: { gc: true } } : {}) }, 10000);
   const cc = c?.cube_curve || {};
   return { node: i, blocks: cc.blocks_persisted ?? null, pooled: cc.pooled_blocks ?? null, cubes: cc.cubes_persisted ?? null,
-           applied: c?.applied_tx_count ?? null, mempool: c?.mempool ?? null, root: c?.state_root ? String(c.state_root).slice(0, 12) : null };
+           applied: c?.applied_tx_count ?? null, mempool: c?.mempool ?? null, root: c?.state_root ? String(c.state_root).slice(0, 12) : null,
+           perf: c?.perf ?? null };
 };
-const baseline = await Promise.all(f.alive().map(snap));
+const baseline = await Promise.all(f.alive().map((i) => snap(i, true)));
 // A tx is in a node's ledger once it is a block there, sealed into a face or pooled in the face still filling
 // (a face takes 9 blocks, so the last few of a run wait for the next traffic). Both are counted; the sealed
 // figure is printed beside it.
@@ -88,8 +89,24 @@ while (true) {
   if (Date.now() - lastMove > STALL_S * 1000) break;
   await sleep(1000);
 }
-const rows = await Promise.all(f.alive().map(snap));
-for (const r of rows) console.log(JSON.stringify(r));
+const rows = await Promise.all(f.alive().map((i) => snap(i, true)));
+for (const r of rows) { const { perf, ...rest } = r; console.log(JSON.stringify(rest)); }
+// What each node spent on the run: CPU ms per new tx, MAYO verifies (memo misses) and memo hits per tx, and gossip
+// messages sent per tx with how many of the items rode in batches.
+const baseOf = Object.fromEntries(baseline.map((s) => [s.node, s.perf]));
+for (const r of rows) {
+  const p = r.perf, b = baseOf[r.node];
+  if (!p || !b) continue;
+  const d = (f) => (f(p) ?? 0) - (f(b) ?? 0);
+  const per = (x) => (accepted ? (x / accepted).toFixed(2) : '-');
+  console.log(`perf node ${r.node}: cpu ${per(d((x) => x.cpu_ms))} ms/tx, mayo verifies ${per(d((x) => x.verify?.misses))}/tx, ` +
+    `memo hits ${per(d((x) => x.verify?.hits))}/tx, micromine searches ${per(d((x) => x.micromine?.searches))}/tx hits ${per(d((x) => x.micromine?.hits))}/tx, gossip msgs ${per(d((x) => x.gossip?.messages))}/tx (${d((x) => x.gossip?.batchedItems)} items batched)`);
+  // Heap kept per tx, read after a full GC when the nodes run with --expose-gc, and what each per-tx structure
+  // still holds after the run: anything that grows by about one entry per tx is kept forever.
+  const kb = accepted ? ((d((x) => x.heap_mb) * 1024) / accepted).toFixed(2) : '-';
+  const held = Object.entries(p.held || {}).map(([k, v]) => `${k} ${v - (b.held?.[k] ?? 0)}`).join(', ');
+  console.log(`held node ${r.node}: heap ${b.heap_mb} -> ${p.heap_mb} MB${p.heap_after_gc ? ' after gc' : ' (no gc)'} = ${kb} KB/tx; ${held}`);
+}
 const roots = new Set(rows.map((r) => r.root));
 const minHeld = Math.min(...rows.map((r) => held(r) - (base[r.node] ?? 0)));
 const minSealed = Math.min(...rows.map((r) => (r.blocks ?? 0) - (baseSealed[r.node] ?? 0)));
