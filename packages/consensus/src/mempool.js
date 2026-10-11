@@ -77,7 +77,7 @@ export class Mempool extends EventEmitter {
       
       // Load processing transactions
       for await (const [key, value] of this.db.iterator({ gt: 'processingTx:', lt: 'processingTx:\xFF' })) {
-        const txId = key.toString().substring(14);
+        const txId = key.toString().substring(13);   // 'processingTx:'.length — 14 cut the id's first character, so no del ever matched a reloaded row
         this.processingTx.set(txId, JSON.parse(value.toString()));
       }
       

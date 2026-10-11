@@ -17,10 +17,13 @@
 //   onTrack()           — the version line a node follows (0.1.x; XMBL_TRACK moves it): anything off it is unknown.
 //   PeerReleaseTrigger  — a peer's gossiped version makes this node look NOW, at most so often (see below).
 //   installedVersions() / acquireInstallLock() — what is on disk, and one npm at a time in an install root.
+//   installPreflight()  — room on the disk for the install, and the memory the box has, read before npm runs.
 // The daemon (bin/xmbl-node.js) wires these: check on an interval or when a peer says it runs a newer version →
 // suspend when behind → install → restart.
 import { createHash } from 'node:crypto';
+import * as fsNs from 'node:fs';
 import { closeSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { freemem } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -177,6 +180,33 @@ export function acquireInstallLock(root, { version = null, staleMs = 10 * 60_000
   }
   return null;
 }
+
+// ROOM FOR THE UPDATE, READ BEFORE NPM RUNS. 4293b3c6 had 47 MB free on 2026-10-11 (a 479 MB node.log and a
+// 2.1 GB npm cache on a 25 GB disk) and was handed every update all the same; npm on a full disk dies part-way and
+// leaves a reason no one reads. So the install is refused below a floor, with the free space and the floor in
+// `ota.last_error` (the `status` op reports it), and the next look retries on its own once there is room.
+// MEASURED for the floor: @xmbl/*@0.1.25 -> 0.1.26 grew the tree by 0 KB and the npm cache by 8 KB (the eight
+// packages are 3 MB unpacked); a cold install of the whole tree is 122 MB of node_modules and 153 MB of cache.
+// The floor is the patch upgrade with a wide margin, not the cold install: a box that cannot update stays
+// suspended, so a floor set too high strands the box it was meant to protect. XMBL_OTA_MIN_FREE_MB moves it
+// (0 turns the check off). statfsSync is read off the namespace: a named import of it would fail this module's
+// link on a Node without it, and with it the whole daemon, which is the one thing that must still boot to update.
+// MEMORY IS REPORTED, NEVER REFUSED ON. npm's peak RSS for that upgrade was 121 MB (164 MB cold), and 4293b3c6
+// installed 0.1.26 with 130-145 MB available, swapping. A memory floor near npm's peak would have kept that box
+// on 0.1.25 for good.
+export const OTA_MIN_FREE_MB = 32;
+export function installPreflight(root, { minFreeMb = envMb(process.env.XMBL_OTA_MIN_FREE_MB, OTA_MIN_FREE_MB), statfs = (p) => fsNs.statfsSync(p),
+  meminfo = () => readFileSync('/proc/meminfo', 'utf8'), freeBytes = freemem } = {}) {
+  let freeMbNow = null;
+  try { const s = statfs(root); const mb = Math.floor((Number(s.bavail) * Number(s.bsize)) / 1048576); if (Number.isFinite(mb)) freeMbNow = mb; } catch { /* no statfs here: nothing to refuse on */ }
+  let memMb = null;
+  try { const m = /^MemAvailable:\s+(\d+)\s+kB/m.exec(meminfo()); if (m) memMb = Math.floor(Number(m[1]) / 1024); } catch { /* not Linux */ }
+  if (memMb === null) { try { const mb = Math.floor(freeBytes() / 1048576); if (Number.isFinite(mb)) memMb = mb; } catch { /* unknown */ } }
+  const ok = freeMbNow === null || freeMbNow >= minFreeMb;
+  return { ok, free_mb: freeMbNow, min_free_mb: minFreeMb, mem_available_mb: memMb,
+    reason: ok ? null : `${freeMbNow} MB free in ${root}, an update needs ${minFreeMb} MB` };
+}
+function envMb(v, dflt) { const n = Number(v); return v !== undefined && v !== '' && Number.isFinite(n) && n >= 0 ? n : dflt; }
 
 // THE FLOODSUB CLEANUP GUARD, on every tree this node installs. @libp2p/floodsub's peer-stream error handlers call
 // abort() on a Yamux stream that may already be closed; that throws StreamStateError out of a .catch as an

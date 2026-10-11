@@ -30,15 +30,20 @@ export class ConsensusWorkflow extends EventEmitter {
     // Stage 2 rehydration: the mempool loads all five tiers from LevelDB, then the task manager adopts the
     // persisted validation tasks. Awaiting `ready` before submitting work guarantees a restarted node resumes
     // its assigned tasks instead of stranding the raw pool.
-    this.ready = Promise.resolve(this.mempool.ready).then(() => {
+    // Whether this node finalizes its own processing tier (the lead role, core's LeadWorker). See dropProcessing.
+    this.finalizes = options.finalizes !== false;
+    this.ready = Promise.resolve(this.mempool.ready).then(async () => {
+      // A non-finalizing node drops the processing rows an earlier version left on disk, before anything reads them.
+      const dropped = this.finalizes ? 0 : await this.dropProcessingTier();
+      if (dropped) console.log(`[XPC] dropped ${dropped} processing row(s) this node will never finalize (not a lead)`);
       const s = this.rehydrateSubmitters();
       // Only the tasks of txs still in the raw pool (rehydrateSubmitters has just mapped every one of them): the
       // rest belong to txs that already reached processing.
       const n = this.taskManager.hydrate((rawTxId) => this.rawTxToId.has(rawTxId));
       if (n) console.log(`[XPC] stage 2 rehydrated: ${n} validation task(s) restored from disk`);
       const r = this.recoverStrandedRawTxs();
-      return { tasks: n, submitters: s, recovered: r };
-    }).catch(() => ({ tasks: 0, submitters: 0, recovered: 0 }));
+      return { tasks: n, submitters: s, recovered: r, dropped };
+    }).catch(() => ({ tasks: 0, submitters: 0, recovered: 0, dropped: 0 }));
     // The threshold is the consensus design's to set, not this constructor's to guess — but the value that
     // core/config.js resolves (XPC_VALIDATIONS) was being discarded here, so no deployment could configure
     // it at all. Honour the passed/configured value, keeping 3 as the default so behaviour is unchanged
@@ -804,10 +809,15 @@ export class ConsensusWorkflow extends EventEmitter {
       validatorTimestamps: rawTx.validationTimestamps // Keep track of validator timestamps
     };
     
-    // Key processing mempool by validated hash (tx data + avg timestamp)
-    this.mempool.processingTx.set(validatedHash, processingTxData);
-    await this.mempool._saveProcessingTx(validatedHash, processingTxData);
-    
+    // Key processing mempool by validated hash (tx data + avg timestamp). Only a node that finalizes holds it: on
+    // any other node nothing would ever take the row out again (see dropProcessing).
+    if (this.finalizes) {
+      this.mempool.processingTx.set(validatedHash, processingTxData);
+      await this.mempool._saveProcessingTx(validatedHash, processingTxData);
+    } else {
+      await this.mempool.unlockUtxos(this._extractUtxos(rawTx.txData));
+    }
+
     // Remove from raw_tx_mempool
     await this._removeRawTransaction(rawTxId);
     
@@ -834,6 +844,32 @@ export class ConsensusWorkflow extends EventEmitter {
 
   getProcessingTransaction(txId) {
     return this.mempool.processingTx.get(txId) || null;
+  }
+
+  // A NODE THAT DOES NOT FINALIZE DOES NOT HOLD THE PROCESSING TIER. finalizeTransaction is the only thing that
+  // takes a row out of processing, and only core's LeadWorker calls it — so on every node without the lead role
+  // each validated tx, its whole body, stayed in the processing map until the process died. (The LevelDB copy is
+  // never written: the row carries the BigInt validator clock, JSON.stringify throws, and _saveProcessingTx
+  // swallows it. A row an older build did write is still read back by _loadState, and the boot drops it.)
+  // MEASURED 2026-10-11 on the two lead:false seeds: 831cfb42 processing 66 -> 115 and 4293b3c6 41 -> 65 in a
+  // few minutes, the lead nodes 0. Such a node applies the chain by adopting sealed cubes, not from this tier, and
+  // the tier is not in the state root, so dropping a row changes no state. The UTXO lock goes with it, as it does
+  // on finalize.
+  async dropProcessing(validatedHash) {
+    const entry = this.mempool.processingTx.get(validatedHash);
+    if (!entry) return false;
+    this.mempool.processingTx.delete(validatedHash);
+    if (this.mempool._dbOpen) {
+      try { await this.mempool.db.del(`processingTx:${validatedHash}`); } catch { /* already gone */ }
+    }
+    await this.mempool.unlockUtxos(this._extractUtxos(entry.txData || {}));
+    return true;
+  }
+
+  async dropProcessingTier() {
+    let n = 0;
+    for (const k of [...this.mempool.processingTx.keys()]) if (await this.dropProcessing(k)) n++;
+    return n;
   }
 
   /**

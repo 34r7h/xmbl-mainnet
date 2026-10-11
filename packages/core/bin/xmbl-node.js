@@ -33,7 +33,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { loadConfig } from '../node-config.js';
 import { fetchLatestVersion, otaDecision, installRootOf, updateCommand, otaRestartMode, respawnArgv, respawnEnv, OTA_EXIT_CODE, DEFAULT_RELEASE_URL,
-  PeerReleaseTrigger, installedVersions, acquireInstallLock, guardFloodsub, XMBL_PACKAGES } from '../release.js';
+  PeerReleaseTrigger, installedVersions, acquireInstallLock, installPreflight, guardFloodsub, XMBL_PACKAGES } from '../release.js';
 import { ensureIdentityAtPath, loadIdentityAtPath } from '@xmbl/identity';
 import { loadOrCreatePeerKey } from '@xmbl/networking';
 import { installTimestampedLogging, installExitMarkers } from '../lifecycle-log.js';   // B5: every line stamped, every exit marked
@@ -132,6 +132,14 @@ function startOta({ core, flags, shutdown }) {
     core.ota.waiting = null; core.ota.updating = true;
     try {
       if (!onDisk()) {
+        // Room first (installPreflight): a full disk is refused here with its numbers, and looked at again in 60 s.
+        const room = installPreflight(installRoot);
+        core.ota.preflight = room;
+        if (!room.ok) {
+          core.ota.last_error = `not installing ${latest}: ${room.reason}`;
+          console.error(`xmbl-node: ${core.ota.last_error} — still suspended, looking again in 60 s`);
+          return 60_000;
+        }
         const lock = acquireInstallLock(installRoot, { version: latest });
         if (!lock) {
           core.ota.waiting = `another install holds ${installRoot}`;
@@ -140,7 +148,7 @@ function startOta({ core, flags, shutdown }) {
         }
         try {
           const { cmd, args } = updateCommand(latest);
-          console.log(`xmbl-node: ${cmd} ${args.join(' ')} (in ${installRoot})`);
+          console.log(`xmbl-node: ${cmd} ${args.join(' ')} (in ${installRoot}; ${room.free_mb ?? '?'} MB free, ${room.mem_available_mb ?? '?'} MB memory available)`);
           const r = await new Promise((resolve) => {
             const p = spawn(cmd, args, { cwd: installRoot, stdio: 'inherit' });
             p.on('error', (e) => resolve({ error: e.message }));
@@ -237,6 +245,8 @@ async function selfHealFromBadInstall(err, flags = {}) {
     return false;
   }
   const { cmd, args } = updateCommand(latest);
+  const room = installPreflight(installRoot);
+  if (!room.ok) { console.error(`xmbl-node: not self-healing to ${latest}: ${room.reason} — the next start looks again`); return false; }
   const lock = acquireInstallLock(installRoot, { version: latest });
   if (!lock) { console.error(`xmbl-node: another install holds ${installRoot} — not self-healing now; the next start looks again`); return false; }
   console.error(`xmbl-node: a newer version exists (${CORE_VERSION} -> ${latest}) — self-healing: ${cmd} ${args.join(' ')} (in ${installRoot})`);

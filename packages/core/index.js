@@ -104,6 +104,8 @@ export class XMBLCore {
       xclt: this.xclt,
       xn: this.xn,
       batchSealer: this.leadWorker ? (txData, opts) => this.leadWorker.handleFinalizedTx(txData, opts) : null,
+      // Without a LeadWorker nothing finalizes here, so the workflow keeps no processing tier (dropProcessing).
+      finalizes: !!this.leadWorker,
     });
 
     // Now that xpc exists, wire the lead worker's OTHER job: driving
