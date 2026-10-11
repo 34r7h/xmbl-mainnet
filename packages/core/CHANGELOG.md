@@ -1,5 +1,23 @@
 # @xmbl/core
 
+## 0.1.27
+
+### Patch Changes
+
+- **A node without the lead role keeps no processing tier.** Core hands the consensus workflow `finalizes` from the
+  same role that builds its LeadWorker, so a lead:false node no longer holds every validated tx in a processing map
+  nothing ever empties (measured 2026-10-11 on the two lead:false seeds: 831cfb42 processing 66 -> 115 and
+  4293b3c6 41 -> 65 within minutes, the lead nodes 0). A lead node is unchanged. See @xmbl/consensus 0.1.27.
+- **No room, no npm.** Before an update installs (the over-the-air install and the boot self-heal from a bad
+  install), the node reads the free space under its install root and does not run npm below 32 MB
+  (XMBL_OTA_MIN_FREE_MB; 0 turns the check off). It stays up and suspended on its version, puts the numbers in
+  `ota.last_error` ("not installing 0.1.x: N MB free in <root>, an update needs 32 MB") and looks again in 60 s.
+  The memory the box has (MemAvailable, or os.freemem without /proc) is read and reported in `ota.preflight` and
+  on the install line, never refused on. 4293b3c6 had 47 MB free on 2026-10-11 and was handed every update; the
+  0.1.25 -> 0.1.26 upgrade grew the tree by 0 KB and the npm cache by 8 KB and peaked at 121 MB RSS, and a cold
+  install is 122 MB of tree plus 153 MB of cache. On a box with a coordinator the coordinator's converge installs
+  first, inside the grace, so this check covers the box without one and the install after the grace.
+
 ## 0.1.26
 
 ### Patch Changes

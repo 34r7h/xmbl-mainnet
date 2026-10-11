@@ -1,5 +1,17 @@
 # @xmbl/consensus
 
+## 0.1.27
+
+### Patch Changes
+
+- **A node that does not finalize does not hold the processing tier.** `ConsensusWorkflow` takes `finalizes`
+  (default true; core passes false without the lead role). When false, a validated tx leaves the raw pool without
+  a processing row and its UTXO lock is released, as finalize would; at boot, processing rows an earlier build left
+  on disk are dropped before anything reads them (`dropProcessingTier`, counted in `ready`'s `dropped`). The tier
+  is not in the state root, so dropping a row changes no state; such a node applies the chain from sealed cubes.
+- **Mempool:** a reloaded processing row is keyed by its full id (`substring(13)`, the length of `processingTx:`;
+  14 cut the first character, so no delete ever matched a row read back from disk). processing-tier 4/4.
+
 ## 0.1.26
 
 ### Patch Changes
