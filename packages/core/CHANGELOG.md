@@ -1,5 +1,24 @@
 # @xmbl/core
 
+## 0.1.28
+
+### Patch Changes
+
+- **A node nobody feeds feeds itself.** A node without the lead role moves its chain only when something hands it
+  the canonical anchor set (rebuild_ledger / apply_canonical on its control socket). Its coordinator does that
+  every 90 s, except for a node it adopted at boot instead of spawning: 831cfb42 sat at 15399 blocks / root
+  955850f3 for hours on 2026-10-11 while the three fed nodes moved together. Now, when no set has been handed over
+  for XMBL_SELF_FEED_STALE_MS (default 180 s), the node GETs the same URL its coordinator does
+  (`$HANDOFF_API/xmbl/anchors/canonical`, `?from_epoch=1` when its ledger refuses untyped anchors), picks the op the
+  coordinator would pick from its own `ledger_capabilities`, and runs it through the same in-process dispatch as
+  the socket: same one-write-at-a-time lock, same eviction filter, same refusal of a set that would empty the
+  chain. It checks every XMBL_SELF_FEED_MS (default 90 s; 0 turns it off), sends the ETag back, skips a set it
+  already holds or one older than it holds, and on a node that has been fed gives the feeder one more interval for
+  a new set before applying it. A result with untyped or rejected rows is not pinned, as the coordinator does.
+  `status.canonical_feed` reports who handed over the last set (`control` or `self`), its digest, and the
+  self-feed's last reason and error. The broker is still where the anchor set comes from: its payload and the
+  anchor blocks are unsigned, so the node fetches the set over TLS rather than taking it from peers.
+
 ## 0.1.27
 
 ### Patch Changes
