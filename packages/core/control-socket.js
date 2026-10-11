@@ -11,6 +11,7 @@ import { VERSION as STORAGE_COMPUTE_VERSION } from '@xmbl/storage-compute';
 import { VERSION as ZERO_KNOWLEDGE_VERSION } from '@xmbl/zero-knowledge';
 import { VERSION as CORE_VERSION } from './index.js';
 import { codeDigest } from './release.js';   // the VERSION PROOF: a digest of the @xmbl code this process loaded
+import { feedState, noteCanonicalApplied } from './canonical-feed.js';   // which set this node holds, and who handed it over
 
 // THE VERSIONS THIS PROCESS IS RUNNING. Each package reads its own manifest at import time (see the VERSION
 // export in every @xmbl/* root), so this names the code in memory — an install that lands on disk after boot
@@ -277,7 +278,8 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
   async function handleOp(req) {
     switch (req.op) {
       case 'status':
-        return { ok: true, ...statusSnapshot(), versions: RUNNING_VERSIONS, build: RUNNING_BUILD.digest, suspended: core.suspended || null, ota: core.ota || null };
+        return { ok: true, ...statusSnapshot(), versions: RUNNING_VERSIONS, build: RUNNING_BUILD.digest, suspended: core.suspended || null, ota: core.ota || null,
+          canonical_feed: core.canonicalFeed || null };
       case 'release':
         // The full version proof: what this process runs, package by package, and whether it is suspended.
         return { ok: true, versions: RUNNING_VERSIONS, build: RUNNING_BUILD, suspended: core.suspended || null, ota: core.ota || null };
@@ -1286,6 +1288,10 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
     });
   }
 
+  // ONE DISPATCH for the socket and for the node's own callers (the canonical self-feed): a write the node starts
+  // on itself takes the same one-at-a-time lock as one a coordinator sends.
+  const dispatch = (req) => (LEDGER_WRITES.has(req.op) ? runLedgerWrite(req) : req.op === 'chain' ? readChain(req) : handleOp(req));
+
   function handleLine(sock, line) {
     let req;
     try { req = JSON.parse(line); } catch { return; } // ignore malformed lines
@@ -1293,8 +1299,16 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
     // `subscribe` holds the socket open and streams — handled separately from the request/reply ops.
     if (req.op === 'subscribe') { void handleSubscribe(sock, req).catch((e) => reply({ ok: false, error: String(e?.message || e) })); return; }
     // Any throw/rejection in an op becomes a JSON error — never an unhandled crash.
+    // A set handed over the socket is a FED node's set: stamp it when it arrives and again when it lands, so the
+    // self-feed stays out of the way of a feeder whose rebuild is still running.
+    const fed = req.op === 'rebuild_ledger' || req.op === 'apply_canonical';
+    if (fed) { try { feedState(core).last_external_at = Date.now(); } catch { /* bookkeeping only */ } }
     Promise.resolve()
-      .then(() => (LEDGER_WRITES.has(req.op) ? runLedgerWrite(req) : req.op === 'chain' ? readChain(req) : handleOp(req)))
+      .then(() => dispatch(req))
+      .then((r) => {
+        if (fed) { try { noteCanonicalApplied(core, req.anchors, { ...r, op: req.op }, 'control'); } catch { /* bookkeeping only */ } }
+        return r;
+      })
       .then(reply)
       .catch((e) => reply({ ok: false, error: String(e?.message || e) }));
   }
@@ -1321,6 +1335,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
       sock.on('error', () => {}); // a client disconnecting mid-write must not crash the daemon
     });
     server.on('error', (e) => reject(e));
+    server.localOp = (req) => Promise.resolve().then(() => dispatch(req));
     server.listen(sockPath, () => {
       try { fs.chmodSync(sockPath, 0o600); } catch { /* best effort */ }
       resolve(server);

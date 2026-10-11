@@ -536,6 +536,12 @@ async function cmdStart(cfgPath, flags = {}) {
   // Version proof + suspension + OTA — see startOta above.
   startOta({ core, flags, shutdown });
 
+  // A node nobody hands the canonical set to fetches it and rebuilds itself — see canonical-feed.js.
+  try {
+    const { startCanonicalSelfFeed } = await import('../canonical-feed.js');
+    startCanonicalSelfFeed({ core, callOp: server.localOp });
+  } catch (e) { console.warn(`xmbl-node: canonical self-feed not started (${e.message})`); }
+
   // B2b: LIFECYCLE COUPLING — no orphans. A coordinator spawns this node as a plain
   // (non-detached) child, but an ungraceful coordinator death (SIGKILL, crash) does NOT
   // propagate to a non-detached child on POSIX — the node would keep running with no

@@ -20,6 +20,10 @@ import { spawnSync } from 'node:child_process';
 // the slowest honest suite that load cannot cross it.
 const PER_FILE_TIMEOUT_MS = 600_000;
 
+// A daemon a suite starts does not fetch the live canonical set from the broker: the self-feed is off in this
+// gate unless a suite turns it on for its own nodes (canonical-self-feed.test.mjs points it at a local feed).
+if (process.env.XMBL_SELF_FEED_MS === undefined) process.env.XMBL_SELF_FEED_MS = '0';
+
 function findTests(dir) {
   const out = [];
   let entries;
