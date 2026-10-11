@@ -14,9 +14,13 @@
 //   installRootOf()     — where `npm install @xmbl/core@<latest>` runs: the install that owns THIS core, or
 //                         null in a source checkout (a checkout is updated by git, never by the daemon).
 //   otaRestartMode()    — after the install: exit 75 to a supervisor that still owns this node, or respawn.
-// The daemon (bin/xmbl-node.js) wires these: check on an interval → suspend when behind → install → restart.
+//   onTrack()           — the version line a node follows (0.1.x; XMBL_TRACK moves it): anything off it is unknown.
+//   PeerReleaseTrigger  — a peer's gossiped version makes this node look NOW, at most so often (see below).
+//   installedVersions() / acquireInstallLock() — what is on disk, and one npm at a time in an install root.
+// The daemon (bin/xmbl-node.js) wires these: check on an interval or when a peer says it runs a newer version →
+// suspend when behind → install → restart.
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +28,22 @@ import { fileURLToPath } from 'node:url';
 export const OTA_EXIT_CODE = 75;   // "updated on disk — restart me": a supervisor sees a non-zero exit and respawns
 export const XMBL_PACKAGES = Object.freeze(['@xmbl/core', '@xmbl/identity', '@xmbl/networking', '@xmbl/cubic-ledger',
   '@xmbl/state-machine', '@xmbl/consensus', '@xmbl/storage-compute', '@xmbl/zero-knowledge']);
-export const DEFAULT_RELEASE_URL = 'https://registry.npmjs.org/@xmbl/core';
+// The dist-tags document: {"latest":"0.1.25"}, 19 bytes, where the full @xmbl/core packument is 43 KB (measured
+// 2026-10-11) — every node asks every couple of minutes, so it asks for the one field it reads.
+export const DEFAULT_RELEASE_URL = 'https://registry.npmjs.org/-/package/@xmbl%2fcore/dist-tags';
+export const DEFAULT_TRACK = '0.1.';
+const VERSION_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
+
+/** A plain x.y.z version string, or null. Gossip is untrusted input: nothing else is a version. */
+export function asVersion(v) {
+  return typeof v === 'string' && VERSION_RE.test(v) ? v : null;
+}
+
+/** On the line this node follows: XMBL_TRACK (default '0.1.') is a prefix, '*' follows whatever the tag says. */
+export function onTrack(v, track = process.env.XMBL_TRACK || DEFAULT_TRACK) {
+  if (!asVersion(v)) return false;
+  return track === '*' || v.startsWith(track);
+}
 
 const require = createRequire(import.meta.url);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -81,9 +100,12 @@ export function codeDigest(names = XMBL_PACKAGES) {
   return { digest: all.digest('hex'), packages };
 }
 
-/** Behind or not. `latest` null (registry unreachable) is NOT "behind": a node is never suspended for the network's fault. */
-export function otaDecision({ running, latest }) {
+/** Behind or not. `latest` null (registry unreachable) is NOT "behind": a node is never suspended for the network's fault.
+ *  A `latest` off the track is unknown too: 0.2.0 is on the registry for good (see release.test.mjs), and a tag that
+ *  ever points at it again must not move a single node off the 0.1.x line. */
+export function otaDecision({ running, latest, track }) {
   if (!latest) return { behind: false, running, latest: null, reason: 'latest unknown' };
+  if (!onTrack(latest, track)) return { behind: false, running, latest: null, reason: `latest ${latest} is off the track — ignored` };
   const behind = compareVersions(running, latest) < 0;
   return { behind, running, latest, reason: behind ? `running ${running}, latest ${latest}` : 'up to date' };
 }
@@ -111,9 +133,104 @@ export function installRootOf(coreDir = HERE) {
   return parts.slice(0, i).join(sep) || sep;
 }
 
-/** The exact command an update runs, so it can be logged, tested and audited. */
+// The exact command an update runs, so it can be logged, tested and audited. It is THE SAME install the handoff
+// coordinator runs (convergeXmblBundle in handoff-lib.mjs): all eight packages, pinned exactly. Installing core
+// alone left the other seven on the old version in a coordinator's install root, where they are pinned — so the
+// node came back on new core over old consensus (the code that hears a peer's version), and the coordinator,
+// finding seven stale, installed and restarted it a second time. With one command, whichever runs first leaves
+// the other nothing to do.
 export function updateCommand(latest) {
-  return { cmd: 'npm', args: ['install', `@xmbl/core@${latest}`, '--no-audit', '--no-fund', '--omit=dev', '--no-save'] };
+  return { cmd: 'npm', args: ['install', ...XMBL_PACKAGES.map((n) => `${n}@${latest}`), '--omit=dev', '--no-audit', '--no-fund', '--save-exact'] };
+}
+
+/** name → version on disk under `root`/node_modules for the eight packages (null where absent). */
+export function installedVersions(root, names = XMBL_PACKAGES) {
+  const out = {};
+  for (const n of names) {
+    try { out[n] = JSON.parse(readFileSync(join(root, 'node_modules', ...n.split('/'), 'package.json'), 'utf8')).version || null; }
+    catch { out[n] = null; }
+  }
+  return out;
+}
+
+// ONE NPM AT A TIME IN AN INSTALL ROOT. On a handoff box the node and its coordinator both install into ~/.handoff,
+// and two npm processes reifying one node_modules can leave it half of each. The node takes this file with O_EXCL
+// for the length of its install; the coordinator is asked to do the same. A lock whose pid is gone, or that is
+// older than `staleMs`, is a crash's leftover and is taken over.
+export const INSTALL_LOCK = '.xmbl-install.lock';
+export function acquireInstallLock(root, { version = null, staleMs = 10 * 60_000, pid = process.pid, now = Date.now() } = {}) {
+  const file = join(root, INSTALL_LOCK);
+  const alive = (p) => { try { process.kill(p, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(file, 'wx', 0o644);
+      writeSync(fd, JSON.stringify({ pid, version, at: new Date(now).toISOString(), by: 'xmbl-node' }));
+      closeSync(fd);
+      return { file, release() { try { if (JSON.parse(readFileSync(file, 'utf8')).pid === pid) unlinkSync(file); } catch { /* gone */ } } };
+    } catch (e) {
+      if (e.code !== 'EEXIST') return null;
+      let held = null; try { held = JSON.parse(readFileSync(file, 'utf8')); } catch { /* unreadable: treat as stale */ }
+      const at = held && Date.parse(held.at);
+      if (held && held.pid && alive(held.pid) && Number.isFinite(at) && now - at < staleMs) return null;
+      try { unlinkSync(file); } catch { /* raced */ }
+    }
+  }
+  return null;
+}
+
+// THE FLOODSUB CLEANUP GUARD, on every tree this node installs. @libp2p/floodsub's peer-stream error handlers call
+// abort() on a Yamux stream that may already be closed; that throws StreamStateError out of a .catch as an
+// unhandled rejection and ends the process (2026-09-13: it took the whole mesh down). The handoff coordinator wraps
+// each call in try/catch after its own install (~/.handoff/bin/patch-floodsub.mjs); a tree the node installs itself
+// comes from the registry unpatched, so the node applies the same edit with the same marker — whichever of the two
+// runs second finds it done, and a call is never wrapped twice. Returns what it found and how many sites it wrapped.
+export const FLOODSUB_GUARD = '/*hf-abort-guard*/';
+const FLOODSUB_ABORTS = ['this.inboundPb?.unwrap().unwrap().abort(err);', 'this.outboundPb?.unwrap().unwrap().abort(err);'];
+export function guardFloodsub(root) {
+  const out = { files: 0, already: 0, sites: 0 };
+  for (const f of [join(root, 'node_modules', '@libp2p', 'floodsub', 'dist', 'src', 'peer-streams.js'),
+    join(root, 'node_modules', '@xmbl', 'networking', 'node_modules', '@libp2p', 'floodsub', 'dist', 'src', 'peer-streams.js')]) {
+    let s; try { s = readFileSync(f, 'utf8'); } catch { continue; }
+    out.files++;
+    if (s.includes(FLOODSUB_GUARD)) { out.already++; continue; }
+    let n = 0;
+    for (const p of FLOODSUB_ABORTS) { const parts = s.split(p); n += parts.length - 1; s = parts.join(`try { ${FLOODSUB_GUARD} ${p} } catch (_e) {}`); }
+    if (n) { writeFileSync(f, s); out.sites += n; }
+  }
+  return out;
+}
+
+// A PEER'S VERSION IS A REASON TO LOOK, NEVER THE ANSWER. Every node says which version it runs in its presence
+// (every 4 s), so the first node to update tells the whole mesh within seconds instead of each node finding out
+// on its own poll. Presence is not authenticated, so a claim only makes this node ask the release source NOW;
+// what it installs is what the release source says, exactly as on the timer. A forged claim therefore costs
+// lookups and nothing else, and those are bounded: the first look comes at once, and each look that does not
+// confirm the claim doubles the wait before the next one (minMs, 2·minMs, … up to maxMs, the poll interval). A
+// confirmed claim resets the wait. One trigger per node, not one per peer: a hundred peers saying the same thing
+// are one reason to look.
+export class PeerReleaseTrigger {
+  constructor({ running, minMs = 15_000, maxMs = 120_000, track, now = () => Date.now() } = {}) {
+    this.running = running; this.minMs = minMs; this.maxMs = Math.max(minMs, maxMs); this.track = track; this.now = now;
+    this.wait = this.minMs; this.nextAt = 0; this.highest = null; this.known = null;
+  }
+  /** A peer said it runs (or has seen) `v`. True when the caller should look now. */
+  offer(v) {
+    v = asVersion(v);
+    if (!v || !onTrack(v, this.track) || compareVersions(v, this.running) <= 0) return false;
+    if (this.known && compareVersions(v, this.known) <= 0) return false;   // already confirmed; the update is under way
+    if (!this.highest || compareVersions(v, this.highest) > 0) this.highest = v;
+    const t = this.now();
+    if (t < this.nextAt) return false;
+    this.nextAt = t + this.wait;
+    this.wait = Math.min(this.wait * 2, this.maxMs);
+    return true;
+  }
+  /** The release source answered `latest` (null when it could not be reached). */
+  settle(latest) {
+    latest = asVersion(latest);
+    if (latest && onTrack(latest, this.track) && compareVersions(latest, this.running) > 0) this.known = latest;
+    if (latest && this.highest && compareVersions(latest, this.highest) >= 0) { this.wait = this.minMs; this.nextAt = 0; this.highest = null; }
+  }
 }
 
 // WHO RESTARTS THIS NODE once an update is installed. Exit 75 hands the restart to a supervisor, so it is right only

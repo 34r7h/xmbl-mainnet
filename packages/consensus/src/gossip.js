@@ -18,6 +18,9 @@ const BATCH_MAX_BYTES = 1 << 20;
 const FLUSH_MS = Math.max(1, Number(process.env.XPC_GOSSIP_FLUSH_MS) || 10);
 const KEEP_BROADCASTS = 1000;
 export const GOSSIP_CAPS = ['batch'];
+// A version a peer states in its presence: x.y.z and nothing else. It is untrusted — a receiver uses it only as a
+// reason to ask the release source itself (core/release.js PeerReleaseTrigger) — so anything else is dropped here.
+const presenceVersion = (v) => (typeof v === 'string' && /^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(v) ? v : null);
 
 // True when at least one peer has been heard from inside `ttlMs` and every such peer named `cap` in its presence.
 // `registry` is the node's address -> {caps, lastSeen} map; its own entry, if any, is skipped.
@@ -136,8 +139,10 @@ export class ConsensusGossip extends EventEmitter {
     await this._publish({ type: 'validation_report', ...report, ts: Date.now() });
   }
 
-  // Node presence: {address, publicKey, roles}. Every node keeps a live registry from these,
-  // which is how leaders are chosen + submitter public keys resolved — no central directory.
+  // Node presence: {address, publicKey, roles, version, seen}. Every node keeps a live registry from these,
+  // which is how leaders are chosen + submitter public keys resolved — no central directory. `version` is the
+  // @xmbl/core the sender runs and `seen` the newer release it has confirmed and is installing: how an update
+  // travels node to node instead of waiting on each node's own poll.
   async broadcastPresence(presence) {
     await this._publish({ type: 'presence', ...presence, caps: GOSSIP_CAPS, ts: Date.now() });
   }
@@ -223,7 +228,8 @@ export class ConsensusGossip extends EventEmitter {
         break;
       case 'presence':
         this.emit('presence:received', { address: message.address, publicKey: message.publicKey, roles: message.roles,
-          caps: Array.isArray(message.caps) ? message.caps : [] });
+          caps: Array.isArray(message.caps) ? message.caps : [],
+          version: presenceVersion(message.version), seen: presenceVersion(message.seen) });
         break;
       case 'batch':
         // Each item is handled as if it had arrived alone; a batch inside a batch is not a thing a node sends.

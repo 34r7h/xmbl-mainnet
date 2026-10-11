@@ -6,11 +6,15 @@
 // restarted it; 8 h later it was still down, and so were five more nodes whose coordinators were online.
 //
 // Real processes, nothing mocked but the outside world: a launcher spawns xmbl-node with --ppid exactly as a
-// coordinator does, a local release source says a newer version exists, and `npm` is a stub that succeeds. Then:
+// coordinator does, a local release source says a newer version on the track exists, and `npm` is a stub that
+// writes the 8 package.json files it was asked for (the node checks the tree after an install). Then:
 //   1. launcher detaches the node and dies (a coordinator self-update) → the update must land on a NEW node
 //      process that is still answering well past the 3 s parent-watch poll, with no --ppid on its command line.
-//   2. launcher stays alive and owns the node → the node must hand the restart back with exit 75 and start
-//      nothing itself (two nodes on one data_dir is the other way to break a box).
+//   2. launcher stays alive and owns the node → after the coordinator's grace the node installs the update
+//      itself, hands the restart back with exit 75 and starts nothing itself (two nodes on one data_dir is the
+//      other way to break a box).
+//   3. launcher owns the node and installs the update within the grace (what a coordinator does) → the node
+//      sees the new tree on disk and exits 75 without running npm: one install per box, never two at once.
 import assert from 'node:assert';
 import net from 'node:net';
 import http from 'node:http';
@@ -19,12 +23,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { otaRestartMode, respawnArgv, respawnEnv, OTA_EXIT_CODE } from './release.js';
+import { otaRestartMode, respawnArgv, respawnEnv, OTA_EXIT_CODE, XMBL_PACKAGES } from './release.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const NODE_BIN = join(HERE, 'bin', 'xmbl-node.js');
 const CORE_VERSION = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8')).version;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// A newer release on this node's track (0.1.x → 0.1.x+1000); an off-track 9.9.9 is ignored by design.
+const NEXT = CORE_VERSION.replace(/\d+$/, (p) => String(Number(p) + 1000));
 
 let pass = 0, fail = 0;
 const ok = (n, c) => { if (c) { pass++; console.log('ok   ' + n); } else { fail++; console.log('FAIL ' + n); } };
@@ -47,8 +53,13 @@ function box(tag) {
   dirs.push(dir);
   mkdirSync(join(dir, 'bin'));
   mkdirSync(join(dir, 'install'));
-  // `npm install @xmbl/core@<latest>` succeeds without touching anything, and says it ran.
-  writeFileSync(join(dir, 'bin', 'npm'), `#!/bin/sh\necho "$@" >> "${join(dir, 'npm.log')}"\nexit 0\n`);
+  // `npm install @xmbl/<n>@<v> …` says it ran and writes node_modules/@xmbl/<n>/package.json at <v> — the tree
+  // the node verifies after an install. Nothing is downloaded.
+  writeFileSync(join(dir, 'bin', 'npm'), `#!/bin/sh
+echo "$@" >> "${join(dir, 'npm.log')}"
+for a in "$@"; do case "$a" in @xmbl/*@*) n="\${a%@*}"; v="\${a##*@}"; mkdir -p "node_modules/$n"; printf '{"name":"%s","version":"%s"}\\n' "$n" "$v" > "node_modules/$n/package.json";; esac; done
+exit 0
+`);
   chmodSync(join(dir, 'bin', 'npm'), 0o755);
   const cfg = join(dir, 'config.json');
   writeFileSync(cfg, JSON.stringify({
@@ -58,13 +69,13 @@ function box(tag) {
   return { dir, cfg, sock: join(dir, 'data', 'node.sock'), log: join(dir, 'node.log') };
 }
 
-// The release source: holds every lookup until armed, answers the newer version ONCE, then the running one —
-// so the respawned node (same code on disk) is up to date and does not update again.
-async function releaseSource() {
+// The release source: holds every lookup until armed, answers the newer version for the first `times` lookups,
+// then the running one — so a respawned node (same code on disk) is up to date and does not update again.
+async function releaseSource(times = 1) {
   let armed = false, served = 0;
   const waiting = [];
   const answer = (res) => {
-    const latest = served++ === 0 ? '9.9.9' : CORE_VERSION;
+    const latest = served++ < times ? NEXT : CORE_VERSION;
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ 'dist-tags': { latest } }));
   };
   const srv = http.createServer((req, res) => { if (armed) answer(res); else waiting.push(res); });
@@ -105,14 +116,16 @@ const argsOf = (pid) => { try { return execFileSync('ps', ['-o', 'args=', '-p', 
 const ppidOf = (pid) => { try { return Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }).trim()); } catch { return 0; } };
 const tail = (f) => (existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter((l) => /xmbl-node|EXIT/.test(l)).slice(-6).join('\n') : '(no log)');
 
-function envFor(b, rel) {
+function envFor(b, rel, extra = {}) {
   return {
     ...process.env,
+    XMBL_OTA_GRACE_MS: '0',
     PATH: `${join(b.dir, 'bin')}:${process.env.PATH}`,
     XMBL_RELEASE_URL: rel.url,
     XMBL_INSTALL_DIR: join(b.dir, 'install'),
     XMBL_MACHINE_LOCK: join(b.dir, 'machine.lock'),   // never this machine's real node's lock
     XMBL_SUPERVISED: '1',                             // a coordinator may set both; --ppid must still decide
+    ...extra,
   };
 }
 
@@ -132,7 +145,7 @@ function envFor(b, rel) {
   rel.arm();
   const respawned = await until(async () => { const s = await call(b.sock, { op: 'status' }); return s?.ok && s.pid !== first ? s : null; }, 60_000);
   ok(`the update ran (npm ${existsSync(join(b.dir, 'npm.log')) ? readFileSync(join(b.dir, 'npm.log'), 'utf8').trim() : 'never called'})`,
-    existsSync(join(b.dir, 'npm.log')) && /install @xmbl\/core@9\.9\.9/.test(readFileSync(join(b.dir, 'npm.log'), 'utf8')));
+    existsSync(join(b.dir, 'npm.log')) && readFileSync(join(b.dir, 'npm.log'), 'utf8').includes(`install @xmbl/core@${NEXT}`));
   const t0 = Date.now();
   const gone = await until(() => !alive(first), 15_000, 100);
   ok(`the old node exited (pid ${first}, ${Date.now() - t0}ms after its replacement answered)`, !!gone);
@@ -151,15 +164,42 @@ function envFor(b, rel) {
 // ---- 2. owned node: the launcher is alive and still its parent ----
 {
   const b = box('owned');
-  const rel = await releaseSource();
-  const L = launcher(b, envFor(b, rel));
+  const rel = await releaseSource(Infinity);
+  const L = launcher(b, envFor(b, rel, { XMBL_OTA_GRACE_MS: '2000' }));
   const st = await until(() => call(b.sock, { op: 'status' }), 60_000);
   ok('setup: the launched node answers status', !!st?.ok);
   rel.arm();
   const code = await until(() => (existsSync(join(b.dir, 'child-exit')) ? readFileSync(join(b.dir, 'child-exit'), 'utf8') : null), 60_000);
   ok(`OUTCOME: the owned node handed the restart to its launcher with exit ${OTA_EXIT_CODE} (got ${code})`, code === String(OTA_EXIT_CODE));
+  const npmLog = existsSync(join(b.dir, 'npm.log')) ? readFileSync(join(b.dir, 'npm.log'), 'utf8') : '';
+  ok(`OUTCOME: after the 2 s grace it installed all ${XMBL_PACKAGES.length} packages itself, pinned (${npmLog.trim().split(' ').length} args)`,
+    XMBL_PACKAGES.every((n) => npmLog.includes(`${n}@${NEXT}`)) && npmLog.includes('--save-exact'));
+  ok('OUTCOME: and the tree it left is the release, package by package',
+    XMBL_PACKAGES.every((n) => { try { return JSON.parse(readFileSync(join(b.dir, 'install', 'node_modules', n, 'package.json'), 'utf8')).version === NEXT; } catch { return false; } }));
   await sleep(4000);
   ok('OUTCOME: and started no node of its own (nothing answers on its socket)', (await call(b.sock, { op: 'status' })) === null);
+  process.kill(L.pid, 'SIGKILL');
+  rel.close();
+}
+
+// ---- 3. owned node, and its coordinator installs the update within the grace ----
+{
+  const b = box('coordinated');
+  const rel = await releaseSource(Infinity);
+  const L = launcher(b, envFor(b, rel, { XMBL_OTA_GRACE_MS: '60000' }));
+  const st = await until(() => call(b.sock, { op: 'status' }), 60_000);
+  ok('setup: the launched node answers status', !!st?.ok);
+  rel.arm();
+  const waiting = await until(async () => { const r = await call(b.sock, { op: 'release' }); return r?.ota?.waiting ? r.ota : null; }, 30_000);
+  ok(`OUTCOME: the owned node waits for its coordinator's install ("${waiting?.waiting}")`, /coordinator install of/.test(waiting?.waiting || ''));
+  for (const n of XMBL_PACKAGES) {                                        // the coordinator's npm install lands
+    mkdirSync(join(b.dir, 'install', 'node_modules', n), { recursive: true });
+    writeFileSync(join(b.dir, 'install', 'node_modules', n, 'package.json'), JSON.stringify({ name: n, version: NEXT }));
+  }
+  const t0 = Date.now();
+  const code = await until(() => (existsSync(join(b.dir, 'child-exit')) ? readFileSync(join(b.dir, 'child-exit'), 'utf8') : null), 30_000);
+  ok(`OUTCOME: it restarted onto the coordinator's tree with exit ${OTA_EXIT_CODE} (got ${code}, ${Date.now() - t0} ms after the tree landed, well inside the 60 s grace)`, code === String(OTA_EXIT_CODE));
+  ok('OUTCOME: and ran no npm of its own — one install per box', !existsSync(join(b.dir, 'npm.log')));
   process.kill(L.pid, 'SIGKILL');
   rel.close();
 }

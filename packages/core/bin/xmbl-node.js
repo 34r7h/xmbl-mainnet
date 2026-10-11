@@ -32,7 +32,8 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { loadConfig } from '../node-config.js';
-import { fetchLatestVersion, otaDecision, installRootOf, updateCommand, otaRestartMode, respawnArgv, respawnEnv, OTA_EXIT_CODE, DEFAULT_RELEASE_URL } from '../release.js';
+import { fetchLatestVersion, otaDecision, installRootOf, updateCommand, otaRestartMode, respawnArgv, respawnEnv, OTA_EXIT_CODE, DEFAULT_RELEASE_URL,
+  PeerReleaseTrigger, installedVersions, acquireInstallLock, guardFloodsub, XMBL_PACKAGES } from '../release.js';
 import { ensureIdentityAtPath, loadIdentityAtPath } from '@xmbl/identity';
 import { loadOrCreatePeerKey } from '@xmbl/networking';
 import { installTimestampedLogging, installExitMarkers } from '../lifecycle-log.js';   // B5: every line stamped, every exit marked
@@ -45,73 +46,148 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const CORE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CORE_VERSION = JSON.parse(fs.readFileSync(path.join(CORE_DIR, 'package.json'), 'utf8')).version;
 
-// ─── OVER-THE-AIR UPDATE + SUSPENSION (operator, 2026-09-16) ────────────────────────────────────────────────
+// ─── OVER-THE-AIR UPDATE + SUSPENSION (operator, 2026-09-16; 2026-10-11) ────────────────────────────────────
 // Every change rolls out to every node; a node must PROVE it runs the latest version or be SUSPENDED until it
-// is updated; updates happen automatically. The loop: every XMBL_OTA_CHECK_MS (default 10 min, first check 5 s
-// after boot) ask the release source (XMBL_RELEASE_URL, default the npm registry's @xmbl/core document — the
-// nodes's rule is "xmbl npm always latest") for the latest version. Behind → SUSPEND FIRST (the node stops
-// producing: no submits, anchors, validations or seals on stale code; reads and the control socket stay up),
-// then `npm install @xmbl/core@<latest>` in the install that owns this core (XMBL_INSTALL_DIR overrides; a
-// source checkout has none and only suspends — git updates it), then RESTART onto the new code: exit with
-// OTA_EXIT_CODE (75) to a supervisor that still owns this node, or respawn itself when none does (otaRestartMode).
-// An unreachable release source never suspends (latest unknown ≠ behind). XMBL_OTA=0 disables the loop; the
-// version proof (`status.build`, the signed `chain` claim) is reported regardless.
+// is updated; updates happen automatically, and they are NOT OPT-IN: a running node is updated, full stop.
+//
+// WHEN A NODE LOOKS. Two triggers, one check:
+//   - its own poll, every XMBL_OTA_CHECK_MS (default 2 min, at least 1 min, ±20% so a fleet does not ask in
+//     step; first look 5 s after boot) — so no other node, coordinator or broker is needed for it to update;
+//   - GOSSIP: every presence carries the sender's version (core/index.js), and a peer on a newer one makes this
+//     node look NOW (PeerReleaseTrigger, release.js: at once, then backing off while the claim goes unconfirmed).
+//     The first node to see a release tells the mesh, and the mesh updates in seconds, not on N separate polls.
+// WHAT IT BELIEVES. Only the release source (XMBL_RELEASE_URL, default the npm dist-tags of @xmbl/core): a
+// peer's claim is a reason to look, never the version installed. Off the 0.1.x track, or unreachable, is unknown,
+// and unknown is never behind — a node is not suspended for the network's fault.
+// WHAT IT DOES WHEN BEHIND. SUSPEND first (no submits, anchors, validations or seals on stale code; reads and
+// the control socket stay up), then install — the coordinator's exact command, all eight packages pinned
+// (updateCommand) — in the install that owns this core (XMBL_INSTALL_DIR overrides), holding the install lock,
+// verifies the tree, applies the floodsub cleanup guard the coordinator would (release.js guardFloodsub), then
+// RESTART onto the new code: exit OTA_EXIT_CODE (75) to a supervisor that still owns this node, or respawn.
+// A node a handoff coordinator owns shares its install root with that coordinator, which runs the same install
+// when the broker declares the release; the node gives it XMBL_OTA_GRACE_MS (default 2 min) from the moment it
+// knew, and then does it itself — on-disk tree already current means restart only — so a dead coordinator or
+// broker delays an update by the grace and never stops it.
+// XMBL_OTA=0 is honoured only in a source checkout, which has no install root and only suspends (git updates
+// it). The version proof (`status.build`, the signed `chain` claim) is reported regardless.
+const jitter = (ms) => Math.round(ms * (0.8 + 0.4 * Math.random()));
+const floodsubGuard = (root) => {
+  try {
+    const g = guardFloodsub(root);
+    if (g.sites) console.log(`xmbl-node: floodsub cleanup guard applied — ${g.sites} abort site(s) wrapped in ${root}`);
+    else if (g.files && !g.already) console.warn(`xmbl-node: floodsub abort pattern not found in ${root} — NOT guarded; peer churn may end the process`);
+  } catch (e) { console.warn(`xmbl-node: floodsub guard not applied (${e.message})`); }
+};
 function startOta({ core, flags, shutdown }) {
-  if (process.env.XMBL_OTA === '0') { core.ota = { enabled: false, running: CORE_VERSION }; return null; }
-  const url = process.env.XMBL_RELEASE_URL || DEFAULT_RELEASE_URL;
-  const every = Math.max(60_000, Number(process.env.XMBL_OTA_CHECK_MS) || 600_000);
   const installRoot = process.env.XMBL_INSTALL_DIR || installRootOf(CORE_DIR);
-  core.ota = { enabled: true, url, every_ms: every, running: CORE_VERSION, latest: null, checked_at: null, behind: false,
-               install_root: installRoot, updating: false, last_error: null,
+  if (process.env.XMBL_OTA === '0') {
+    if (!installRoot) { core.ota = { enabled: false, running: CORE_VERSION }; return null; }
+    console.warn(`xmbl-node: XMBL_OTA=0 ignored — an installed node is always updated over the air (install root ${installRoot})`);
+  }
+  const url = process.env.XMBL_RELEASE_URL || DEFAULT_RELEASE_URL;
+  const every = Math.max(60_000, Number(process.env.XMBL_OTA_CHECK_MS) || 120_000);
+  const graceMs = Math.max(0, Number(process.env.XMBL_OTA_GRACE_MS ?? 120_000) || 0);
+  const coordinatorOwned = () => !!flags.ppid && restartMode(flags) === 'exit';
+  if (installRoot) floodsubGuard(installRoot);   // a tree some earlier install left unguarded
+  const trigger = new PeerReleaseTrigger({ running: CORE_VERSION, minMs: 15_000, maxMs: every });
+  core.ota = { enabled: true, url, every_ms: every, grace_ms: graceMs, running: CORE_VERSION, latest: null, checked_at: null, behind: false,
+               install_root: installRoot, updating: false, waiting: null, peer_release: null, last_error: null,
                get supervised() { return restartMode(flags) === 'exit'; } };   // as of now — a detach changes it
-  let updating = false;
+  let behindSince = 0;
+  // One look at the release source; returns how soon to look again when that should be sooner than the poll.
   const check = async () => {
     let latest = null;
     try { latest = await fetchLatestVersion(url); core.ota.last_error = null; }
     catch (e) { core.ota.last_error = e.message; }
+    trigger.settle(latest);
     core.ota.checked_at = new Date().toISOString();
-    core.ota.latest = latest;
     const d = otaDecision({ running: CORE_VERSION, latest });
+    core.ota.latest = d.latest;
     core.ota.behind = d.behind;
     if (!d.behind) {
+      behindSince = 0; core.ota.waiting = null;
       if (core.suspended && core.suspended.reason === 'version_behind') { core.resume(); console.log(`xmbl-node: RESUMED — ${d.reason}`); }
-      return;
+      return null;
     }
+    latest = d.latest;
     if (!core.suspended || core.suspended.reason !== 'version_behind') {
       core.suspend({ reason: 'version_behind', detail: d.reason, running: CORE_VERSION, latest });
       console.warn(`xmbl-node: SUSPENDED — ${d.reason}; updating over the air`);
     }
-    if (updating) return;
-    updating = true; core.ota.updating = true;
+    if (!installRoot) {
+      core.ota.last_error = 'source checkout: no install root — update it with git and restart';
+      console.warn(`xmbl-node: ${core.ota.last_error}`);
+      return null;
+    }
+    if (!behindSince) behindSince = Date.now();
+    const onDisk = () => { const have = installedVersions(installRoot); return XMBL_PACKAGES.every((n) => have[n] === latest); };
+    if (coordinatorOwned() && !onDisk()) {
+      const left = graceMs - (Date.now() - behindSince);
+      if (left > 0) {
+        core.ota.waiting = `coordinator install of ${latest}, ${Math.ceil(left / 1000)} s left`;
+        console.log(`xmbl-node: ${latest} is out — leaving the install to the coordinator for ${Math.ceil(left / 1000)} s, then doing it here`);
+        return Math.min(left + 1000, 15_000);
+      }
+    }
+    core.ota.waiting = null; core.ota.updating = true;
     try {
-      if (!installRoot) {
-        core.ota.last_error = 'source checkout: no install root — update it with git and restart';
-        console.warn(`xmbl-node: ${core.ota.last_error}`);
-        return;
-      }
-      const { cmd, args } = updateCommand(latest);
-      console.log(`xmbl-node: ${cmd} ${args.join(' ')} (in ${installRoot})`);
-      const r = await new Promise((resolve) => {
-        const p = spawn(cmd, args, { cwd: installRoot, stdio: 'inherit' });
-        p.on('error', (e) => resolve({ error: e.message }));
-        p.on('exit', (code, signal) => resolve({ code, signal }));
-      });
-      if (r.error || r.code !== 0) {
-        core.ota.last_error = `${cmd} ${args.join(' ')}: ${r.error || `exit ${r.code ?? r.signal}`}`;
-        console.error(`xmbl-node: OTA update FAILED — ${core.ota.last_error}; still suspended, retrying next check`);
-        return;
-      }
+      if (!onDisk()) {
+        const lock = acquireInstallLock(installRoot, { version: latest });
+        if (!lock) {
+          core.ota.waiting = `another install holds ${installRoot}`;
+          console.log(`xmbl-node: another install holds ${installRoot} — looking again in 15 s`);
+          return 15_000;
+        }
+        try {
+          const { cmd, args } = updateCommand(latest);
+          console.log(`xmbl-node: ${cmd} ${args.join(' ')} (in ${installRoot})`);
+          const r = await new Promise((resolve) => {
+            const p = spawn(cmd, args, { cwd: installRoot, stdio: 'inherit' });
+            p.on('error', (e) => resolve({ error: e.message }));
+            p.on('exit', (code, signal) => resolve({ code, signal }));
+          });
+          if (r.error || r.code !== 0) {
+            core.ota.last_error = `${cmd} ${args.join(' ')}: ${r.error || `exit ${r.code ?? r.signal}`}`;
+            console.error(`xmbl-node: OTA update FAILED — ${core.ota.last_error}; still suspended, retrying in 60 s`);
+            return 60_000;
+          }
+        } finally { lock.release(); }
+        // The tree, not the exit code: npm exits 0 on an install that nested a package instead of replacing it.
+        if (!onDisk()) {
+          const have = installedVersions(installRoot);
+          core.ota.last_error = `install did not land ${latest}: ${XMBL_PACKAGES.filter((n) => have[n] !== latest).map((n) => `${n} ${have[n] || 'absent'}`).join(', ')}`;
+          console.error(`xmbl-node: ${core.ota.last_error} — still suspended, retrying in 60 s`);
+          return 60_000;
+        }
+      } else console.log(`xmbl-node: @xmbl/*@${latest} is already on disk in ${installRoot} — restarting onto it`);
+      floodsubGuard(installRoot);
       // Decided NOW, not at boot: a coordinator that spawned this node may have detached it and gone since.
       const mode = restartMode(flags);
       console.log(`xmbl-node: updated to @xmbl/core@${latest} — restarting onto it (${mode === 'exit' ? `exit ${OTA_EXIT_CODE}` : `respawn — no supervisor owns this node (ppid ${process.ppid}${flags.ppid ? `, launcher ${flags.ppid}${detached ? ', detached' : ''}` : ''})`})`);
       await shutdown('ota-update', { exitCode: mode === 'exit' ? OTA_EXIT_CODE : 0, respawn: mode === 'respawn' });
-    } finally { updating = false; core.ota.updating = false; }
+      return null;
+    } finally { core.ota.updating = false; }
   };
-  const timer = setInterval(() => { check().catch((e) => { core.ota.last_error = e.message; }); }, every);
-  timer.unref?.();
-  const first = setTimeout(() => { check().catch((e) => { core.ota.last_error = e.message; }); }, 5000);
-  first.unref?.();
-  return { timer, check };
+  let timer = null, inFlight = false;
+  const schedule = (ms) => { clearTimeout(timer); timer = setTimeout(() => { run(); }, ms); timer.unref?.(); };
+  const run = async () => {
+    if (inFlight) return;
+    inFlight = true;
+    let next = jitter(every);
+    try { const soon = await check(); if (soon) next = Math.min(next, soon); }
+    catch (e) { core.ota.last_error = e.message; }
+    finally { inFlight = false; }
+    schedule(next);
+  };
+  // A peer runs, or has seen, a newer version: look now (bounded by the trigger), whatever the poll says.
+  core.onPeerRelease = (v, from) => {
+    if (!trigger.offer(v)) return;
+    core.ota.peer_release = { version: v, from, at: new Date().toISOString() };
+    console.log(`xmbl-node: peer ${String(from).slice(0, 16)} is on ${v} — checking the release source now`);
+    run();
+  };
+  schedule(5000);
+  return { check: run, trigger };
 }
 
 // ─── THE UPDATER MUST NOT LIVE BEHIND THE THING THAT BREAKS ─────────────────────────────────────────────────
@@ -142,7 +218,6 @@ function startOta({ core, flags, shutdown }) {
 // will not boot today is the code it was last handed, and the fix for that is the next version. When there is
 // no newer version the boot failure is real and is re-thrown unchanged — this never hides a genuine crash.
 async function selfHealFromBadInstall(err, flags = {}) {
-  if (process.env.XMBL_OTA === '0') return false;
   const url = process.env.XMBL_RELEASE_URL || DEFAULT_RELEASE_URL;
   const installRoot = process.env.XMBL_INSTALL_DIR || installRootOf(CORE_DIR);
   console.error(`xmbl-node: BOOT FAILED on @xmbl/core@${CORE_VERSION} — ${err?.message || err}`);
@@ -162,12 +237,15 @@ async function selfHealFromBadInstall(err, flags = {}) {
     return false;
   }
   const { cmd, args } = updateCommand(latest);
+  const lock = acquireInstallLock(installRoot, { version: latest });
+  if (!lock) { console.error(`xmbl-node: another install holds ${installRoot} — not self-healing now; the next start looks again`); return false; }
   console.error(`xmbl-node: a newer version exists (${CORE_VERSION} -> ${latest}) — self-healing: ${cmd} ${args.join(' ')} (in ${installRoot})`);
   const r = await new Promise((resolve) => {
     const p = spawn(cmd, args, { cwd: installRoot, stdio: 'inherit' });
     p.on('error', (e) => resolve({ error: e.message }));
     p.on('exit', (code, signal) => resolve({ code, signal }));
-  });
+  }).finally(() => lock.release());
+  floodsubGuard(installRoot);
   if (r.error || r.code !== 0) {
     console.error(`xmbl-node: self-heal install FAILED — ${r.error || `exit ${r.code ?? r.signal}`}`);
     return false;

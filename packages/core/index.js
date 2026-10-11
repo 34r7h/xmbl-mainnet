@@ -6,6 +6,7 @@ import { ConsensusWorkflow, ConsensusGossip, everyLivePeerHas, ValidationWorker,
 import { StorageNode, MarketPricing, ComputeNode } from '@xmbl/storage-compute';
 import { ContractHost } from '@xmbl/contracts';
 import { LeadWorker } from './lead-worker.js';
+import { compareVersions } from './release.js';
 
 // SINGLE SOURCE OF TRUTH for mainnet-readiness. While true, an XMBL_PROFILE=mainnet boot
 // is refused (see start()'s safety gate) because the protocol's ⛔ AUDIT gates in
@@ -385,10 +386,19 @@ export class XMBLCore {
     this.xpc.getLiveLeaders = () => liveLeadsFrom(this.peerRegistry, self, leadAllowlist, PRESENCE_TTL_MS);
 
     // --- presence gossip ---
-    const announce = () => this.gossip.broadcastPresence({ address: self, publicKey: this.xid.publicKey, roles: this.config.roles || {} }).catch(() => {});
-    this.gossip.on('presence:received', ({ address, publicKey, roles, caps }) => {
+    // Every presence says which @xmbl/core this node runs, and — while it is updating — the newer release it has
+    // confirmed. A peer that hears a newer one hands it to onPeerRelease (the daemon's OTA, bin/xmbl-node.js), which
+    // asks the release source at once instead of on its next poll: the update spreads node to node in seconds.
+    const announce = () => this.gossip.broadcastPresence({ address: self, publicKey: this.xid.publicKey, roles: this.config.roles || {},
+      version: VERSION, seen: this.ota && this.ota.behind ? this.ota.latest || undefined : undefined }).catch(() => {});
+    this.gossip.on('presence:received', ({ address, publicKey, roles, caps, version, seen }) => {
       if (!address || address === self) return;
-      this.peerRegistry.set(address, { publicKey, roles: roles || {}, caps: caps || [], lastSeen: Date.now() });
+      this.peerRegistry.set(address, { publicKey, roles: roles || {}, caps: caps || [], version: version || null, lastSeen: Date.now() });
+      for (const v of [version, seen]) {
+        if (v && compareVersions(v, VERSION) > 0 && typeof this.onPeerRelease === 'function') {
+          try { this.onPeerRelease(v, address); } catch { /* the OTA loop's fault is its own; presence goes on */ }
+        }
+      }
     });
     // Batch raw txs and reports only while every peer heard from inside the presence TTL reads batches (a node on
     // the previous release would drop them). Recomputed at most once a second — it is asked once per message.

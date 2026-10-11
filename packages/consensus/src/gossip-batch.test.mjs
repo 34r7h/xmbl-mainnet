@@ -104,6 +104,22 @@ await check('a presence without caps is heard with caps []', async () => {
   assert.deepStrictEqual(heard[0][1].caps, []);
 });
 
+await check('presence carries the sender\'s version and the release it has seen, and the receiver hears both', async () => {
+  const { b, a, heard } = pair(true);
+  await a.broadcastPresence({ address: 'xmbA', publicKey: 'pk', roles: {}, version: '0.1.26', seen: '0.1.27' });
+  assert.strictEqual(JSON.parse(b.wire[0]).version, '0.1.26');
+  assert.strictEqual(heard[0][1].version, '0.1.26');
+  assert.strictEqual(heard[0][1].seen, '0.1.27');
+});
+
+await check('a presence version that is not x.y.z is heard as null (no version from a node on the previous release)', async () => {
+  const { r, heard } = pair(false);
+  r._handleMessage({ type: 'presence', address: 'old', publicKey: 'pk', roles: {} });
+  for (const bad of ['0.1.26-rc.1', ' 0.1.26', '0.1', 'x'.repeat(40), 26, { v: 1 }, '1234567.0.0']) r._handleMessage({ type: 'presence', address: 'evil', version: bad, seen: bad });
+  assert.strictEqual(heard.length, 8);
+  assert.ok(heard.every(([, e]) => e.version === null && e.seen === null));
+});
+
 await check('1000 txs of about 3 KB go out in batches under the 4 MiB frame limit, all of them, in order', async () => {
   const { b, a, heard } = pair(true);
   for (let j = 0; j < 1000; j++) await a.broadcastRawTransaction('L', tx(j, 3000), null);
