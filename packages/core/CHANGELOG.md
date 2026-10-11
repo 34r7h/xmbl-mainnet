@@ -1,5 +1,32 @@
 # @xmbl/core
 
+## 0.1.26
+
+### Patch Changes
+
+- **An update reaches every running node, node to node, and it is not opt-in.** Every presence message now says
+  which @xmbl/core the sender runs and, while it is updating, the newer release it has confirmed. A node that hears
+  a newer version asks the release source at once instead of on its next poll (PeerReleaseTrigger: one look now,
+  then doubling waits from 15 s up to the poll interval while the claim goes unconfirmed). It never installs what a
+  peer names, only what the release source says (npm's dist-tags for @xmbl/core, 19 bytes instead of the 43 KB
+  packument). Its own poll is every 2 min ±20% (was 10 min), so a node with no peers still updates.
+  XMBL_OTA=0 is ignored on an installed node; it applies only to a source checkout, which only suspends.
+- **The node installs what the coordinator installs.** All eight node packages, pinned exactly (`--save-exact`),
+  the same command as the handoff coordinator's converge; 0.1.25 installed @xmbl/core alone, leaving the other
+  seven on the old version in a coordinator's install root. After npm exits the tree is checked package by package
+  (npm exits 0 on an install that nested a package instead of replacing it). The floodsub cleanup guard is applied
+  to the installed tree with the coordinator's exact edit and marker (the 4 `abort(err)` calls in
+  @libp2p/floodsub's peer-streams.js that throw on a closed stream and end the process). An O_EXCL lock
+  (`.xmbl-install.lock` in the install root) keeps two installs out of one node_modules.
+- **A coordinator-owned node** (launched with --ppid and supervised) leaves the install to its coordinator for
+  XMBL_OTA_GRACE_MS (default 2 min) from when it knew; a tree already on the release means restart only (exit 75);
+  after the grace it installs itself, so a dead coordinator or broker delays an update by the grace and never
+  stops it.
+- **One version line.** A release off 0.1.x (XMBL_TRACK) is unknown, never behind: 0.2.0 stays on the registry and a
+  tag that points at it again moves no node.
+- Rollout: 0.1.25 nodes ignore the two new presence fields and update to this release as before (their own poll and
+  the coordinator's converge); this release's gossip-driven update first acts when 0.1.27 is published.
+
 ## 0.1.25
 
 ### Patch Changes

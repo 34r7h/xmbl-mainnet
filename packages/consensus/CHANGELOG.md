@@ -1,5 +1,13 @@
 # @xmbl/consensus
 
+## 0.1.26
+
+### Patch Changes
+
+- **Presence carries a version.** `broadcastPresence` sends `version` (the @xmbl/core the sender runs) and `seen`
+  (a newer release it has confirmed), and `presence:received` passes them on only when each is a plain x.y.z
+  string, anything else as null. A 0.1.25 receiver ignores both fields. gossip-batch 14/14.
+
 ## 0.1.25
 
 ### Patch Changes
