@@ -17,6 +17,14 @@ import { anchorTimestampNanos, blockTimestampNanos } from './timestamps.js';
 export { anchorTimestampNanos, blockTimestampNanos };
 export { consensusBody, contentKey } from './block.js';
 
+// PER-FACE / PER-CUBE PROGRESS LINES ARE DEBUG OUTPUT. A canonical rebuild re-seals every anchor, and each face
+// and cube printed a line: ~40K lines per rebuild, and node.log on the operator's MacBook reached 6.08 GB at
+// ~84 KB/s (measured 2026-11-09; 99.9% of a 20 MB tail was these six lines). They print only under
+// LOG_LEVEL=debug|trace or XMBL_LEDGER_DEBUG=1, read per call so a running test or node can flip it; the one
+// summary line per rebuild stays on.
+export const ledgerDebug = () => process.env.XMBL_LEDGER_DEBUG === '1' || /^(debug|trace)$/i.test(process.env.LOG_LEVEL || '');
+const dlog = (...a) => { if (ledgerDebug()) console.log(...a); };
+
 export class Ledger extends EventEmitter {
   constructor(options = {}) {
     super();
@@ -1074,7 +1082,7 @@ export class Ledger extends EventEmitter {
       validatorAverageTimestamp: faceAvgTimestamp,
       cubeId: cubeTimestampKey
     });
-    console.log(`Face complete with ${face.blocks.size} blocks, validator avg timestamp: ${faceAvgTimestamp}`);
+    dlog(`Face complete with ${face.blocks.size} blocks, validator avg timestamp: ${faceAvgTimestamp}`);
     
     // When cube has 3 faces, sort them by hash and finalize
     if (targetCube.faces.size === 3) {
@@ -1162,7 +1170,7 @@ export class Ledger extends EventEmitter {
       validatorAverageTimestamp: cube.getAverageTimestamp(),
       level: 1
     });
-    console.log(`✓ Level 1 cube complete: ${cube.id} with ${cube.faces.size} faces, validator avg timestamp: ${cube.getAverageTimestamp()}`);
+    dlog(`✓ Level 1 cube complete: ${cube.id} with ${cube.faces.size} faces, validator avg timestamp: ${cube.getAverageTimestamp()}`);
     // COMMIT THE VERKLE STATE ROOT INTO THE PERSISTED CUBE. The cube record is written above, BEFORE this
     // emit, and the XVSM handler that computes the state root runs synchronously ON the emit — so without
     // this re-put the root would be computed and thrown away, exactly as it was when _handleCubeComplete only
@@ -1202,11 +1210,11 @@ export class Ledger extends EventEmitter {
     const completedAtLevel = this.completedCubesByLevel.get(level);
     completedAtLevel.push(completedCube);
     
-    console.log(`  → Level ${level}: ${completedAtLevel.length}/9 cubes completed (need 9 for face)`);
+    dlog(`  → Level ${level}: ${completedAtLevel.length}/9 cubes completed (need 9 for face)`);
     
     // When we have 9 completed cubes at this level, form a face at level+1
     if (completedAtLevel.length >= 9) {
-      console.log(`  → Forming Level ${level + 1} face from 9 Level ${level} cubes (hash-sorted)...`);
+      dlog(`  → Forming Level ${level + 1} face from 9 Level ${level} cubes (hash-sorted)...`);
       await this._formNextLevelFace(level);
     }
   }
@@ -1284,7 +1292,7 @@ export class Ledger extends EventEmitter {
     const pendingFacesAtLevel = this.pendingFacesByLevel.get(nextLevel);
     pendingFacesAtLevel.set(faceTimestamp.toString(), higherLevelFace);
     
-    console.log(`✓ Level ${nextLevel} face complete with 9 Level ${level} cubes`);
+    dlog(`✓ Level ${nextLevel} face complete with 9 Level ${level} cubes`);
     
     // Check if we have 3 faces at this level to form a cube
     await this._checkFaceFormation(nextLevel);
@@ -1368,7 +1376,7 @@ export class Ledger extends EventEmitter {
     const cubesAtLevel = this.superCubes.get(level);
     cubesAtLevel.set(cubeTimestamp.toString(), cube);
     
-    console.log(`✓ Level ${level} cube complete with 3 faces (hash-sorted)`);
+    dlog(`✓ Level ${level} cube complete with 3 faces (hash-sorted)`);
     
     // Emit event for cube completion
     this.emit('supercube:complete', { 
