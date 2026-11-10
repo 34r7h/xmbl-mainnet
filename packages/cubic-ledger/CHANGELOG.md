@@ -1,5 +1,12 @@
 # @xmbl/cubic-ledger
 
+## 0.1.29
+
+### Patch Changes
+
+- A canonical rebuild prints one summary line, not one per face and cube: the six per-face/cube progress lines print only under LOG_LEVEL=debug|trace or XMBL_LEDGER_DEBUG=1, and the [XCLT] canonical rebuild summary stays on.
+  - @xmbl/identity@0.1.29
+
 ## 0.1.25
 
 ### Patch Changes
@@ -13,15 +20,12 @@
 ### Patch Changes
 
 - **A state_diff writes xmbl datums under their micromined keys, and nothing else.** `validateShape` refuses a
-  state_diff unless every write is `<xid>_<nonce>` → `{oid, nonce, data}`: the key and record the xmbl app's
-  `set()` makes, the datum's type in the xid's prefix (`0` + code), and the key the one `micromine(data, type)`
-  yields at the lowest nonce — so the same data of the same type has exactly one key. `nonce` is a number.
-  Typed data (1–9) carries exactly its type's fields with the app's runtime types, in any order, as `set()`
-  admits; the bytes decide the key, so another key order is another key, as in the app. A value unit (type 6)
-  is refused — it enters as chain type `tx` — and so is a pointer (type 7) saying how `spend` or `anchor`. A
-  contract's own receipts keep exactly `{params, writes}` (contract_call) and `{chain, address, authorization}`
-  (settlement_seal). Any other key — `utxo:`, `identity:`, `spend:`, `tx:`, `token:`, `contract:`, `anchor:`,
-  `xcl/`, `app:<kind>:<…>` — is refused.
+  state*diff unless every write is `<xid>*<nonce>`→`{oid, nonce, data}`: the key and record the xmbl app's
+`set()` makes, the datum's type in the xid's prefix (`0`+ code), and the key the one`micromine(data, type)`yields at the lowest nonce — so the same data of the same type has exactly one key.`nonce`is a number.
+Typed data (1–9) carries exactly its type's fields with the app's runtime types, in any order, as`set()`admits; the bytes decide the key, so another key order is another key, as in the app. A value unit (type 6)
+is refused — it enters as chain type`tx`— and so is a pointer (type 7) saying how`spend`or`anchor`. A
+contract's own receipts keep exactly `{params, writes}`(contract_call) and`{chain, address, authorization}`(settlement_seal). Any other key —`utxo:`, `identity:`, `spend:`, `tx:`, `token:`, `contract:`, `anchor:`,
+`xcl/`, `app:<kind>:<…>` — is refused.
 - **New exports:** `stateDiffWrites(tx)` (the rule; the state machine asks it too), `datumWrite(data, type)`
   (the write for one datum), `appTypeOf`, `APP_LEXICON`. `app-types.json` carries the app's lexicon (datum, app,
   component, update, action, event, tx, pointer, trait, type) and type schemas, copied from the xmbl app's

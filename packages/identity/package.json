@@ -1,7 +1,7 @@
 {
   "name": "@xmbl/identity",
-  "version": "0.1.28",
-  "description": "XMBL identity and signatures \u2014 MAYO post-quantum signing plus the experimental cube-curve crypto seam.",
+  "version": "0.1.29",
+  "description": "XMBL identity and signatures — MAYO post-quantum signing plus the experimental cube-curve crypto seam.",
   "type": "module",
   "main": "index.js",
   "exports": {

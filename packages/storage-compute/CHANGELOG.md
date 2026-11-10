@@ -1,5 +1,11 @@
 # @xmbl/storage-compute
 
+## 0.1.29
+
+### Patch Changes
+
+- @xmbl/identity@0.1.29
+
 ## 0.1.16
 
 ### Patch Changes

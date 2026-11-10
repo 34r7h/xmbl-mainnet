@@ -1,5 +1,19 @@
 # @xmbl/core
 
+## 0.1.29
+
+### Patch Changes
+
+- Updated dependencies
+  - @xmbl/cubic-ledger@0.1.29
+  - @xmbl/consensus@0.1.29
+  - @xmbl/contracts@0.1.29
+  - @xmbl/identity@0.1.29
+  - @xmbl/networking@0.1.29
+  - @xmbl/state-machine@0.1.29
+  - @xmbl/storage-compute@0.1.29
+  - @xmbl/zero-knowledge@0.1.29
+
 ## 0.1.28
 
 ### Patch Changes
@@ -172,7 +186,7 @@
   `@xmbl/core@0.1.18` imports `sealChainKey` and `SUPPORTED_CHAINS` from `@xmbl/identity` — symbols
   that exist only from 0.1.18 — while declaring `"@xmbl/identity": "^0.1.12"`. MEASURED against the
   published packages: `npm i @xmbl/core@0.1.18 @xmbl/identity@0.1.17` then importing
-  `@xmbl/core/control-socket.js` fails with *"does not provide an export named 'SUPPORTED_CHAINS'"*,
+  `@xmbl/core/control-socket.js` fails with _"does not provide an export named 'SUPPORTED_CHAINS'"_,
   and the control socket is what the daemon binds at startup — so that resolve is a node that does
   not start. It did not bite only because npm happened to pick the newest satisfying version; a
   lockfile, a stale cache, an offline mirror or a deliberate pin all produce the failing pair from

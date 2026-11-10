@@ -1,5 +1,7 @@
 # @xmbl/networking
 
+## 0.1.29
+
 ## 0.1.25
 
 ### Patch Changes

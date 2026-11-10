@@ -1,7 +1,7 @@
 {
   "name": "@xmbl/state-machine",
-  "version": "0.1.28",
-  "description": "XMBL state \u2014 a Verkle state tree, app-centric diffs, sharding and assembly into current state.",
+  "version": "0.1.29",
+  "description": "XMBL state — a Verkle state tree, app-centric diffs, sharding and assembly into current state.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -20,7 +20,7 @@
     "directory": "packages/state-machine"
   },
   "dependencies": {
-    "@xmbl/cubic-ledger": "^0.1.28",
+    "@xmbl/cubic-ledger": "^0.1.29",
     "level": "^10.0.0"
   },
   "scripts": {

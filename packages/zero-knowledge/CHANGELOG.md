@@ -1,5 +1,7 @@
 # @xmbl/zero-knowledge
 
+## 0.1.29
+
 ## 0.1.19
 
 ### Patch Changes

@@ -1,5 +1,15 @@
 # @xmbl/contracts
 
+## 0.1.29
+
+### Patch Changes
+
+- @xmbl/identity@0.1.29
+- @xmbl/lng@0.1.29
+- @xmbl/state-machine@0.1.29
+- @xmbl/storage-compute@0.1.29
+- @xmbl/zero-knowledge@0.1.29
+
 ## 0.1.16
 
 ### Patch Changes
