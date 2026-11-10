@@ -182,10 +182,17 @@ export class VerkleStateTree {
     }
   }
 
+  // ⛔ THE MAP AND THE TRIE MOVE TOGETHER, BEFORE ANY AWAIT. insert set the map, awaited the disk write, then
+  // placed the key in the trie — and clear() swaps BOTH for empty ones. A write in flight across a clear() put
+  // its key in the old map and the NEW trie: a leaf the root commits to that state.keys() does not hold, so no
+  // sweep can ever find it. MEASURED 2026-11-10 (canon-append.test.mjs): two nodes rebuilt from one 61-anchor
+  // set held identical key->value maps and published different roots (4dc86e79… / c1cbe1c2… / 4d35682c… across
+  // runs), the extra leaves coming from the rebuild's own block:added handlers racing its clear(). Now both
+  // move in the same synchronous step, so the trie is always exactly the map, and only the disk write waits.
   async insert(key, value) {
     this.state.set(key, value);
-    await this._saveState(key, value);
     this._put(keyHashOf(key), valueHashOf(value));
+    await this._saveState(key, value);
   }
 
   get(key) {
@@ -194,8 +201,8 @@ export class VerkleStateTree {
 
   async delete(key) {
     this.state.delete(key);
+    this._drop(keyHashOf(key));   // with the map, before the await — see insert()
     await this._deleteState(key);
-    this._drop(keyHashOf(key));
   }
 
   generateProof(key) {
