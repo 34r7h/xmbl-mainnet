@@ -346,17 +346,70 @@ export class StateMachine extends EventEmitter {
     // read 0, and a design ruling was written on the premise that 41 of them had "applied nothing". They had.
     // The diff is not bookkeeping — it is the same StateDiff the block path records, keyed by the anchor's own
     // content, so a rebuild and a live apply of the same anchor upsert to ONE row rather than two.
+    const keys = new Set();
     for (const a of list) {
       if (!a || !a.event || !a.hash) { out.skipped++; continue; }
       try {
-        const key = `anchor:${a.event}:${a.hash}`;
-        const value = { ts: a.ts ?? null };
-        await this.stateTree.insert(key, value);
-        const diff = new StateDiff(key, { [key]: value });
-        this._recordDiff(diff);
-        if (this._dbOpen) { try { await this.db.put(this._diffKey(diff), diff.serialize()); } catch { /* in-memory fallback */ } }
+        const key = await this._insertCanonical(a);
+        keys.add(key);
         out.applied++;
       } catch { out.skipped++; }
+    }
+    // The key set this tree was rebuilt to, kept for appendCanonical: an append extends exactly this set and
+    // removes anything else, so the tree stays the same function of the canonical set a rebuild makes it.
+    this._canonKeys = keys;
+    out.state_root = this.stateTree.getRoot();
+    return out;
+  }
+
+  async _insertCanonical(a) {
+    const key = `anchor:${a.event}:${a.hash}`;
+    const value = { ts: a.ts ?? null };
+    await this.stateTree.insert(key, value);
+    const diff = new StateDiff(key, { [key]: value });
+    this._recordDiff(diff);
+    if (this._dbOpen) { try { await this.db.put(this._diffKey(diff), diff.serialize()); } catch { /* in-memory fallback */ } }
+    return key;
+  }
+
+  // EXTEND THE CANONICAL TREE BY A DELTA — the incremental half of rebuildFromCanonical, and the same result.
+  //
+  // rebuildFromCanonical clears the tree and inserts one key per canonical anchor, so after it the tree holds
+  // exactly the canonical keys: anything a sealed face applied between ticks (a live value tx, an anchor the
+  // broker has not journaled yet) is gone on the next rebuild. An append must leave the same tree a rebuild of
+  // the extended set would, so it does both halves surgically: every key not in the set this tree was rebuilt
+  // to (or added since) is forgotten, then the delta's keys are inserted. Refused (started:false) when this
+  // process has not rebuilt the tree yet, because then there is no set to extend.
+  async appendCanonical(anchors) {
+    const list = Array.isArray(anchors) ? anchors : [];
+    const out = { requested: list.length, applied: 0, skipped: 0, forgot: 0, state_root: null, started: true };
+    if (!(this._canonKeys instanceof Set)) return { ...out, started: false, error: 'no canonical rebuild in this process to append to' };
+    await this.ready();
+    const incoming = new Set();
+    for (const a of list) if (a && a.event && a.hash) incoming.add(`anchor:${a.event}:${a.hash}`);
+    const keep = (key) => this._canonKeys.has(key) || incoming.has(key);
+    const stray = [];
+    for (const key of this.stateTree.state.keys()) if (!keep(key)) stray.push(key);
+    for (const key of stray) await this.stateTree.delete(key);
+    out.forgot = stray.length;
+    // The diffs a rebuild would leave are exactly one per canonical key; any other (a block's multi-key diff, a
+    // stray's single-key one) goes, in memory and on disk, in ONE pass — forget() re-indexes per key, which is
+    // quadratic on the tens of thousands of strays a rebuild's in-flight block handlers can leave behind.
+    if (stray.length || this.diffs.length > this._canonKeys.size) {
+      const kept = [];
+      for (const d of this.diffs) {
+        if (keep(d.identity())) { kept.push(d); continue; }
+        if (this._dbOpen) { try { await this.db.del(this._diffKey(d)); } catch { /* already gone */ } }
+      }
+      if (kept.length !== this.diffs.length) {
+        this.diffs = kept;
+        this._diffIndex.clear();
+        this.diffs.forEach((d, i) => this._diffIndex.set(d.identity(), i));
+      }
+    }
+    for (const a of list) {
+      if (!a || !a.event || !a.hash) { out.skipped++; continue; }
+      try { this._canonKeys.add(await this._insertCanonical(a)); out.applied++; } catch { out.skipped++; }
     }
     out.state_root = this.stateTree.getRoot();
     return out;

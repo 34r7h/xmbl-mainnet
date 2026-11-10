@@ -628,12 +628,23 @@ export class Ledger extends EventEmitter {
     }
     // 3. Seal every complete 9-block face deterministically. Loop because a future _sealReadyFaces may seal one
     //    face per call; today it drains the whole pool in one pass, so the second iteration returns 0 and stops.
+    //    QUIETLY: the reseal emits no block:added. Its only listener that changes anything is the state machine,
+    //    and the caller (control-socket rebuild_ledger) rebuilds that from the canonical set right after this
+    //    returns, clearing whatever the handlers wrote. MEASURED 2026-11-10 on the live 72,078-anchor set: each
+    //    rebuild resealed 229,715 blocks, i.e. 229,715 async handlers each writing a state: row and a diff: row
+    //    that the clear then deleted, and the stragglers that landed after the clear left keys the canonical
+    //    root never had — two nodes rebuilt from one set published different roots (canon-append.test.mjs).
+    //    The block count is rescanned after a rebuild (control-socket nulls core._chainCounts), so nothing
+    //    counts these emits either.
     let faces = 0, guard = 0;
-    for (;;) {
-      const r = await this._sealReadyFaces();
-      faces += (r && r.sealedFaces) || 0;
-      if (!r || r.sealedFaces === 0 || ++guard > 200000) break;
-    }
+    this._quietSeal = true;
+    try {
+      for (;;) {
+        const r = await this._sealReadyFaces();
+        faces += (r && r.sealedFaces) || 0;
+        if (!r || r.sealedFaces === 0 || ++guard > 200000) break;
+      }
+    } finally { this._quietSeal = false; }
     await this._persistMembershipPool();
     // SAY WHAT WAS DESTROYED. A rebuild clears the whole block/cube/face/pool keyspace and nothing anywhere
     // wrote a line about it: SirKit watched this box lose 13,750 block rows and regain 10,500 over one day
@@ -653,6 +664,97 @@ export class Ledger extends EventEmitter {
       cubes: this.cubes.size,
       pooled: this._membershipPool.length,
     };
+  }
+
+  // APPEND ONLY THE ANCHORS THIS LEDGER DOES NOT HOLD — the incremental half of rebuildFromAnchors.
+  //
+  // MEASURED 2026-11-10 on the operator's MacBook (0.1.29, 72,078 canonical anchors, 157,636 preserved non-anchor
+  // blocks): every ~90 s convergence tick wiped and rewrote 229,715 block rows, resealed 25,524 faces and ~8,600
+  // cubes, took ~60 s of rebuildFromAnchors plus ~11.5 s of verkle rebuild, and held the node at ~1.25 cores
+  // continuously — to admit the handful of anchors the broker had journaled since the last tick.
+  //
+  // The caller (control-socket append_canonical) has already proved the delta extends exactly the set this ledger
+  // was last rebuilt from: same journal numbering, the cursor this process set, and a hash chain the node
+  // recomputed itself. So this admits each new anchor by the SAME rule the rebuild uses (typed, not evicted,
+  // Block.fromTransaction, time pinned from its own ts), pools it, and seals every full face. The result holds the
+  // same blocks a rebuild of the extended set would hold; which nine share a face can differ (a rebuild hash-sorts
+  // the whole set, an append sorts the leftover pool plus the new rows), and the face layout was never a
+  // cross-node commitment — the canonical set and the anchor-only state root are.
+  //
+  // Persistence follows the rebuild's rule exactly: a sealed block is written, a pooled anchor is not, so the
+  // durable count (the signed `height`) is the one a rebuild of the same set would reach, give or take the
+  // leftover's composition. `block:added` is NOT emitted for the faces this seals — the caller writes the verkle
+  // keys itself (xvsm.appendCanonical) and adjusts the chain count by `persisted_new`, which is what a rebuild's
+  // wipe-and-reseal does through the same two side effects.
+  async appendFromAnchors(anchors) {
+    const list = Array.isArray(anchors) ? anchors : [];
+    let held = 0, untyped = 0, rejected = 0, evictedSkipped = 0;
+    const seen = new Set();
+    const fresh = [];
+    for (const a of list) {
+      if (!a || !a.event || !a.hash) continue;
+      const k = `${a.event}:${a.hash}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (this.isEvictedRow(a)) { evictedSkipped++; continue; }
+      if (this._anchorKeys.has(k)) { held++; continue; }
+      if (typeof a.xid !== 'string' || !a.xid) { untyped++; continue; }
+      const tx = { type: 'anchor', event: a.event, hash: a.hash, ts: a.ts ?? 0, xid: a.xid, nonce: a.nonce, prior: typeof a.prior === 'string' ? a.prior : undefined };
+      if (tx.prior === undefined) delete tx.prior;
+      let block;
+      try { block = Block.fromTransaction(tx); } catch { rejected++; continue; }
+      block.timestamp = anchorTimestampNanos(a.ts);
+      if (this.blocks.has(block.id)) { held++; continue; }
+      fresh.push({ a, block });
+    }
+    fresh.sort((x, y) => (x.a.hash < y.a.hash ? -1 : x.a.hash > y.a.hash ? 1 : (x.a.event < y.a.event ? -1 : x.a.event > y.a.event ? 1 : 0)));
+    // Which of the rows ALREADY pooled are durable: a rescued block or a live submission was written when it was
+    // pooled, a rebuilt anchor was not. Sealing writes every member, so only the not-yet-durable ones are new rows.
+    const pooledBefore = this._membershipPool.slice();
+    const durable = new Set();
+    if (this._dbOpen) {
+      for (const b of pooledBefore) {
+        try { const v = await this.db.get(`block:${b.id}`); if (v !== undefined && v !== null) durable.add(b.id); } catch { /* not found */ }
+      }
+    }
+    for (const { a, block } of fresh) {
+      this._anchorKeys.add(`${a.event}:${a.hash}`);
+      this.blocks.set(block.id, block);
+      this._membershipPool.push(block);
+    }
+    let faces = 0, guard = 0;
+    const cubesBefore = this.cubes.size;
+    this._quietSeal = true;
+    try {
+      for (;;) {
+        const r = await this._sealReadyFaces();
+        faces += (r && r.sealedFaces) || 0;
+        if (!r || r.sealedFaces === 0 || ++guard > 200000) break;
+      }
+    } finally { this._quietSeal = false; }
+    await this._persistMembershipPool();
+    const left = new Set(this._membershipPool.map((b) => b.id));
+    let persistedNew = 0;
+    for (const b of pooledBefore) if (!left.has(b.id) && !durable.has(b.id)) persistedNew++;
+    for (const { block } of fresh) if (!left.has(block.id)) persistedNew++;
+    const out = {
+      appended: fresh.length,
+      held,
+      untyped,
+      rejected,
+      evicted_skipped: evictedSkipped,
+      blocks: this.blocks.size,
+      faces_sealed: faces,
+      cubes: this.cubes.size,
+      cubes_new: this.cubes.size - cubesBefore,
+      persisted_new: persistedNew,
+      pooled: this._membershipPool.length,
+    };
+    // Quiet by default: an append runs every tick, and the line is only news when something was refused.
+    if (untyped || rejected || ledgerDebug()) {
+      console.log(`[XCLT] canonical append: ${fresh.length} new of ${list.length} anchor(s) (${held} held, ${untyped} untyped, ${rejected} rejected, ${evictedSkipped} evicted), sealed ${faces} face(s), ${this.blocks.size} block(s), ${this.cubes.size} cube(s)`);
+    }
+    return out;
   }
 
   /**
@@ -875,6 +977,7 @@ export class Ledger extends EventEmitter {
   // never take down a seal that has already been agreed and persisted.
   _emitBlocksAdded(face) {
     if (!face || !face.blocks) return 0;
+    if (this._quietSeal) return 0;   // a canonical rebuild or append: the caller writes the state and the count — see there
     let n = 0;
     for (const block of face.blocks.values()) {
       // Higher-level faces hold Cubes, not Blocks — those carry no `tx` and are not state transitions.

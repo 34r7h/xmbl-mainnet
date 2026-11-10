@@ -70,6 +70,30 @@ export function noteCanonicalApplied(core, anchors, result, by, now = Date.now()
   return true;
 }
 
+const withQuery = (url, q) => `${url}${url.includes('?') ? '&' : '?'}${new URLSearchParams(q).toString()}`;
+
+// FROM THE CURSOR, NOT FROM ZERO (0.1.30). A node whose last full rebuild named the journal's numbering holds a
+// cursor {gen, seq, root}; it asks for the rows after seq and appends them, page by page, with the node verifying
+// each page's chain itself. Returns 'appended' | 'unchanged' | 'stale' | 'busy' | { reset: reason } — a reset (the
+// broker renumbered, or the node refused the delta) sends the caller down the full path.
+async function appendFromCursor({ url, cursor, callOp, fetchImpl }) {
+  let since = cursor.seq, gen = cursor.gen, pages = 0, appended = 0, lastRes = null;
+  for (;;) {
+    const r = await fetchImpl(withQuery(url, { since: String(since), gen, limit: '10000' }), { signal: AbortSignal.timeout(30_000) });
+    if (!r.ok) throw new Error(`canonical delta answered ${r.status}`);
+    const j = await r.json();
+    if (j && j.reset) return { reset: `broker: ${j.reason || 'reset'}` };
+    const res = await callOp({ op: 'append_canonical', gen: j.gen, since: j.since, prev_root: j.prev_root, to_seq: j.to_seq, to_root: j.to_root, anchors: Array.isArray(j.anchors) ? j.anchors : [] });
+    if (res && res.busy) return 'busy';
+    if (res && res.stale) return 'stale';
+    if (!res || !res.ok) return { reset: `node: ${(res && (res.reason || res.error)) || 'refused'}` };
+    lastRes = res; pages++; appended += res.appended | 0;
+    if (!j.more || j.to_seq <= since) break;
+    since = j.to_seq;
+  }
+  return { ok: true, pages, appended, res: lastRes };
+}
+
 function canonicalUrl(env) {
   if (env.XMBL_CANONICAL_URL) return env.XMBL_CANONICAL_URL;
   return `${String(env.HANDOFF_API || DEFAULT_CANONICAL_BASE).replace(/\/$/, '')}/xmbl/anchors/canonical`;
@@ -114,6 +138,19 @@ export function startCanonicalSelfFeed({ core, callOp, env = process.env, fetchI
       const typed = caps.capabilities.requires_typed_anchors === true;
       const op = caps.capabilities.rescues_non_anchor_blocks === true ? 'rebuild_ledger' : 'apply_canonical';
       if (typed !== typedFeed) { etag = null; typedFeed = typed; }
+      let resetWhy = null;
+      if (typed && op === 'rebuild_ledger' && caps.capabilities.appends_canonical === true && caps.canon_cursor) {
+        const out = await appendFromCursor({ url, cursor: caps.canon_cursor, callOp, fetchImpl });
+        if (out === 'busy') return settle('busy');
+        if (out === 'stale') return settle('stale', 'another caller moved the cursor first');
+        if (out && out.ok) {
+          st.self.applied++; st.self.last_error = null; pending = null;
+          const c = out.res && out.res.canon_cursor;
+          return settle('appended', `${out.appended} new anchor(s), cursor ${c ? c.seq : '?'} ${c ? String(c.root).slice(0, 12) : ''}`);
+        }
+        resetWhy = out && out.reset;
+        etag = null;   // the full set is wanted now, even if this node's copy of its tag is current
+      }
       const r = await fetchImpl(`${url}${typed ? (url.includes('?') ? '&' : '?') + 'from_epoch=1' : ''}`,
         { headers: etag ? { 'If-None-Match': etag } : {}, signal: AbortSignal.timeout(30_000) });
       if (r.status === 304) return settle('unchanged');
@@ -123,7 +160,9 @@ export function startCanonicalSelfFeed({ core, callOp, env = process.env, fetchI
       if (!anchors.length) return settle('empty feed');
       const tag = r.headers.get('etag');
       const digest = canonicalDigest(anchors);
-      if (st.last && st.last.digest === digest) { etag = tag; pending = null; return settle('held', `this node already holds set ${digest.slice(0, 12)}`); }
+      // After a refused append the node's cursor is gone even when its content is current, so the set goes in again
+      // (a repeat of the last set is answered `unchanged` by the write lock and only re-sets the cursor).
+      if (!resetWhy && st.last && st.last.digest === digest) { etag = tag; pending = null; return settle('held', `this node already holds set ${digest.slice(0, 12)}`); }
       const maxTs = canonicalMaxTs(anchors);
       // Both guards below are against racing a feeder, so they apply only to a node some caller has fed this
       // process. A set older than the one held is a cached copy of what that feeder already handed over; a new
@@ -133,7 +172,8 @@ export function startCanonicalSelfFeed({ core, callOp, env = process.env, fetchI
         if (!pending || pending.digest !== digest) pending = { digest, since: t };
         if (t - pending.since < everyMs) return settle('waiting for feeder', `new set ${digest.slice(0, 12)}`);
       }
-      const res = await callOp({ op, anchors });
+      // A full rebuild names the journal's numbering and root, so the node can verify the set and set its cursor.
+      const res = await callOp(op === 'rebuild_ledger' && typeof j.gen === 'string' ? { op, anchors, gen: j.gen, root: j.root } : { op, anchors });
       if (res && res.busy) return settle('busy', res.error);
       const applied = noteCanonicalApplied(core, anchors, { ...res, op }, 'self', now());
       if (!applied) {
@@ -141,7 +181,7 @@ export function startCanonicalSelfFeed({ core, callOp, env = process.env, fetchI
         return settle('not applied', st.self.last_error);
       }
       etag = tag; pending = null; st.self.applied++; st.self.last_error = null;
-      return settle('applied', `${op} of ${anchors.length} anchors -> ${res.blocks ?? '?'} blocks, root ${String(res.state_root || '').slice(0, 16)}`);
+      return settle('applied', `${op} of ${anchors.length} anchors -> ${res.blocks ?? '?'} blocks, root ${String(res.state_root || '').slice(0, 16)}${resetWhy ? `; full set because ${resetWhy}` : ''}`);
     } catch (e) {
       st.self.last_error = String(e?.message || e);
       return settle('error', st.self.last_error);

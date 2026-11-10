@@ -12,6 +12,7 @@ import { VERSION as ZERO_KNOWLEDGE_VERSION } from '@xmbl/zero-knowledge';
 import { VERSION as CORE_VERSION } from './index.js';
 import { codeDigest } from './release.js';   // the VERSION PROOF: a digest of the @xmbl code this process loaded
 import { feedState, noteCanonicalApplied } from './canonical-feed.js';   // which set this node holds, and who handed it over
+import { CANON_D0, verifyCanonRun } from './canon-digest.js';   // the broker's journal hash chain, recomputed here
 
 // THE VERSIONS THIS PROCESS IS RUNNING. Each package reads its own manifest at import time (see the VERSION
 // export in every @xmbl/* root), so this names the code in memory — an install that lands on disk after boot
@@ -218,6 +219,26 @@ function dropEvicted(core, anchors) {
   return { kept, dropped };
 }
 
+// THE CANONICAL CURSOR — where in the broker's journal this node's ledger stands, as {gen, seq, root}.
+//
+// PROCESS-LOCAL ON PURPOSE. The ledger rehydrates its anchor keys and pools on boot but not its blocks, cubes or
+// face accumulators, so an append after a restart would extend state this process never built. A restart
+// therefore forgets the cursor, and the first set after it is a full rebuild — exactly today's path.
+//
+// It is SET only by a full rebuild_ledger that names the numbering (`gen`) and hands rows numbered 1..n whose
+// chain this node recomputes to the root the caller named; anything less leaves the node with no cursor, so a
+// caller can never move it onto a position the node did not verify. append_canonical then advances it.
+export function cursorFromRebuild(req) {
+  if (!req || typeof req.gen !== 'string' || !req.gen) return null;
+  const anchors = Array.isArray(req.anchors) ? req.anchors : [];
+  if (!anchors.length) return null;
+  const v = verifyCanonRun(anchors, CANON_D0, 0);
+  if (!v.ok) return null;
+  if (typeof req.root === 'string' && req.root && req.root.toLowerCase() !== v.root) return null;
+  return { gen: req.gen, seq: v.to_seq, root: v.root, at: new Date().toISOString() };
+}
+const cursorView = (c) => (c ? { gen: c.gen, seq: c.seq, root: c.root, at: c.at } : null);
+
 function withTimeout(promise, ms, label) {
   return Promise.race([
     promise,
@@ -406,6 +427,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         // a node that cannot survive a wipe is driven by, so it is the one that most needs the filter.
         const { kept, dropped } = dropEvicted(core, anchors);
         const r = await core.xvsm.rebuildFromCanonical(kept);
+        core.canonCursor = null;   // the tree moved and the ledger did not: there is no single set both hold
         return { ok: r.started !== false, state_root_before: before, evicted_skipped: dropped, ...r };
       }
       case 'rebuild_ledger': {
@@ -420,6 +442,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         }
         const anchors = Array.isArray(req.anchors) ? req.anchors : [];
         if (!anchors.length) return { ok: false, error: 'rebuild_ledger requires anchors[]' };
+        core.canonCursor = null;   // whatever happens below, the old position no longer describes this ledger
         const ledger = await core.xclt.rebuildFromAnchors(anchors);
         // A REFUSED REBUILD IS NOT A SUCCESSFUL ONE. The ledger refuses a set that would empty the chain and
         // touches nothing; say so with ok:false and the counts, so a coordinator driving the wrong feed fixes
@@ -438,7 +461,49 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         // same number, so the UI reflects the sealed, agreed chain instead of a stale 0.
         try { core.leadBatchesSealed = ledger.faces_sealed; } catch { /* counter is advisory */ }
         core._chainCounts = null;   // force `chain` to re-scan the freshly-sealed ledger
-        return { ok: true, ...ledger, state_root };
+        // A cursor only over a tree that was actually rebuilt from this set — an append extends both stores.
+        core.canonCursor = state_root ? cursorFromRebuild(req) : null;
+        return { ok: true, ...ledger, state_root, canon_cursor: cursorView(core.canonCursor) };
+      }
+      case 'append_canonical': {
+        // APPEND A JOURNAL DELTA — the incremental convergence step (0.1.30). The caller fetched
+        // GET /xmbl/anchors/canonical?since=<seq>&gen=<gen> from the cursor this node reported and hands over
+        // {gen, since, prev_root, to_seq, to_root, anchors[{seq, …}]}. The node appends only when the delta
+        // extends EXACTLY the set it holds: same numbering, starting at its own seq and root, rows contiguous,
+        // and the chain it recomputes over them equal to to_root. Anything else answers reset:true and touches
+        // nothing — the caller then sends a full set (rebuild_ledger with gen and root), which is today's path.
+        if (!core.xclt || typeof core.xclt.appendFromAnchors !== 'function') return { ok: false, error: 'this node predates append_canonical — reinstall the node bundle' };
+        if (!core.xvsm || typeof core.xvsm.appendCanonical !== 'function') return { ok: false, error: 'state machine not initialized' };
+        const cur = core.canonCursor;
+        const reset = (reason) => ({ ok: false, reset: true, reason, error: `append refused: ${reason} — send the full set (rebuild_ledger with gen and root)`, canon_cursor: cursorView(cur) });
+        if (!cur) return reset('this node holds no canonical cursor (no full rebuild with a numbering since it booted)');
+        if (String(req.gen ?? '') !== cur.gen) return reset(`gen ${req.gen} is not the numbering this node holds (${cur.gen})`);
+        const since = Number(req.since);
+        if (!Number.isInteger(since) || since < 0) return reset('since must be a non-negative integer');
+        const toRoot = typeof req.to_root === 'string' ? req.to_root.toLowerCase() : null;
+        if (since < cur.seq) {
+          // A delta this node already holds (a retried call, or the self-feed got there first): answer with the
+          // position instead of a reset, so a racing caller re-reads the cursor rather than forcing a rebuild.
+          if (Number(req.to_seq) === cur.seq && toRoot === cur.root) return { ok: true, unchanged: true, appended: 0, canon_cursor: cursorView(cur) };
+          return { ok: false, stale: true, reason: `since ${since} is behind this node's cursor ${cur.seq}`, error: `stale delta: this node is at seq ${cur.seq}`, canon_cursor: cursorView(cur) };
+        }
+        if (since > cur.seq) return reset(`since ${since} is past this node's cursor ${cur.seq} — the rows between are missing`);
+        if (typeof req.prev_root === 'string' && req.prev_root.toLowerCase() !== cur.root) return reset('prev_root is not the root this node holds');
+        const anchors = Array.isArray(req.anchors) ? req.anchors : [];
+        const v = verifyCanonRun(anchors, cur.root, cur.seq);
+        if (!v.ok) return reset(v.reason);
+        if (toRoot && toRoot !== v.root) return reset(`the delta's rows chain to ${v.root.slice(0, 16)}…, not to_root ${toRoot.slice(0, 16)}…`);
+        if (req.to_seq != null && Number(req.to_seq) !== v.to_seq) return reset(`to_seq ${req.to_seq} does not match the ${anchors.length} row(s) sent`);
+        const ledger = await core.xclt.appendFromAnchors(anchors);
+        const { kept } = dropEvicted(core, anchors);
+        const st = await core.xvsm.appendCanonical(kept);
+        if (!st || st.started === false) { core.canonCursor = null; return reset((st && st.error) || 'the state tree could not be extended'); }
+        core.canonCursor = { gen: cur.gen, seq: v.to_seq, root: v.root, at: new Date().toISOString() };
+        try { core.leadBatchesSealed = (typeof core.leadBatchesSealed === 'number' ? core.leadBatchesSealed : 0) + (ledger.faces_sealed | 0); } catch { /* advisory */ }
+        // The block count moves by the rows this append made durable (the faces it sealed emit no block:added);
+        // cubes still count themselves through cube:complete.
+        if (core._chainCounts) core._chainCounts.blocks += ledger.persisted_new | 0;
+        return { ok: true, ...ledger, state_root: st.state_root, forgot: st.forgot, canon_cursor: cursorView(core.canonCursor) };
       }
       case 'evict': {
         // REMOVE NAMED ANCHORS AND NOTHING ELSE. `rebuild_ledger` is the only other way to drop an anchor a
@@ -592,7 +657,13 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
             // apply_canonical reads only {event, hash, ts} and leaves the block store untouched, so it is safe
             // on ANY feed, typed or not — the correct holding pattern while a rollout is mid-flight.
             apply_canonical_accepts_untyped: typeof core.xvsm?.rebuildFromCanonical === 'function',
+            // 0.1.30+: `append_canonical` takes a journal delta (?since=<seq>&gen=<gen>) once a full rebuild_ledger
+            // carrying {gen, root} has set the cursor below; the node verifies the chain (canon_digest v1) itself.
+            appends_canonical: typeof core.xclt.appendFromAnchors === 'function' && typeof core.xvsm?.appendCanonical === 'function',
+            canon_digest: 'v1',
           },
+          canon_cursor: cursorView(core.canonCursor),
+          writing: writing ? { op: writing.op, running_for_s: Math.round((Date.now() - writing.since) / 1000) } : null,
         };
       }
       case 'identity_status': {
@@ -1118,6 +1189,10 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
           suspended: core.suspended ? { reason: core.suspended.reason, since: core.suspended.since, running: core.suspended.running ?? null, latest: core.suspended.latest ?? null } : null,
           // THE NODE'S OWN CLOCK, inside the signature — the one field a freshness gate depends on is the one
           // field the node must attest itself.
+          // WHERE THIS NODE STANDS IN THE BROKER'S CANONICAL JOURNAL (0.1.30), inside the signature: the numbering,
+          // the seq and the hash-chain root its ledger was built to. Equal to the broker's head root means this
+          // node holds exactly the canonical set — the convergence reading, signed by the node, not inferred.
+          canon: core.canonCursor ? { gen: core.canonCursor.gen, seq: core.canonCursor.seq, root: core.canonCursor.root } : null,
           ts: new Date().toISOString(),
         };
         let stmt = null, sig = null, pk = null;
@@ -1141,6 +1216,7 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
           versions: RUNNING_VERSIONS,                          // what this process is running (see status)
           build: RUNNING_BUILD.digest,                         // the version proof (see RUNNING_BUILD)
           suspended: core.suspended || null,
+          canon_cursor: cursorView(core.canonCursor),          // where this ledger stands in the broker's journal
           // What this process has spent, for throughput work: CPU since boot, the signature memo's hits and
           // misses (a miss is one MAYO verify), micromine nonce searches and memo hits, gossip messages sent and
           // how many items rode in batches, the heap (after a full GC when asked with params.gc and the process
@@ -1218,13 +1294,14 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
   //     tick forever. Process-local, so a restart forgets it and the respawn re-converge still runs for real.
   // Reads (status, chain, state_tree, ledger_capabilities) stay outside the lock: the coordinator's capability
   // probe and drift check must answer while a rebuild runs.
-  const LEDGER_WRITES = new Set(['rebuild_ledger', 'apply_canonical', 'apply_backfill', 'evict']);
+  const LEDGER_WRITES = new Set(['rebuild_ledger', 'apply_canonical', 'append_canonical', 'apply_backfill', 'evict']);
   let writing = null;      // { key, op, since, promise } — the ledger write running now
   let lastApplied = null;  // { key, held, root, result } — the last completed rebuild_ledger / apply_canonical
   const heldNow = () => { const x = core.xclt; return x ? x.blocks.size + (Array.isArray(x._membershipPool) ? x._membershipPool.length : 0) : 0; };
   const rootNow = () => { try { return core.xvsm ? core.xvsm.getStateRoot() : null; } catch { return null; } };
   function writeKey(req) {
     if (req.op === 'apply_backfill') return req.op;
+    if (req.op === 'append_canonical') return `${req.op}:${req.gen}:${req.since}:${req.to_seq}:${req.to_root}`;
     // The KEPT set, not the offered one: an evict between two calls changes what a rebuild would produce.
     const body = req.op === 'evict' ? (Array.isArray(req.keys) ? req.keys : [req.key])
       : dropEvicted(core, Array.isArray(req.anchors) ? req.anchors : []).kept;
@@ -1238,6 +1315,13 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
         error: `busy: ${writing.op} is already running on this node — one ledger write at a time; retry when it returns` };
     }
     if (lastApplied && lastApplied.key === key && lastApplied.held === heldNow() && lastApplied.root === rootNow()) {
+      // The same set, the same ledger: the cursor is the one this set names (a repeat may name a numbering the
+      // first call did not, and a coordinator waiting on a cursor must not pull the full set forever).
+      if (req.op === 'rebuild_ledger') {
+        const c = cursorFromRebuild(req);
+        if (c) core.canonCursor = c;
+        return { ...lastApplied.result, unchanged: true, canon_cursor: cursorView(core.canonCursor) };
+      }
       return { ...lastApplied.result, unchanged: true };
     }
     lastApplied = null;
@@ -1301,12 +1385,14 @@ export async function createControlServer({ core, config, sockPath, statusSnapsh
     // Any throw/rejection in an op becomes a JSON error — never an unhandled crash.
     // A set handed over the socket is a FED node's set: stamp it when it arrives and again when it lands, so the
     // self-feed stays out of the way of a feeder whose rebuild is still running.
-    const fed = req.op === 'rebuild_ledger' || req.op === 'apply_canonical';
+    const full = req.op === 'rebuild_ledger' || req.op === 'apply_canonical';
+    const fed = full || req.op === 'append_canonical';
     if (fed) { try { feedState(core).last_external_at = Date.now(); } catch { /* bookkeeping only */ } }
     Promise.resolve()
       .then(() => dispatch(req))
       .then((r) => {
-        if (fed) { try { noteCanonicalApplied(core, req.anchors, { ...r, op: req.op }, 'control'); } catch { /* bookkeeping only */ } }
+        if (full) { try { noteCanonicalApplied(core, req.anchors, { ...r, op: req.op }, 'control'); } catch { /* bookkeeping only */ } }
+        else if (fed && r && r.ok) { try { feedState(core).last_external_at = Date.now(); } catch { /* bookkeeping only */ } }
         return r;
       })
       .then(reply)
