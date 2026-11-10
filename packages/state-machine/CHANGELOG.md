@@ -1,5 +1,13 @@
 # @xmbl/state-machine
 
+## 0.1.30
+
+### Patch Changes
+
+- A verkle insert or delete moves the in-memory map and the trie together, synchronously, so a `clear()` during a pending disk write can no longer leave a phantom leaf. Measured 2026-11-10: three different state roots from one 61-anchor set across rebuilds; now equal on every run (verkle-clear-race 6/6, 5 of them red without the change).
+- Updated dependencies
+  - @xmbl/cubic-ledger@0.1.30
+
 ## 0.1.29
 
 ### Patch Changes

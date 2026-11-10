@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.30
+
+### Patch Changes
+
+- Updated dependencies
+  - @xmbl/cubic-ledger@0.1.30
+  - @xmbl/consensus@0.1.30
+  - @xmbl/identity@0.1.30
+  - @xmbl/networking@0.1.30
+  - @xmbl/simulator@0.1.30
+  - @xmbl/state-machine@0.1.30
+  - @xmbl/storage-compute@0.1.30
+
 ## 0.1.29
 
 ### Patch Changes

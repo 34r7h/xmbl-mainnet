@@ -1,5 +1,20 @@
 # @xmbl/core
 
+## 0.1.30
+
+### Patch Changes
+
+- A node appends the broker's canonical journal delta instead of wiping and re-mining the whole set each tick: `append_canonical {since, gen, prev_root, anchors, to_seq, to_root}` checks the delta against a cursor {gen, seq, root} the node verified itself by recomputing the journal digest (canon v1), applies only the new anchors, and refuses with `reset:true` on any numbering, position or digest it does not hold, `stale:true` on a delta behind it, and `unchanged:true` on one it already holds. `rebuild_ledger` takes the journal's `gen` and `root` with a full set and starts the cursor from it only when its own digest equals the root. `ledger_capabilities` reports `appends_canonical`, `canon_digest: 'v1'`, the cursor and whether a ledger write is running; the signed chain statement carries the cursor as `canon` so the broker can count the nodes at its head. Measured on the live feed: an append of 200 anchors 0.07 s and 61 KB against 15.33 s and 21.9 MB for a full rebuild; an empty tick 248 B; roots equal.
+- Updated dependencies
+  - @xmbl/cubic-ledger@0.1.30
+  - @xmbl/consensus@0.1.30
+  - @xmbl/contracts@0.1.30
+  - @xmbl/identity@0.1.30
+  - @xmbl/networking@0.1.30
+  - @xmbl/state-machine@0.1.30
+  - @xmbl/storage-compute@0.1.30
+  - @xmbl/zero-knowledge@0.1.30
+
 ## 0.1.29
 
 ### Patch Changes

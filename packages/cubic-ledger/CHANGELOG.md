@@ -1,5 +1,12 @@
 # @xmbl/cubic-ledger
 
+## 0.1.30
+
+### Patch Changes
+
+- A full canonical rebuild seals quietly (no block:added per face), which is what drove the in-flight state-trie writes behind nondeterministic rebuild roots; `appendFromAnchors` appends only the new anchors of a delta (quiet seal, no db.put of pooled rows), and after an append the anchor keys, block count and faces equal a full rebuild's. The append logs a line only for untyped or rejected anchors, or under debug.
+  - @xmbl/identity@0.1.30
+
 ## 0.1.29
 
 ### Patch Changes

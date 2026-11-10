@@ -1,6 +1,6 @@
 {
   "name": "@xmbl/cli",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "type": "module",
   "main": "index.js",
   "description": "XMBL Command Line",
@@ -8,13 +8,13 @@
     "test": "NODE_OPTIONS=--experimental-vm-modules npx jest --runInBand --forceExit"
   },
   "dependencies": {
-    "@xmbl/consensus": "^0.1.29",
-    "@xmbl/cubic-ledger": "^0.1.29",
-    "@xmbl/identity": "^0.1.29",
-    "@xmbl/networking": "^0.1.29",
-    "@xmbl/simulator": "^0.1.29",
-    "@xmbl/state-machine": "^0.1.29",
-    "@xmbl/storage-compute": "^0.1.29",
+    "@xmbl/consensus": "^0.1.30",
+    "@xmbl/cubic-ledger": "^0.1.30",
+    "@xmbl/identity": "^0.1.30",
+    "@xmbl/networking": "^0.1.30",
+    "@xmbl/simulator": "^0.1.30",
+    "@xmbl/state-machine": "^0.1.30",
+    "@xmbl/storage-compute": "^0.1.30",
     "chalk": "^5.6.2",
     "commander": "^14.0.2",
     "inquirer": "^13.0.1",
