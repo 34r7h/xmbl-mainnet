@@ -32,6 +32,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { loadConfig } from '../node-config.js';
+import { STORE_FAULT_EXIT_CODE } from '@xmbl/cubic-ledger';
 import { fetchLatestVersion, otaDecision, installRootOf, updateCommand, otaRestartMode, respawnArgv, respawnEnv, OTA_EXIT_CODE, DEFAULT_RELEASE_URL,
   PeerReleaseTrigger, installedVersions, acquireInstallLock, installPreflight, guardFloodsub, XMBL_PACKAGES } from '../release.js';
 import { ensureIdentityAtPath, loadIdentityAtPath } from '@xmbl/identity';
@@ -532,6 +533,14 @@ async function cmdStart(cfgPath, flags = {}) {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+  // A LEDGER STORE FAULT STOPS THE PROCESS (0.1.31). LevelDB refuses every later write once it has hit an IO
+  // error (a full disk, a failed fsync), and every ledger call site catches that as "in-memory fallback": the node
+  // kept answering and persisted nothing (MEASURED 2026-11-13, operator's MacBook, 11 GB ledger, full disk).
+  // Exit EX_IOERR so the supervisor reopens the store; the reopen clears the error and deletes orphaned files.
+  core.xclt?.on?.('store:fault', (f) => {
+    console.error(`xmbl-node: ledger store fault (${f.code || 'no code'}: ${f.message}) — exiting ${STORE_FAULT_EXIT_CODE} so the supervisor reopens the store`);
+    shutdown('store-fault', { exitCode: STORE_FAULT_EXIT_CODE });
+  });
 
   // Version proof + suspension + OTA — see startOta above.
   startOta({ core, flags, shutdown });

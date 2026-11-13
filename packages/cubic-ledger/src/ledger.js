@@ -14,6 +14,7 @@ let identityModule = null;
 const loadIdentity = () => (identityModule ||= import('@xmbl/identity'));
 import { Level } from 'level';
 import { anchorTimestampNanos, blockTimestampNanos } from './timestamps.js';
+import { isStoreFault, dirBytes, diskFreeBytes, diskLowError, liveBytes, fmtBytes, DISK_FLOOR_BYTES, DISK_CHECK_MS, BOOT_COMPACT_MIN_BYTES } from './store-guard.js';
 export { anchorTimestampNanos, blockTimestampNanos };
 export { consensusBody, contentKey } from './block.js';
 
@@ -24,6 +25,9 @@ export { consensusBody, contentKey } from './block.js';
 // summary line per rebuild stays on.
 export const ledgerDebug = () => process.env.XMBL_LEDGER_DEBUG === '1' || /^(debug|trace)$/i.test(process.env.LOG_LEVEL || '');
 const dlog = (...a) => { if (ledgerDebug()) console.log(...a); };
+// Rows per LevelDB batch for the pool keys and a rebuild's re-admitted rows: one write-ahead-log append per batch
+// instead of one awaited put per row, and a batch small enough that a crash loses at most this many.
+const POOL_BATCH = 1000;
 
 export class Ledger extends EventEmitter {
   constructor(options = {}) {
@@ -31,6 +35,16 @@ export class Ledger extends EventEmitter {
     const dbPath = options.dbPath || './data/ledger';
     this.db = new Level(dbPath);
     this._dbOpen = false;
+    // STORE LIMITS (store-guard.js). diskFreeBytes and bootCompactMinBytes are injectable for tests.
+    this._dbPath = dbPath;
+    this._diskFree = typeof options.diskFreeBytes === 'function' ? options.diskFreeBytes : () => diskFreeBytes(dbPath);
+    this._bootCompact = options.bootCompact !== false;
+    this._bootCompactMin = Number.isFinite(options.bootCompactMinBytes) ? options.bootCompactMinBytes : BOOT_COMPACT_MIN_BYTES;
+    this._liveBytes = null;        // raw live row bytes, measured once after boot
+    this._diskCheck = null;        // the last free-disk reading, reused for DISK_CHECK_MS
+    this._diskLowSaid = false;
+    this._storeFaulted = null;     // the first write fault, if any: the daemon exits on it
+    this._compaction = null;       // the boot measurement / compaction in flight
     this.cubes = new Map(); // cubeTimestamp (nanoseconds) -> Cube (keyed by timestamp for deterministic placement)
     this.blocks = new Map(); // blockId -> Block
     this.pendingFaces = new Map(); // faceTimestamp (nanoseconds) -> Face (keyed by timestamp, gossiped for deterministic placement)
@@ -43,6 +57,16 @@ export class Ledger extends EventEmitter {
     // addSealedBatch, NOT the legacy incremental addTransaction path). Blocks
     // accumulate here until sealReadyFaces() partitions them by global hash-sort.
     this._membershipPool = [];
+    // THE POOL IS PERSISTED ONE KEY PER MEMBER (`pool:m:<id>`, empty value), and only the CHANGE is written.
+    // _persistedPool is the set of member keys this process knows to be on disk; _persistMembershipPool writes the
+    // difference between it and the live pool in one batch. MEASURED 2026-11-13 on 0.1.30: the old whole-list
+    // `pool:membership` was rewritten on every pooled block — 160,253 ids, 3.04 MB per write, 207 versions in one
+    // boot, each its own level-0 table, 37.3 GB of compaction and ENOSPC in 5.5 min.
+    this._persistedPool = new Set();
+    this._legacyPoolKey = false;       // a `pool:membership` list is on disk: the next persist deletes it
+    this._rebuilding = false;          // a canonical rebuild is in flight: its own final persist is the only one
+    this._poolPersistTail = Promise.resolve();   // pool persists run one at a time (see _persistMembershipPool)
+    this._pendingFacesWritten = null;  // the last pool:pendingfaces value written, so an unchanged one is not re-put
     // 2b (ab5932a5) CONSENSUS-V2: when on, sealing is CROSS-NODE AGREED, not local-count. addSealedBatch stops
     // auto-sealing local-9; instead _membershipPool is the L1 candidate pool (getMembershipPool) that a
     // SealRoundManager agrees, then sealAgreedBlocks seals EXACTLY the agreed 9 into a face and queues it in
@@ -119,6 +143,9 @@ export class Ledger extends EventEmitter {
   async close() {
     const db = this.db;
     this._dbOpen = false;
+    // A boot compaction in flight finishes first: closing LevelDB under a manual compaction is not a state the
+    // store is tested in, and the compaction is the reason the next boot is small.
+    if (this._compaction) { try { await this._compaction; } catch { /* reported where it ran */ } }
     if (!db || typeof db.close !== 'function') return;
     if (db.status === 'closed' || db.status === 'closing') return;
     await db.close();
@@ -142,17 +169,140 @@ export class Ledger extends EventEmitter {
       console.error(`[XCLT] ledger store did NOT open (${this._dbError?.code || this._dbError?.message || this.db.status}) — running WITHOUT persistence; nothing added now survives this process`);
       this.emit('store:unavailable', { error: this._dbError, status: this.db.status });
     }
+    if (this._dbOpen) this._guardStore();
     // ORPHAN FIX: _membershipPool and _pendingCubeFaces are in-memory. Before this, a restart dropped both and
     // the already-persisted blocks were NEVER re-pooled — so they could never join a face and were orphaned for
     // good (measured 2026-07-30 on prod: 2925 blocks persisted, 18 cubes = 486 accounted, 2439 orphaned = 83.4%).
     await this._rehydratePools();
+    if (this._dbOpen && this._bootCompact) {
+      // A store closed while the live rows are being counted (a shutdown, or a test closing db directly) stops the
+      // measurement; that is not a failure. classic-level's close() waits for an in-flight compactRange.
+      this._compaction = this._bootCompaction().catch((e) => {
+        if (this.db.status === 'closed' || this.db.status === 'closing' || e?.code === 'LEVEL_DATABASE_NOT_OPEN' || e?.code === 'LEVEL_ITERATOR_NOT_OPEN') return null;
+        console.warn(`[XCLT] boot compaction failed, store left as found: ${e?.message || e}`);
+        return null;
+      });
+    }
   }
 
-  // Persist the L1 candidate pool as an ID LIST (bodies already live at block:<id>). Cheap: the pool is tens of
-  // entries, and rewriting the list is atomic w.r.t. a crash — a partial list would resurrect a partial pool.
-  async _persistMembershipPool() {
+  // EVERY WRITE GOES THROUGH HERE. put / del / batch on this.db are wrapped once, at open, so the two rules hold for
+  // every call site, including the ones that catch a failure as "in-memory fallback":
+  //   - a write that would grow the store is refused (LEDGER_DISK_LOW) while free disk is under the floor;
+  //     a delete-only write frees space and is always let through;
+  //   - a write that fails with a store fault records it and emits `store:fault`, once.
+  _guardStore() {
+    const db = this.db;
+    for (const name of ['put', 'del', 'batch']) {
+      if (typeof db[name] !== 'function') continue;
+      const inner = db[name].bind(db);
+      db[name] = (...args) => {
+        if (name === 'batch' && args.length === 0) return inner();   // chained form: not used by the ledger
+        const grows = name === 'put' || (name === 'batch' && !(Array.isArray(args[0]) && args[0].every((op) => op && op.type === 'del')));
+        if (grows) { const d = this._diskRoom(); if (!d.ok) return Promise.reject(diskLowError(d)); }
+        let p;
+        try { p = inner(...args); } catch (e) { this._noteWriteError(e); throw e; }
+        return Promise.resolve(p).catch((e) => { this._noteWriteError(e); throw e; });
+      };
+    }
+  }
+
+  _noteWriteError(e) {
+    if (this._storeFaulted || !isStoreFault(e)) return;
+    this._storeFaulted = { at: new Date().toISOString(), code: e.code || (e.cause && e.cause.code) || null, message: String(e.message || e) };
+    console.error(`[XCLT] STORE FAULT (${this._storeFaulted.code || 'no code'}): ${this._storeFaulted.message} — the store refuses writes until it is reopened`);
+    this.emit('store:fault', { error: e, ...this._storeFaulted });
+  }
+
+  // Free disk against the floor max(1 GiB, 2 x live ledger bytes), read at most every DISK_CHECK_MS. An
+  // unreadable disk (statfs failed) is not a refusal: the write fault, if any, is the evidence.
+  _diskRoom() {
+    const now = Date.now();
+    if (this._diskCheck && now - this._diskCheck.at < DISK_CHECK_MS) return this._diskCheck;
+    let free = null;
+    try { free = this._diskFree(); } catch { free = null; }
+    const need = Math.max(DISK_FLOOR_BYTES, 2 * (this._liveBytes || 0));
+    const ok = free === null || !Number.isFinite(free) || free >= need;
+    this._diskCheck = { at: now, free, need, ok };
+    if (!ok && !this._diskLowSaid) {
+      this._diskLowSaid = true;
+      console.error(`[XCLT] DISK LOW: ${fmtBytes(free)} free, floor ${fmtBytes(need)} — ledger writes are refused until there is room`);
+      this.emit('store:disk-low', { free, need });
+    }
+    if (ok) this._diskLowSaid = false;
+    return this._diskCheck;
+  }
+
+  // The door check for every admission path: refuse BEFORE anything changes in memory, so a refused write never
+  // leaves a block the store does not have.
+  _assertDiskRoom() {
     if (!this._dbOpen) return;
-    try { await this.db.put('pool:membership', JSON.stringify(this._membershipPool.map(b => b.id))); } catch { /* in-memory fallback */ }
+    const d = this._diskRoom();
+    if (!d.ok) throw diskLowError(d);
+  }
+
+  /** The store's own health: the first write fault, the last disk reading, the measured live bytes. */
+  storeHealth() {
+    return { faulted: this._storeFaulted, disk: this._diskCheck ? { free: this._diskCheck.free, need: this._diskCheck.need, ok: this._diskCheck.ok } : null, live_bytes: this._liveBytes };
+  }
+
+  // BOOT COMPACTION, ONCE. Measures the live rows (one pass) and the directory; when the directory is over
+  // bootCompactMinBytes and the live rows are under half of it, compacts the whole key range so the dead
+  // versions leave the disk. Runs after ready() resolves; close() waits for it.
+  async _bootCompaction() {
+    const t0 = Date.now();
+    const before = dirBytes(this._dbPath);
+    const live = await liveBytes(this.db);
+    this._liveBytes = live;
+    this._diskCheck = null;   // the floor depends on the live size just measured
+    const out = { du_before: before, live, compacted: false, du_after: before, ms: 0 };
+    if (before >= this._bootCompactMin && live < before / 2) {
+      await this.db.compactRange(Buffer.alloc(1, 0), Buffer.alloc(32, 0xff), { keyEncoding: 'buffer' });
+      out.compacted = true;
+      out.du_after = dirBytes(this._dbPath);
+      out.ms = Date.now() - t0;
+      console.log(`[XCLT] boot compaction: ${fmtBytes(before)} -> ${fmtBytes(out.du_after)} on disk, ${fmtBytes(live)} of live rows, ${(out.ms / 1000).toFixed(1)} s`);
+    }
+    this.emit('store:measured', out);
+    return out;
+  }
+
+  // Persist the L1 candidate pool as ONE KEY PER MEMBER (bodies already live at block:<id>), writing only the
+  // members added and removed since the last persist, in batches of POOL_BATCH. A pool that did not change writes
+  // 0 bytes. The bytes written are O(change), not O(pool): the whole-list form this replaces cost 3.04 MB per
+  // pooled block at 160k members. A crash between batches leaves a pool that is a superset or subset of the live
+  // one by at most the rows of the unfinished batch; rehydration loads only members whose body is on disk, and the
+  // pool is a SET (sealBlocksIntoFaces hash-sorts it), so the restored order does not matter.
+  // During a canonical rebuild this is a no-op: the rebuild persists once, after it has sealed.
+  // ONE AT A TIME. Each call diffs the pool against _persistedPool and awaits its batches; two interleaved calls
+  // could each compute a delta from the same snapshot and land in the wrong order (a put of a member that came
+  // back, then a stale del of it). Chained, every call diffs against what the previous one actually wrote.
+  _persistMembershipPool(opts) {
+    const run = this._poolPersistTail.then(() => this._persistMembershipPoolNow(opts));
+    this._poolPersistTail = run.catch(() => {});
+    return run;
+  }
+
+  async _persistMembershipPoolNow({ force = false } = {}) {
+    if (!this._dbOpen) return { put: 0, del: 0 };
+    if (this._rebuilding && !force) return { put: 0, del: 0 };
+    const live = new Set();
+    for (const b of this._membershipPool) live.add(b.id);
+    const ops = [];
+    for (const id of live) if (!this._persistedPool.has(id)) ops.push({ type: 'put', key: `pool:m:${id}`, value: '' });
+    let put = ops.length;
+    for (const id of this._persistedPool) if (!live.has(id)) ops.push({ type: 'del', key: `pool:m:${id}` });
+    if (this._legacyPoolKey) ops.push({ type: 'del', key: 'pool:membership' });
+    if (!ops.length) return { put: 0, del: 0 };
+    for (let i = 0; i < ops.length; i += POOL_BATCH) {
+      const chunk = ops.slice(i, i + POOL_BATCH);
+      try { await this.db.batch(chunk); } catch { return { put: 0, del: 0, failed: true }; /* in-memory fallback; the set stays as last known */ }
+      for (const op of chunk) {
+        if (op.key === 'pool:membership') { this._legacyPoolKey = false; continue; }
+        const id = op.key.slice('pool:m:'.length);
+        if (op.type === 'put') this._persistedPool.add(id); else this._persistedPool.delete(id);
+      }
+    }
+    return { put, del: ops.length - put };
   }
 
   // Persist the L2 candidate pool as {root, ids[]} — getMerkleRoot() recomputes from the member blocks, so the
@@ -160,7 +310,9 @@ export class Ledger extends EventEmitter {
   async _persistPendingFaces() {
     if (!this._dbOpen) return;
     const rows = this._pendingCubeFaces.map(f => ({ root: f.getMerkleRoot(), ids: Array.from(f.blocks.values()).map(b => b.id) }));
-    try { await this.db.put('pool:pendingfaces', JSON.stringify(rows)); } catch { /* in-memory fallback */ }
+    const value = JSON.stringify(rows);
+    if (value === this._pendingFacesWritten) return;   // unchanged: no put
+    try { await this.db.put('pool:pendingfaces', value); this._pendingFacesWritten = value; } catch { /* in-memory fallback */ }
   }
 
   async _loadBlock(id) {
@@ -205,6 +357,25 @@ export class Ledger extends EventEmitter {
         this._evicted.add(key.toString().slice('evicted:'.length));
       }
     } catch { /* no evictions yet */ }
+    // 2b. THE PERSISTED POOL: one `pool:m:<id>` key per member, plus the legacy whole-list `pool:membership` a
+    //     0.1.30 store still holds. Both are read; the next persist writes the members the legacy list named and
+    //     deletes the list, and the pool keyspace is compacted once so the dead versions leave the disk.
+    const savedIds = [];
+    try {
+      for await (const [key] of this.db.iterator({ gte: 'pool:m:', lt: 'pool:m;' })) {
+        const id = key.toString().slice('pool:m:'.length);
+        this._persistedPool.add(id);
+        savedIds.push(id);
+      }
+    } catch { /* no member keys yet */ }
+    try {
+      const raw = await this.db.get('pool:membership');
+      if (raw !== undefined && raw !== null) {
+        this._legacyPoolKey = true;
+        try { for (const id of JSON.parse(raw)) if (typeof id === 'string') savedIds.push(id); } catch { /* unreadable list: deleted, not trusted */ }
+      }
+    } catch { /* no legacy list */ }
+    const migrating = this._legacyPoolKey;
     // 3. CONVERGE THE STORE TO CONTENT IDS, ONCE. Runs only when the scan found a row keyed by an envelope hash,
     //    so a store that is already content-keyed pays nothing; the second boot finds 0 and skips.
     let rekey = null;
@@ -216,20 +387,24 @@ export class Ledger extends EventEmitter {
     //    partially-restored face is dropped entirely rather than sealed short, because sealBlocksIntoFaces needs
     //    exactly 9 and a short face would change the merkle root and fork.
     if (!rekey) {
-      try {
-        const raw = await this.db.get('pool:membership');
-        const ids = JSON.parse(raw);
-        const have = new Set(this._membershipPool.map(b => b.id));
-        for (const id of ids) {
-          if (have.has(id)) continue;
-          const b = await this._loadBlock(id);
-          if (b) this._membershipPool.push(b);
-        }
-      } catch { /* no saved pool yet */ }
-      if (untyped > 0) await this._persistMembershipPool();   // the pool no longer names the deleted rows
+      const have = new Set(this._membershipPool.map(b => b.id));
+      for (const id of savedIds) {
+        if (have.has(id)) continue;
+        have.add(id);
+        const b = await this._loadBlock(id);
+        if (b) this._membershipPool.push(b);
+      }
+    }
+    // Members whose body is gone (an untyped row deleted above, a rebuilt anchor that was pooled but never
+    // written) lose their key here, and a legacy list is converted and deleted. An unchanged pool writes nothing.
+    await this._persistMembershipPool();
+    if (migrating && typeof this.db.compactRange === 'function') {
+      try { await this.db.compactRange('pool:', 'pool;'); } catch { /* compaction is an optimisation */ }
     }
     try {
       const raw = await this.db.get('pool:pendingfaces');
+      if (raw === undefined || raw === null) throw new Error('none');
+      this._pendingFacesWritten = raw;
       const rows = JSON.parse(raw);
       const haveRoots = new Set(this._pendingCubeFaces.map(f => f.getMerkleRoot()));
       for (const row of rows) {
@@ -265,6 +440,7 @@ export class Ledger extends EventEmitter {
   }
 
   async addTransaction(tx, opts = {}) {
+    this._assertDiskRoom();
     // Integration: Verify signature if xid available and tx has signature and from address
     if (this.xid && tx.sig && tx.from) {
       try {
@@ -363,6 +539,7 @@ export class Ledger extends EventEmitter {
   }
 
   async addSealedBatch(txs, opts = {}) {
+    this._assertDiskRoom();
     if (!Array.isArray(txs)) {
       throw new Error('addSealedBatch: txs must be an array');
     }
@@ -463,7 +640,14 @@ export class Ledger extends EventEmitter {
   // the set, per sealBlocksIntoFaces / sortFacesByHash), and seals ALL complete faces immediately — the
   // canonical set IS the agreement the seal round used to negotiate. This is the same convergence primitive as
   // xvsm.rebuildFromCanonical, extended from the verkle STATE root to the CUBE LEDGER.
+  // The flag that holds intermediate pool persists off is cleared on every exit, a throw included: a rebuild that
+  // died half way must not leave pool persistence disabled for the rest of the process.
   async rebuildFromAnchors(anchors) {
+    this._assertDiskRoom();   // before the wipe: a rebuild that cannot write its rows must not delete them
+    try { return await this._rebuildFromAnchors(anchors); } finally { this._rebuilding = false; }
+  }
+
+  async _rebuildFromAnchors(anchors) {
     const list = Array.isArray(anchors) ? anchors : [];
 
     // ⛔ 0a. A REBUILD THAT WOULD EMPTY THE CHAIN IS REFUSED, AND NOTHING IS TOUCHED.
@@ -545,6 +729,11 @@ export class Ledger extends EventEmitter {
       preserved.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     }
     // 1. WIPE — in-memory + persisted. Nothing of the old divergent chain survives.
+    // From here to the final persist the pool is in flight: a block admitted meanwhile (addSealedBatch,
+    // addTransaction) writes its own body but not the pool, which the rebuild persists ONCE when it has sealed.
+    // MEASURED 2026-11-13 on 0.1.30: every finalized tx during step 2b rewrote the whole in-flight pool (about
+    // 160k ids, 3.04 MB), 207 times in one boot.
+    this._rebuilding = true;
     this.blocks = new Map();
     this.cubes = new Map();
     if (this.cubesByFaceIndex instanceof Map) this.cubesByFaceIndex = new Map();
@@ -575,6 +764,9 @@ export class Ledger extends EventEmitter {
       for (const pfx of ['block:', 'cube:', 'pool:']) {
         try { await this.db.clear({ gte: pfx, lt: pfx.slice(0, -1) + ';' }); } catch { /* in-memory fallback */ }
       }
+      this._persistedPool = new Set();   // the pool keyspace is empty now, the legacy list with it
+      this._legacyPoolKey = false;
+      this._pendingFacesWritten = null;
     }
     // 2. Content-dedup (one anchor event:hash = one block) and DETERMINISTIC order (by hash then event), so
     //    admission order is identical on every node regardless of how the anchors were delivered.
@@ -620,12 +812,22 @@ export class Ledger extends EventEmitter {
     // 2b. RE-ADMIT the rescued non-anchor blocks. They are appended AFTER the anchors and in id order, so the
     //     rebuilt chain stays a pure function of (canonical set, local non-anchor set) rather than of the
     //     order rows happened to come off disk.
+    let readmit = [];
+    const flushReadmit = async () => {
+      if (!readmit.length || !this._dbOpen) { readmit = []; return; }
+      const ops = readmit; readmit = [];
+      try { await this.db.batch(ops); } catch { /* in-memory fallback */ }
+    };
     for (const block of preserved) {
       if (this.blocks.has(block.id)) continue;
       this.blocks.set(block.id, block);
       this._membershipPool.push(block);
-      if (this._dbOpen) { try { await this.db.put(`block:${block.id}`, block.serialize()); } catch { /* in-memory fallback */ } }
+      if (this._dbOpen) {
+        readmit.push({ type: 'put', key: `block:${block.id}`, value: block.serialize() });
+        if (readmit.length >= POOL_BATCH) await flushReadmit();
+      }
     }
+    await flushReadmit();
     // 3. Seal every complete 9-block face deterministically. Loop because a future _sealReadyFaces may seal one
     //    face per call; today it drains the whole pool in one pass, so the second iteration returns 0 and stops.
     //    QUIETLY: the reseal emits no block:added. Its only listener that changes anything is the state machine,
@@ -645,6 +847,7 @@ export class Ledger extends EventEmitter {
         if (!r || r.sealedFaces === 0 || ++guard > 200000) break;
       }
     } finally { this._quietSeal = false; }
+    this._rebuilding = false;
     await this._persistMembershipPool();
     // SAY WHAT WAS DESTROYED. A rebuild clears the whole block/cube/face/pool keyspace and nothing anywhere
     // wrote a line about it: SirKit watched this box lose 13,750 block rows and regain 10,500 over one day
@@ -708,6 +911,13 @@ export class Ledger extends EventEmitter {
       fresh.push({ a, block });
     }
     fresh.sort((x, y) => (x.a.hash < y.a.hash ? -1 : x.a.hash > y.a.hash ? 1 : (x.a.event < y.a.event ? -1 : x.a.event > y.a.event ? 1 : 0)));
+    // ⛔ NOTHING FRESH AND NOTHING TO SEAL IS NOT A WRITE. The self-feed calls this every ~90 s, and on 0.1.30 a
+    // tick with 0 fresh anchors still read every pooled row's body and rewrote the whole pool list (3.04 MB at
+    // 160k members). With fewer than 9 pooled, _sealReadyFaces seals nothing, so the result is already known.
+    if (fresh.length === 0 && this._membershipPool.length < 9) {
+      return { appended: 0, held, untyped, rejected, evicted_skipped: evictedSkipped, blocks: this.blocks.size, faces_sealed: 0, cubes: this.cubes.size, cubes_new: 0, persisted_new: 0, pooled: this._membershipPool.length };
+    }
+    this._assertDiskRoom();
     // Which of the rows ALREADY pooled are durable: a rescued block or a live submission was written when it was
     // pooled, a rebuilt anchor was not. Sealing writes every member, so only the not-yet-durable ones are new rows.
     const pooledBefore = this._membershipPool.slice();
@@ -1037,11 +1247,17 @@ export class Ledger extends EventEmitter {
           level: 1,
         });
       }
-      // Persist each sealed block (parity with the incremental path).
+      // Persist each sealed block (parity with the incremental path), the face's nine rows in one batch.
       if (this._dbOpen) {
+        // A member whose pool key is on disk loses it in the SAME batch, so no crash can leave a sealed block
+        // listed as pooled (the next boot would pool it again and seal it into a second face).
+        const ops = [];
+        const unpooled = [];
         for (const block of face.blocks.values()) {
-          try { await this.db.put(`block:${block.id}`, block.serialize()); } catch { /* in-memory fallback */ }
+          ops.push({ type: 'put', key: `block:${block.id}`, value: block.serialize() });
+          if (this._persistedPool.has(block.id)) { ops.push({ type: 'del', key: `pool:m:${block.id}` }); unpooled.push(block.id); }
         }
+        try { await this.db.batch(ops); for (const id of unpooled) this._persistedPool.delete(id); } catch { /* in-memory fallback */ }
       }
       // Feed the sealed face into the existing cube-formation pipeline. Merkle
       // roots are pure functions of block membership + hash-sort, so the cube

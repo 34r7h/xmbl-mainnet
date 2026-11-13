@@ -1,4 +1,5 @@
 export { Ledger, anchorTimestampNanos, blockTimestampNanos, consensusBody, contentKey } from './src/ledger.js';
+export { STORE_FAULT_EXIT_CODE, isStoreFault } from './src/store-guard.js';
 export { Block } from './src/block.js';
 export { Face } from './src/face.js';
 export { Cube } from './src/cube.js';
