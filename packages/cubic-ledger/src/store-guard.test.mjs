@@ -106,11 +106,21 @@ test('the floor is max(1 GiB, 2 x live ledger bytes)', async () => {
 test('boot compaction: a store that is mostly dead versions is compacted once at boot', async () => {
   const dir = tmp('compact');
   try {
-    // 0.1.30's failure in miniature: one key rewritten many times. 400 versions x 64 KiB = 25 MiB written,
-    // 64 KiB live. Random values: LevelDB compresses each block, and a repetitive value would hide the dead bytes.
+    // 0.1.30's failure in miniature: one key rewritten many times. A real ledger holds 30 anchors; then one of
+    // its block rows is overwritten 400 times with 64 KiB of random bytes (LevelDB compresses each block, so a
+    // repetitive value would hide the dead bytes) and finally put back. 25 MiB written, the live rows unchanged.
+    const seed = new Ledger({ dbPath: dir, bootCompact: false });
+    await seed.ready();
+    for (let i = 0; i < 30; i++) await seed.addTransaction(anchorTx(`c${i}`));
+    await seed.close();
     const raw = new Level(dir, { valueEncoding: 'utf8' });
     await raw.open();
-    for (let i = 0; i < 400; i++) await raw.put('pool:membership-junk', randomBytes(48 * 1024).toString('base64'));
+    let rowKey = null, rowValue = null;
+    for await (const [k, v] of raw.iterator({ gte: 'block:', lt: 'block;', limit: 1 })) { rowKey = k; rowValue = v; }
+    assert.ok(rowKey, 'the seed ledger wrote block rows');
+    for (let i = 0; i < 400; i++) await raw.put(rowKey, randomBytes(48 * 1024).toString('base64'));
+    await raw.put(rowKey, rowValue);
+    const rowsSeeded = await blockRows(raw);
     await raw.close();
     const before = dirBytes(dir);
     const MIN = 4 * 1024 * 1024;
@@ -123,6 +133,8 @@ test('boot compaction: a store that is mostly dead versions is compacted once at
     assert.strictEqual(out.compacted, true, `compacted: du ${out.du_before} B, live ${out.live} B`);
     assert.ok(out.du_after < out.du_before / 2, `du ${out.du_before} -> ${out.du_after} B`);
     assert.ok(led.storeHealth().live_bytes > 0, 'the live size is kept for the disk floor');
+    assert.strictEqual(await blockRows(led.db), rowsSeeded, 'every live row survives the compaction');
+    assert.strictEqual(led._anchorKeys.size, 30);
     await led.close();
     const after = dirBytes(dir);
 

@@ -14,7 +14,7 @@ let identityModule = null;
 const loadIdentity = () => (identityModule ||= import('@xmbl/identity'));
 import { Level } from 'level';
 import { anchorTimestampNanos, blockTimestampNanos } from './timestamps.js';
-import { isStoreFault, dirBytes, diskFreeBytes, diskLowError, liveBytes, fmtBytes, DISK_FLOOR_BYTES, DISK_CHECK_MS, BOOT_COMPACT_MIN_BYTES } from './store-guard.js';
+import { isStoreFault, dirBytes, diskFreeBytes, diskLowError, fmtBytes, DISK_FLOOR_BYTES, DISK_CHECK_MS, BOOT_COMPACT_MIN_BYTES } from './store-guard.js';
 export { anchorTimestampNanos, blockTimestampNanos };
 export { consensusBody, contentKey } from './block.js';
 
@@ -40,7 +40,7 @@ export class Ledger extends EventEmitter {
     this._diskFree = typeof options.diskFreeBytes === 'function' ? options.diskFreeBytes : () => diskFreeBytes(dbPath);
     this._bootCompact = options.bootCompact !== false;
     this._bootCompactMin = Number.isFinite(options.bootCompactMinBytes) ? options.bootCompactMinBytes : BOOT_COMPACT_MIN_BYTES;
-    this._liveBytes = null;        // raw live row bytes, measured once after boot
+    this._liveBytes = null;        // live row bytes (key + value), counted by the boot scan of block rows
     this._diskCheck = null;        // the last free-disk reading, reused for DISK_CHECK_MS
     this._diskLowSaid = false;
     this._storeFaulted = null;     // the first write fault, if any: the daemon exits on it
@@ -245,15 +245,16 @@ export class Ledger extends EventEmitter {
     return { faulted: this._storeFaulted, disk: this._diskCheck ? { free: this._diskCheck.free, need: this._diskCheck.need, ok: this._diskCheck.ok } : null, live_bytes: this._liveBytes };
   }
 
-  // BOOT COMPACTION, ONCE. Measures the live rows (one pass) and the directory; when the directory is over
-  // bootCompactMinBytes and the live rows are under half of it, compacts the whole key range so the dead
-  // versions leave the disk. Runs after ready() resolves; close() waits for it.
+  // BOOT COMPACTION, ONCE. Reads the directory size and the live block-row bytes the boot scan counted (no
+  // second pass over the store); when the directory is over bootCompactMinBytes and the live rows are under half
+  // of it, compacts the whole key range so the dead versions leave the disk. The live count is uncompressed and
+  // the directory is compressed, so the rule fires only on a store that is mostly dead versions. Runs after
+  // ready() resolves; close() waits for it.
   async _bootCompaction() {
     const t0 = Date.now();
     const before = dirBytes(this._dbPath);
-    const live = await liveBytes(this.db);
-    this._liveBytes = live;
-    this._diskCheck = null;   // the floor depends on the live size just measured
+    const live = this._liveBytes || 0;
+    this._diskCheck = null;   // the floor depends on the live size the boot scan counted
     const out = { du_before: before, live, compacted: false, du_after: before, ms: 0 };
     if (before >= this._bootCompactMin && live < before / 2) {
       await this.db.compactRange(Buffer.alloc(1, 0), Buffer.alloc(32, 0xff), { keyEncoding: 'buffer' });
@@ -336,10 +337,13 @@ export class Ledger extends EventEmitter {
     //    2026-09-16) — DELETES every row whose tx carries no micromined xid. MEASURED before the rule: 16,313 of
     //    17,628 anchors on the audited node were untyped. They are counted (`untyped`) and removed, not evicted:
     //    the same anchor re-anchored WITH its identity is welcome. One O(blocks) pass; bodies are plain JSON.
-    let legacyKeyed = 0, untyped = 0;
+    //    The same pass counts the live bytes (key + value) for the store limits: a second full pass costs a
+    //    LevelDB seek-triggered compaction (MEASURED on a copy of this machine's ledger: +11 to +24 MB per boot).
+    let legacyKeyed = 0, untyped = 0, live = 0;
     const doomed = [];
     try {
       for await (const [key, value] of this.db.iterator({ gte: 'block:', lt: 'block;' })) {
+        live += key.length + value.length;
         let b; try { b = JSON.parse(value.toString()); } catch { continue; }
         const tx = b && b.tx;
         const body = consensusBody(tx);
@@ -349,6 +353,7 @@ export class Ledger extends EventEmitter {
       }
     } catch { /* no blocks yet */ }
     for (const key of doomed) { try { await this.db.del(key); } catch { /* gone */ } this.blocks.delete(key.slice('block:'.length)); }
+    this._liveBytes = live;
     if (untyped > 0) console.warn(`[XCLT] boot: deleted ${untyped} untyped block row(s) — every transaction carries its xmbl type as a micromined xid`);
     // 2. The eviction list. Cheap (one short keyspace) and it is what makes "never seen again" outlive this
     //    process rather than being a decision the node forgets the moment it restarts.

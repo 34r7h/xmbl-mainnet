@@ -9,7 +9,9 @@
 //   2. A ledger write is refused at the door while free disk is under max(1 GiB, 2 x live ledger bytes): the
 //      floor a compaction needs to rewrite the live rows beside the old ones.
 //   3. At boot, when the live rows are under half the directory size and the directory is over 64 MiB, the
-//      whole key range is compacted once, so the dead versions leave the disk.
+//      whole key range is compacted once, so the dead versions leave the disk. The live rows are counted in the
+//      ledger's own boot scan of block rows: a second full pass over the store sets off LevelDB's
+//      seek-triggered compactions (MEASURED on a copy of this machine's ledger: +11 to +24 MB per boot).
 import { readdirSync, statSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -48,12 +50,4 @@ export function diskLowError(check) {
   const e = new Error(`ledger write refused: ${fmtBytes(check.free)} free on the ledger's disk, the floor is ${fmtBytes(check.need)} (max(1 GiB, 2 x live ledger))`);
   e.code = 'LEDGER_DISK_LOW';
   return e;
-}
-
-// The raw bytes of every live row (key + value), one pass. Uncompressed, so it is an upper bound on what a full
-// compaction leaves: a store whose directory is more than twice this is mostly dead versions.
-export async function liveBytes(db) {
-  let total = 0;
-  for await (const [k, v] of db.iterator()) total += Buffer.byteLength(String(k)) + Buffer.byteLength(String(v));
-  return total;
 }
